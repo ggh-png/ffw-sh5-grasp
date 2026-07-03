@@ -1,0 +1,281 @@
+<mujoco model="hand_only">
+  <compiler angle="radian" meshdir="../assets/robotis_ffw/assets" autolimits="true"/>
+
+  <option timestep="0.001" integrator="implicitfast" cone="elliptic" impratio="10"/>
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global azimuth="120" elevation="-20" offwidth="1280" offheight="960"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3"
+      markrgb="0.8 0.8 0.8" width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2"/>
+    <material name="black" rgba="0.2 0.2 0.2 1"/>
+    <material name="can_mat" rgba="0.75 0.1 0.1 1"/>
+
+    <mesh name="hx5_r_base" file="hx5_d20/hx5_d20_right/hx5_d20_base_unit.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="hx5_r_thumb_mcp" file="hx5_d20/hx5_d20_right/hx5_d20_thumb_mcp.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="hx5_r_thumb_mcp2" file="hx5_d20/hx5_d20_right/hx5_d20_thumb_mcp2.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="hx5_r_thumb_ip" file="hx5_d20/hx5_d20_right/hx5_d20_thumb_ip.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="hx5_r_thumb_tip" file="hx5_d20/hx5_d20_right/hx5_d20_thumb_tip.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="hx5_r_finger_mcp" file="hx5_d20/hx5_d20_right/hx5_d20_finger_mcp.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="hx5_r_finger_pip" file="hx5_d20/hx5_d20_right/hx5_d20_finger_pip.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="hx5_r_finger_dip" file="hx5_d20/hx5_d20_right/hx5_d20_finger_dip.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="hx5_r_finger_tip" file="hx5_d20/hx5_d20_right/hx5_d20_finger_tip.stl" scale="0.001 0.001 0.001"/>
+  </asset>
+
+  <default>
+    <!-- Visual meshes never collide; physical collision is capsules/box below (Phase 0 found
+         the official finger collision geoms are mesh-based, so Phase 1 replaces them). -->
+    <default class="visual">
+      <geom type="mesh" contype="0" conaffinity="0" density="0" group="2"/>
+    </default>
+    <!-- shadow_hand recipe: solimp/solref for hand collision geoms -->
+    <default class="collision">
+      <geom group="3" contype="1" conaffinity="1" condim="3" solimp="0.5 0.99 0.0001" solref="0.005 1"/>
+    </default>
+
+    <default class="finger">
+      <joint frictionloss="0.05" armature="0.05" damping="1.0"/>
+      <!-- shadow_hand-scale actuator: kp 0.5-2, forcerange +-1-2 N*m -->
+      <position kp="0.7" dampratio="1" forcerange="-1.0 1.0"/>
+      <default class="thumb_r_cmc">
+        <joint axis="1 0 0" range="-1.5708 1.5708"/>
+      </default>
+      <default class="thumb_r_mcp_yaw">
+        <joint axis="0 0 1" range="-3.1416 0"/>
+      </default>
+      <default class="thumb_r_mcp_pitch">
+        <joint axis="1 0 0" range="0 1.5708"/>
+      </default>
+      <default class="thumb_r_ip">
+        <joint axis="1 0 0" range="0 1.5708"/>
+      </default>
+      <default class="finger_mcp">
+        <joint axis="1 0 0" range="-0.6109 0.6109"/>
+      </default>
+      <default class="finger_pip">
+        <joint axis="0 1 0" range="0 2.0071"/>
+      </default>
+      <default class="finger_dip">
+        <joint axis="0 1 0" range="0 1.5708"/>
+      </default>
+      <default class="finger_tip">
+        <joint axis="0 1 0" range="0 1.5708"/>
+      </default>
+    </default>
+  </default>
+
+  <worldbody>
+    <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
+    <geom name="floor" size="0 0 0.05" type="plane" material="groundplane" pos="0 0 -0.3"/>
+
+    <!-- Mocap anchor: hx5_r_base is welded here via the equality constraint below.
+         This is the sanctioned MuJoCo idiom for "fixed to world" -- the physics engine
+         enforces the weld via constraint force, we never write hx5_r_base qpos directly. -->
+    <body name="hand_mocap" mocap="true" pos="0 0 0.15" quat="0.5 0.5 0.5 0.5">
+      <geom type="box" size="0.008 0.008 0.008" rgba="1 0 0 0.4" contype="0" conaffinity="0"/>
+    </body>
+
+    <body name="hx5_r_base" pos="0 0 0.15" quat="0.5 0.5 0.5 0.5">
+      <freejoint name="hand_free"/>
+      <inertial pos="-0.00259546 0.00179263 0.0629577" mass="0.301852"
+        diaginertia="0.000542413 0.000389333 0.000210116"/>
+      <geom type="mesh" mesh="hx5_r_base" material="black" class="visual"/>
+      <geom name="palm_collision" type="box" size="0.02421 0.05536 0.06126"
+        pos="-0.00321 -0.00121 0.06126" class="collision"/>
+
+      <!-- Thumb (4 joints) -->
+      <body name="finger_r_link1" pos="-0.0125 0.03493 0.04475">
+        <inertial pos="0.0238075 0.00131524 0.000460355" mass="0.0408685"
+          diaginertia="2.88193e-06 9.43334e-06 9.65126e-06"/>
+        <joint name="finger_r_joint1" class="thumb_r_cmc"/>
+        <geom type="mesh" mesh="hx5_r_thumb_mcp" material="black" class="visual"/>
+        <geom type="capsule" fromto="-0.000125 0.00225 0  0.037125 0.00225 0" size="0.011375" class="collision"/>
+        <body name="finger_r_link2" pos="0.039 0 0">
+          <inertial pos="-0.000356679 0.0139993 0.000359207" mass="0.0117606"
+            diaginertia="1.30235e-06 1.05564e-06 1.30247e-06"/>
+          <joint name="finger_r_joint2" class="thumb_r_mcp_yaw"/>
+          <geom type="mesh" mesh="hx5_r_thumb_mcp2" material="black" class="visual"/>
+          <geom type="capsule" fromto="0 0.00525 0  0 0.02275 0" size="0.0115" class="collision"/>
+          <body name="finger_r_link3" pos="0 0.028 0">
+            <inertial pos="-0.000101462 0.0113435 4.08056e-06" mass="0.034690"
+              diaginertia="5.03702e-06 2.25807e-06 5.40298e-06"/>
+            <joint name="finger_r_joint3" class="thumb_r_mcp_pitch"/>
+            <geom type="mesh" mesh="hx5_r_thumb_ip" material="black" class="visual"/>
+            <geom type="capsule" fromto="0 0.001 0  0 0.03125 0" size="0.0105" class="collision"/>
+            <body name="finger_r_link4" pos="0 0.0355 0">
+              <inertial pos="6.66050e-05 0.0168245 0.000223985" mass="0.043875"
+                diaginertia="1.11607e-05 2.80794e-06 1.13431e-05"/>
+              <joint name="finger_r_joint4" class="thumb_r_ip"/>
+              <geom type="mesh" mesh="hx5_r_thumb_tip" material="black" class="visual"/>
+              <!-- fingertip: measured radius + 1mm pad -->
+              <geom type="capsule" fromto="0 0.0025 0.0015  0 0.0415 0.0015" size="0.012" class="collision"/>
+            </body>
+          </body>
+        </body>
+      </body>
+
+      <!-- Index finger (4 joints) -->
+      <body name="finger_r_link5" pos="-0.0015 0.03608 0.09575">
+        <inertial pos="0.00519340 -1.81631e-05 0.0211155" mass="0.0388044"
+          diaginertia="3.52499e-06 5.79216e-06 4.71268e-06"/>
+        <joint name="finger_r_joint5" class="finger_mcp"/>
+        <geom type="mesh" mesh="hx5_r_finger_mcp" material="black" class="visual"/>
+        <geom type="capsule" fromto="0.00685 0 0.00858  0.00685 0 0.01818" size="0.014825" class="collision"/>
+        <body name="finger_r_link6" pos="0.0165 0 0.0235">
+          <inertial pos="4.08056e-06 0.000101462 0.0241565" mass="0.034690"
+            diaginertia="5.40298e-06 5.03702e-06 2.25807e-06"/>
+          <joint name="finger_r_joint6" class="finger_pip"/>
+          <geom type="mesh" mesh="hx5_r_finger_pip" material="black" class="visual"/>
+          <geom type="capsule" fromto="0 0 0.004255  0 0 0.034505" size="0.0105" class="collision"/>
+          <body name="finger_r_link7" pos="0 0 0.0355">
+            <inertial pos="4.08056e-06 0.000101462 0.0241565" mass="0.034690"
+              diaginertia="5.40298e-06 5.03702e-06 2.25807e-06"/>
+            <joint name="finger_r_joint7" class="finger_dip"/>
+            <geom type="mesh" mesh="hx5_r_finger_dip" material="black" class="visual"/>
+            <geom type="capsule" fromto="0 0 0.004255  0 0 0.034505" size="0.0105" class="collision"/>
+            <body name="finger_r_link8" pos="0 0 0.0355">
+              <inertial pos="0.000710251 0.000472384 0.0180986" mass="0.013637"
+                diaginertia="2.23243e-06 2.01881e-06 1.07866e-06"/>
+              <joint name="finger_r_joint8" class="finger_tip"/>
+              <geom type="mesh" mesh="hx5_r_finger_tip" material="black" class="visual"/>
+              <geom type="capsule" fromto="0.0015 0 0.006005  0.0015 0 0.025755" size="0.01225" class="collision"/>
+            </body>
+          </body>
+        </body>
+      </body>
+
+      <!-- Middle finger (4 joints) -->
+      <body name="finger_r_link9" pos="-0.0015 0.00908 0.10353">
+        <inertial pos="0.00519340 -1.81631e-05 0.0211155" mass="0.0388044"
+          diaginertia="3.52499e-06 5.79216e-06 4.71268e-06"/>
+        <joint name="finger_r_joint9" class="finger_mcp"/>
+        <geom type="mesh" mesh="hx5_r_finger_mcp" material="black" class="visual"/>
+        <geom type="capsule" fromto="0.00685 0 0.00858  0.00685 0 0.01818" size="0.014825" class="collision"/>
+        <body name="finger_r_link10" pos="0.0165 0 0.0235">
+          <inertial pos="4.08056e-06 0.000101462 0.0241565" mass="0.034690"
+            diaginertia="5.40298e-06 5.03702e-06 2.25807e-06"/>
+          <joint name="finger_r_joint10" class="finger_pip"/>
+          <geom type="mesh" mesh="hx5_r_finger_pip" material="black" class="visual"/>
+          <geom type="capsule" fromto="0 0 0.004255  0 0 0.034505" size="0.0105" class="collision"/>
+          <body name="finger_r_link11" pos="0 0 0.0355">
+            <inertial pos="4.08056e-06 0.000101462 0.0241565" mass="0.034690"
+              diaginertia="5.40298e-06 5.03702e-06 2.25807e-06"/>
+            <joint name="finger_r_joint11" class="finger_dip"/>
+            <geom type="mesh" mesh="hx5_r_finger_dip" material="black" class="visual"/>
+            <geom type="capsule" fromto="0 0 0.004255  0 0 0.034505" size="0.0105" class="collision"/>
+            <body name="finger_r_link12" pos="0 0 0.0355">
+              <inertial pos="0.000710251 0.000472384 0.0180986" mass="0.013637"
+                diaginertia="2.23243e-06 2.01881e-06 1.07866e-06"/>
+              <joint name="finger_r_joint12" class="finger_tip"/>
+              <geom type="mesh" mesh="hx5_r_finger_tip" material="black" class="visual"/>
+              <geom type="capsule" fromto="0.0015 0 0.006005  0.0015 0 0.025755" size="0.01225" class="collision"/>
+            </body>
+          </body>
+        </body>
+      </body>
+
+      <!-- Ring finger (4 joints) -->
+      <body name="finger_r_link13" pos="-0.0015 -0.01792 0.09775">
+        <inertial pos="0.00519340 -1.81631e-05 0.0211155" mass="0.0388044"
+          diaginertia="3.52499e-06 5.79216e-06 4.71268e-06"/>
+        <joint name="finger_r_joint13" class="finger_mcp"/>
+        <geom type="mesh" mesh="hx5_r_finger_mcp" material="black" class="visual"/>
+        <geom type="capsule" fromto="0.00685 0 0.00858  0.00685 0 0.01818" size="0.014825" class="collision"/>
+        <body name="finger_r_link14" pos="0.0165 0 0.0235">
+          <inertial pos="4.08056e-06 0.000101462 0.0241565" mass="0.034690"
+            diaginertia="5.40298e-06 5.03702e-06 2.25807e-06"/>
+          <joint name="finger_r_joint14" class="finger_pip"/>
+          <geom type="mesh" mesh="hx5_r_finger_pip" material="black" class="visual"/>
+          <geom type="capsule" fromto="0 0 0.004255  0 0 0.034505" size="0.0105" class="collision"/>
+          <body name="finger_r_link15" pos="0 0 0.0355">
+            <inertial pos="4.08056e-06 0.000101462 0.0241565" mass="0.034690"
+              diaginertia="5.40298e-06 5.03702e-06 2.25807e-06"/>
+            <joint name="finger_r_joint15" class="finger_dip"/>
+            <geom type="mesh" mesh="hx5_r_finger_dip" material="black" class="visual"/>
+            <geom type="capsule" fromto="0 0 0.004255  0 0 0.034505" size="0.0105" class="collision"/>
+            <body name="finger_r_link16" pos="0 0 0.0355">
+              <inertial pos="0.000710251 0.000472384 0.0180986" mass="0.013637"
+                diaginertia="2.23243e-06 2.01881e-06 1.07866e-06"/>
+              <joint name="finger_r_joint16" class="finger_tip"/>
+              <geom type="mesh" mesh="hx5_r_finger_tip" material="black" class="visual"/>
+              <geom type="capsule" fromto="0.0015 0 0.006005  0.0015 0 0.025755" size="0.01225" class="collision"/>
+            </body>
+          </body>
+        </body>
+      </body>
+
+      <!-- Pinky finger (4 joints) -->
+      <body name="finger_r_link17" pos="-0.0015 -0.04492 0.07875">
+        <inertial pos="0.00519340 -1.81631e-05 0.0211155" mass="0.0388044"
+          diaginertia="3.52499e-06 5.79216e-06 4.71268e-06"/>
+        <joint name="finger_r_joint17" class="finger_mcp"/>
+        <geom type="mesh" mesh="hx5_r_finger_mcp" material="black" class="visual"/>
+        <geom type="capsule" fromto="0.00685 0 0.00858  0.00685 0 0.01818" size="0.014825" class="collision"/>
+        <body name="finger_r_link18" pos="0.0165 0 0.0235">
+          <inertial pos="4.08056e-06 0.000101462 0.0241565" mass="0.034690"
+            diaginertia="5.40298e-06 5.03702e-06 2.25807e-06"/>
+          <joint name="finger_r_joint18" class="finger_pip"/>
+          <geom type="mesh" mesh="hx5_r_finger_pip" material="black" class="visual"/>
+          <geom type="capsule" fromto="0 0 0.004255  0 0 0.034505" size="0.0105" class="collision"/>
+          <body name="finger_r_link19" pos="0 0 0.0355">
+            <inertial pos="4.08056e-06 0.000101462 0.0241565" mass="0.034690"
+              diaginertia="5.40298e-06 5.03702e-06 2.25807e-06"/>
+            <joint name="finger_r_joint19" class="finger_dip"/>
+            <geom type="mesh" mesh="hx5_r_finger_dip" material="black" class="visual"/>
+            <geom type="capsule" fromto="0 0 0.004255  0 0 0.034505" size="0.0105" class="collision"/>
+            <body name="finger_r_link20" pos="0 0 0.0355">
+              <inertial pos="0.000710251 0.000472384 0.0180986" mass="0.013637"
+                diaginertia="2.23243e-06 2.01881e-06 1.07866e-06"/>
+              <joint name="finger_r_joint20" class="finger_tip"/>
+              <geom type="mesh" mesh="hx5_r_finger_tip" material="black" class="visual"/>
+              <geom type="capsule" fromto="0.0015 0 0.006005  0.0015 0 0.025755" size="0.01225" class="collision"/>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+
+    <!-- Can: freejoint, priority=1 so the can's contact params win over the finger geoms'
+         at every hand-can contact (shadow_hand recipe) -->
+    <body name="can" pos="0.13 0.06 0.15">
+      <freejoint name="can_free"/>
+      <inertial pos="0 0 0" mass="0.35" diaginertia="0.000448 0.000448 0.00019"/>
+      <geom name="can_geom" type="cylinder" size="0.033 0.055" material="can_mat"
+        priority="1" condim="6" friction="0.5 0.01 0.003"
+        solimp="0.5 0.99 0.0001" solref="0.005 1"/>
+    </body>
+  </worldbody>
+
+  <equality>
+    <weld body1="hx5_r_base" body2="hand_mocap" solref="0.005 1" solimp="0.9 0.95 0.001"/>
+  </equality>
+
+  <actuator>
+    <position class="thumb_r_cmc" name="finger_r_joint1" joint="finger_r_joint1" inheritrange="1"/>
+    <position class="thumb_r_mcp_yaw" name="finger_r_joint2" joint="finger_r_joint2" inheritrange="1"/>
+    <position class="thumb_r_mcp_pitch" name="finger_r_joint3" joint="finger_r_joint3" inheritrange="1"/>
+    <position class="thumb_r_ip" name="finger_r_joint4" joint="finger_r_joint4" inheritrange="1"/>
+    <position class="finger_mcp" name="finger_r_joint5" joint="finger_r_joint5" inheritrange="1"/>
+    <position class="finger_pip" name="finger_r_joint6" joint="finger_r_joint6" inheritrange="1"/>
+    <position class="finger_dip" name="finger_r_joint7" joint="finger_r_joint7" inheritrange="1"/>
+    <position class="finger_tip" name="finger_r_joint8" joint="finger_r_joint8" inheritrange="1"/>
+    <position class="finger_mcp" name="finger_r_joint9" joint="finger_r_joint9" inheritrange="1"/>
+    <position class="finger_pip" name="finger_r_joint10" joint="finger_r_joint10" inheritrange="1"/>
+    <position class="finger_dip" name="finger_r_joint11" joint="finger_r_joint11" inheritrange="1"/>
+    <position class="finger_tip" name="finger_r_joint12" joint="finger_r_joint12" inheritrange="1"/>
+    <position class="finger_mcp" name="finger_r_joint13" joint="finger_r_joint13" inheritrange="1"/>
+    <position class="finger_pip" name="finger_r_joint14" joint="finger_r_joint14" inheritrange="1"/>
+    <position class="finger_dip" name="finger_r_joint15" joint="finger_r_joint15" inheritrange="1"/>
+    <position class="finger_tip" name="finger_r_joint16" joint="finger_r_joint16" inheritrange="1"/>
+    <position class="finger_mcp" name="finger_r_joint17" joint="finger_r_joint17" inheritrange="1"/>
+    <position class="finger_pip" name="finger_r_joint18" joint="finger_r_joint18" inheritrange="1"/>
+    <position class="finger_dip" name="finger_r_joint19" joint="finger_r_joint19" inheritrange="1"/>
+    <position class="finger_tip" name="finger_r_joint20" joint="finger_r_joint20" inheritrange="1"/>
+  </actuator>
+</mujoco>

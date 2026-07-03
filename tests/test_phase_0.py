@@ -146,6 +146,28 @@ def build_report(model):
     return "\n".join(lines), finger_collision_types
 
 
+def write_notes_section(section_text, heading="## Phase 0"):
+    """Replace only this heading's section in NOTES.md, preserving other phases' notes."""
+    if NOTES_PATH.exists():
+        content = NOTES_PATH.read_text()
+    else:
+        content = "# NOTES\n"
+
+    start = content.find(heading)
+    if start == -1:
+        if not content.endswith("\n\n"):
+            content += "\n\n"
+        content += section_text.rstrip() + "\n"
+        NOTES_PATH.write_text(content)
+        return
+
+    rest = content[start + len(heading) :]
+    next_marker = rest.find("\n## ")
+    end = len(content) if next_marker == -1 else start + len(heading) + next_marker + 1
+    content = content[:start] + section_text.rstrip() + "\n\n" + content[end:]
+    NOTES_PATH.write_text(content)
+
+
 def run_divergence_test(model, seconds=5.0):
     data = mujoco.MjData(model)
     mujoco.mj_resetData(model, data)
@@ -194,11 +216,8 @@ def main():
     report += "### Finger collision mesh vs primitive judgement\n"
     report += conclusion + "\n\n"
 
-    NOTES_PATH.write_text(
-        "# NOTES\n\n"
-        "## Phase 0 — 공식 모델 검증\n\n"
-        f"{report}"
-    )
+    section = "## Phase 0 — 공식 모델 검증\n\n" + report
+    write_notes_section(section)
     print(f"Wrote report to {NOTES_PATH.relative_to(REPO_ROOT)}")
 
     ok = not diverged
