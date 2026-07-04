@@ -65,10 +65,20 @@ class InverseKinematics:
         JJt = J @ J.T + lam2 * np.eye(J.shape[0])
         return J.T @ np.linalg.solve(JJt, err)
 
-    def solve_position(self, q_init, target_pos, max_iter=DEFAULT_MAX_ITER, tol=POS_TOL):
-        """Position-only 3DOF DLS starting from q_init. Returns (q_solution, pos_err_norm)."""
+    def solve_position(self, q_init, target_pos, max_iter=DEFAULT_MAX_ITER, tol=POS_TOL,
+                       context_qpos=None):
+        """Position-only 3DOF DLS starting from q_init. Returns (q_solution, pos_err_norm).
+
+        context_qpos: full-model qpos to seed every *other* joint from (e.g. models/
+        full_scene.xml's lift_joint, which sits upstream of the arm chain and is not part
+        of this solver's own joint_names) -- without it those joints reset to 0, silently
+        moving the whole chain's base to the wrong place (see NOTES.md "Phase 4"). Leave
+        None for single-arm models like models/arm_hand.xml where nothing upstream varies.
+        """
         scratch = self._scratch
         mujoco.mj_resetData(self.model, scratch)
+        if context_qpos is not None:
+            scratch.qpos[:] = context_qpos
         q = np.array(q_init, dtype=float)
         self._write_q(scratch, q)
         mujoco.mj_forward(self.model, scratch)
@@ -97,7 +107,7 @@ class InverseKinematics:
         return pos_err, ori_err
 
     def solve_pose(self, q_init, target_pos, target_quat, max_iter=DEFAULT_MAX_ITER,
-                   pos_tol=POS_TOL, ori_tol=ORI_TOL, ori_weight=0.3):
+                   pos_tol=POS_TOL, ori_tol=ORI_TOL, ori_weight=0.3, context_qpos=None):
         """Hierarchical 6DOF DLS: position (3) task-priority over orientation (3), with a
         backtracking line search so every accepted step actually reduces error.
 
@@ -114,10 +124,16 @@ class InverseKinematics:
           4. dq = dq_pos + dq_ori, clamped
           5. backtrack: halve dq (up to 6x) until pos_err + ori_weight*ori_err actually drops;
              if it never does, take the smallest tried step (guarantees monotonic progress)
+        context_qpos: see solve_position -- seeds every joint this solver doesn't itself
+        control (e.g. models/full_scene.xml's lift_joint) so the site's world position
+        reflects the real simulation's current state rather than resetting to 0.
+
         Returns (q_solution, pos_err_norm, ori_err_norm_rad).
         """
         scratch = self._scratch
         mujoco.mj_resetData(self.model, scratch)
+        if context_qpos is not None:
+            scratch.qpos[:] = context_qpos
         q = np.array(q_init, dtype=float)
         self._write_q(scratch, q)
         mujoco.mj_forward(self.model, scratch)
@@ -164,7 +180,8 @@ class InverseKinematics:
         return q, pos_err_norm, ori_err_norm
 
     def solve_pose_multistart(self, q_init, target_pos, target_quat, rng, n_restarts=8,
-                               max_iter=250, success_pos_tol=0.005, success_ori_tol=np.radians(5)):
+                               max_iter=250, success_pos_tol=0.005, success_ori_tol=np.radians(5),
+                               context_qpos=None):
         """solve_pose can still land in a local minimum/joint-limit lockup for a large gap.
         Try q_init first (cheap, and it's usually a good guess -- e.g. the previous frame's
         solution during continuous teleop tracking); if that doesn't converge, retry from a
@@ -178,7 +195,8 @@ class InverseKinematics:
         candidates = [np.array(q_init, dtype=float)]
         candidates += [rng.uniform(self.joint_ranges[:, 0], self.joint_ranges[:, 1]) for _ in range(n_restarts)]
         for q0 in candidates:
-            q, pe, oe = self.solve_pose(q0, target_pos, target_quat, max_iter=max_iter)
+            q, pe, oe = self.solve_pose(q0, target_pos, target_quat, max_iter=max_iter,
+                                        context_qpos=context_qpos)
             if pe < success_pos_tol and oe < success_ori_tol:
                 return q, pe, oe, True
             if best is None or pe + oe < best[1] + best[2]:
