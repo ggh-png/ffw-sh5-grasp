@@ -26,6 +26,23 @@ physics-thread-reads split), the one-way-data-flow constraint PLAN.md asks for i
 true: there's only one flow, target sliders read by the physics update each frame, no
 concurrent access at all.
 
+**RPY control note (Session 8)**: the Roll/Pitch/Yaw sliders are a rotation *relative to
+each hand's home-pose orientation* (`home_quat_r`/`home_quat_l`, captured once at startup),
+composed in the hand's own local frame (`quat_mul(home, rpy_delta)`), not raw absolute
+world-frame Euler angles. Originally they were absolute (slider shown value = world-Euler
+decomposition of the actual site quat), which meant the sliders started at the oddly large
+values (90, 0, 90) -- the home pose isn't at identity -- and, because Tait-Bryan Euler angles
+compose about progressively-rotated axes, "Roll" and "Pitch" at that operating point actually
+rotated the hand about world Y and world -X respectively (verified numerically, not just
+felt), not the world/local X/Y one would guess from the labels; only "Yaw" (the outermost
+term) ever stayed clean. Composing a local delta onto a fixed home reference instead makes
+(0,0,0) the natural pose and pins each slider to its own hand-local axis exactly at that
+point (verified: Roll/Pitch/Yaw deltas from home rotate about local X/Y/Z exactly), which is
+what most of a teleop session's small-to-moderate adjustments stay near. This does not (and
+mathematically cannot, for any 3-parameter Euler triple) remove *all* axis coupling -- push
+two sliders far from zero simultaneously and some residual coupling reappears -- but it fixes
+the coupling that was previously present even at the resting/default slider position.
+
 Run: `python3 src/teleop_app.py`.
 Mouse: left-drag orbit, right-drag pan, scroll zoom (standard MuJoCo camera controls).
 Keyboard: R = reset can (+-2cm random), G = toggle contact force/point visualization,
@@ -86,15 +103,6 @@ def rpy_deg_to_quat(rpy_deg):
         cr * sp * cy + sr * cp * sy,
         cr * cp * sy - sr * sp * cy,
     ])
-
-
-def quat_to_rpy_deg(q):
-    w, x, y, z = q
-    roll = math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y))
-    sinp = max(-1.0, min(1.0, 2 * (w * y - z * x)))
-    pitch = math.asin(sinp)
-    yaw = math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
-    return [math.degrees(v) for v in (roll, pitch, yaw)]
 
 
 def _begin_expanded(title, flags=0):
@@ -169,14 +177,16 @@ def main():
 
     site_r = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "grasp_target_r")
     site_l = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "grasp_target_l")
-    init_quat_r = np.zeros(4)
-    mujoco.mju_mat2Quat(init_quat_r, data.site_xmat[site_r])
-    init_quat_l = np.zeros(4)
-    mujoco.mju_mat2Quat(init_quat_l, data.site_xmat[site_l])
+    # Reference orientation each hand's RPY sliders are relative to (see module docstring's
+    # "RPY control" note): the home-pose site orientation, fixed for the whole session.
+    home_quat_r = np.zeros(4)
+    mujoco.mju_mat2Quat(home_quat_r, data.site_xmat[site_r])
+    home_quat_l = np.zeros(4)
+    mujoco.mju_mat2Quat(home_quat_l, data.site_xmat[site_l])
 
     targets = {
-        "pos_r": data.site_xpos[site_r].tolist(), "rpy_r": quat_to_rpy_deg(init_quat_r),
-        "pos_l": data.site_xpos[site_l].tolist(), "rpy_l": quat_to_rpy_deg(init_quat_l),
+        "pos_r": data.site_xpos[site_r].tolist(), "rpy_r": [0.0, 0.0, 0.0],
+        "pos_l": data.site_xpos[site_l].tolist(), "rpy_l": [0.0, 0.0, 0.0],
         "grasp_r": 0.0, "thumb_r": 0.0, "grasp_l": 0.0, "thumb_l": 0.0,
         "lift": float(data.qpos[model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "lift_joint")]]),
     }
@@ -270,8 +280,11 @@ def main():
                     rpy = targets[f"rpy_{side}"]
                     for i, axis in enumerate(("X", "Y", "Z")):
                         _, pos[i] = imgui.slider_float(f"{axis}##{side}pos", pos[i], -0.2, 1.2, "%.3f m")
+                    imgui.text("Roll/Pitch/Yaw (relative to home pose, hand-local axes)")
                     for i, axis in enumerate(("Roll", "Pitch", "Yaw")):
-                        _, rpy[i] = imgui.slider_float(f"{axis}##{side}rpy", rpy[i], -180.0, 180.0, "%.1f deg")
+                        _, rpy[i] = imgui.slider_float(f"{axis}##{side}rpy", rpy[i], -90.0, 90.0, "%.1f deg")
+                    if imgui.button(f"Reset orientation##{side}"):
+                        rpy[0], rpy[1], rpy[2] = 0.0, 0.0, 0.0
 
             if imgui.collapsing_header("Hand grasp targets", imgui.TreeNodeFlags_.default_open):
                 for side, label in (("r", "Right"), ("l", "Left")):
@@ -306,8 +319,15 @@ def main():
 
         # --- physics step ---
         ctx_qpos = data.qpos.copy()
-        quat_r = rpy_deg_to_quat(targets["rpy_r"])
-        quat_l = rpy_deg_to_quat(targets["rpy_l"])
+        # RPY sliders are a LOCAL rotation on top of the hand's own home orientation (see
+        # module docstring), not raw world-frame Euler angles -- composing quat_mul(home,
+        # delta) keeps roll/pitch/yaw = 0 at the natural grasp pose and each axis meaning
+        # "rotate about the hand's own current X/Y/Z" near that pose, instead of the
+        # scrambled axes an absolute-Euler encoding gives once home is far from identity.
+        quat_r = np.zeros(4)
+        mujoco.mju_mulQuat(quat_r, home_quat_r, rpy_deg_to_quat(targets["rpy_r"]))
+        quat_l = np.zeros(4)
+        mujoco.mju_mulQuat(quat_l, home_quat_l, rpy_deg_to_quat(targets["rpy_l"]))
         q_des_r, perr_r, _ = solver_r.solve_pose(q_des_r, np.array(targets["pos_r"]), quat_r,
                                                   max_iter=IK_MAX_ITER, context_qpos=ctx_qpos)
         q_des_l, perr_l, _ = solver_l.solve_pose(q_des_l, np.array(targets["pos_l"]), quat_l,

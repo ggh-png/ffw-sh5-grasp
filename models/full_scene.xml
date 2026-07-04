@@ -759,9 +759,29 @@
     <exclude body1="finger_r_link5" body2="finger_r_link9"/>
     <exclude body1="finger_r_link9" body2="finger_r_link13"/>
     <exclude body1="finger_r_link13" body2="finger_r_link17"/>
-    <!-- Palm collision box is a crude stand-in for the real palm mesh; excluded vs world-attached
-         geoms (table) the same way models/arm_hand.xml does (Phase 3) -->
-    <exclude body1="hx5_l_base" body2="world"/>
+    <!-- Palm collision box is the real base_unit mesh's own tight AABB (verified against
+         trimesh -- not a padded approximation), but the mesh isn't box-shaped, so the box
+         claims corner volume the real curved/tapered hand never occupies. The validated
+         pick pose points this box at the can's center from above-and-behind, which puts its
+         far corner *kinematically* ~11-12mm below the table top if IK is solved with no
+         collision at all (measured directly: see NOTES.md "Phase 4 Session 8"). A blanket
+         <exclude> against world (this repo's earlier fix, and arm_hand.xml's Phase 3
+         approach) hides this by removing ALL force, including a genuine deep push -- which is
+         exactly the "hand goes through the table" bug reported during manual teleop.
+         Fix: a per-pair solimp ramp, soft near dist=0 and reaching normal stiffness by
+         `width`. Because the arm is a stiff PD+gravity-feedforward torque controller
+         (src/arm_control.py, kp=600) rather than a compliant one, it pushes straight through
+         any resistance well short of a spring's nominal free length -- measured settled
+         penetration plateaus at only ~3-6mm even for width up to 30mm, nowhere near the
+         "no collision at all" 11-12mm figure. width=15mm was the smallest tested value that
+         reliably reproduces tests/test_phase_4.py's validated pick geometry (10/10, confirmed
+         across the full trial set, not just the trials that previously failed), while still
+         ramping to near-default stiffness for any push beyond that (so a deliberate manual
+         push settles a few mm in, not through the table -- see diag script in NOTES.md). -->
+    <pair geom1="palm_l_collision" geom2="table" solref="0.005 1" solimp="0.0001 0.95 0.015"/>
+    <pair geom1="palm_r_collision" geom2="table" solref="0.005 1" solimp="0.0001 0.95 0.015"/>
+    <pair geom1="palm_l_collision" geom2="floor" solref="0.005 1" solimp="0.0001 0.95 0.015"/>
+    <pair geom1="palm_r_collision" geom2="floor" solref="0.005 1" solimp="0.0001 0.95 0.015"/>
     <!-- Ring/pinky locked at range=0 (3-point grasp fallback, Phase 2); excluded vs world same as palm -->
     <exclude body1="finger_l_link13" body2="world"/>
     <exclude body1="finger_l_link14" body2="world"/>
