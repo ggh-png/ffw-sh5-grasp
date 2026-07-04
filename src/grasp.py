@@ -13,10 +13,17 @@ PLAN.md's own guidance), so this module only ever drives 3 digits.
 Both scalars map to a *sub-range* of each joint's travel, not [lo, hi]: starting fully
 extended left ~10cm of empty travel before any contact, which meant the freely-falling can
 (hand_only has no table) dropped out of reach before the gentle force-limited actuators
-could close far enough to catch it. OPEN_FRAC is tuned (empirically, via contact.dist at
-rest) to sit ~1-3mm short of the can surface, so `grasp=0`/`thumb=0` is a "ready to close"
-pre-shape rather than a fully flat hand -- see models/hand_only.xml's "pregrasp" keyframe,
-which encodes this exact pose.
+could close far enough to catch it. OPEN_FRAC is tuned (empirically, via fingertip-to-can
+gap) so `grasp=0`/`thumb=0` sits ~20mm short of the can surface -- see models/hand_only.xml's
+"pregrasp" keyframe, which encodes this exact pose.
+
+Widened from an initial ~2mm margin once Phase 3 started chaining IK + a real (imperfect)
+arm servo in front of it: the arm settles with a real but small (~15-20mm) residual site
+error (see NOTES.md "Phase 3" -- a torque/kinematics limitation of the specific reach
+configuration, not a bug), and a razor-thin capture margin that only worked with
+millimeter-perfect hand placement just knocked the can away instead of wrapping around it.
+The wider start still closes fully within Phase 2's own ramp+settle timing, so this doesn't
+regress Phase 2's fixed-hand grasp (still 10/10, see NOTES.md).
 """
 
 import mujoco
@@ -32,8 +39,8 @@ THUMB_PRESHAPE = {
     "finger_r_joint2": -1.309,  # MCP yaw
 }
 
-FINGER_OPEN_FRAC = 0.375
-THUMB_OPEN_FRAC = 0.22
+FINGER_OPEN_FRAC = 0.20
+THUMB_OPEN_FRAC = 0.0
 
 FINGER_BODY_GROUPS = {
     "thumb": ("finger_r_link1", "finger_r_link2", "finger_r_link3", "finger_r_link4"),
