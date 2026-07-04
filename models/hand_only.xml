@@ -180,29 +180,30 @@
         </body>
       </body>
 
-      <!-- Ring finger (4 joints) -->
+      <!-- Ring finger (4 joints) -- locked at range=0 (see Phase 2 NOTES: 3-point grasp
+           fallback, thumb+index+middle only, per PLAN.md's own fallback guidance) -->
       <body name="finger_r_link13" pos="-0.0015 -0.01792 0.09775">
         <inertial pos="0.00519340 -1.81631e-05 0.0211155" mass="0.0388044"
           diaginertia="3.52499e-06 5.79216e-06 4.71268e-06"/>
-        <joint name="finger_r_joint13" class="finger_mcp"/>
+        <joint name="finger_r_joint13" class="finger_mcp" range="0 0"/>
         <geom type="mesh" mesh="hx5_r_finger_mcp" material="black" class="visual"/>
         <geom type="capsule" fromto="0.00685 0 0.00858  0.00685 0 0.01818" size="0.014825" class="collision"/>
         <body name="finger_r_link14" pos="0.0165 0 0.0235">
           <inertial pos="4.08056e-06 0.000101462 0.0241565" mass="0.034690"
             diaginertia="5.40298e-06 5.03702e-06 2.25807e-06"/>
-          <joint name="finger_r_joint14" class="finger_pip"/>
+          <joint name="finger_r_joint14" class="finger_pip" range="0 0"/>
           <geom type="mesh" mesh="hx5_r_finger_pip" material="black" class="visual"/>
           <geom type="capsule" fromto="0 0 0.004255  0 0 0.034505" size="0.0105" class="collision"/>
           <body name="finger_r_link15" pos="0 0 0.0355">
             <inertial pos="4.08056e-06 0.000101462 0.0241565" mass="0.034690"
               diaginertia="5.40298e-06 5.03702e-06 2.25807e-06"/>
-            <joint name="finger_r_joint15" class="finger_dip"/>
+            <joint name="finger_r_joint15" class="finger_dip" range="0 0"/>
             <geom type="mesh" mesh="hx5_r_finger_dip" material="black" class="visual"/>
             <geom type="capsule" fromto="0 0 0.004255  0 0 0.034505" size="0.0105" class="collision"/>
             <body name="finger_r_link16" pos="0 0 0.0355">
               <inertial pos="0.000710251 0.000472384 0.0180986" mass="0.013637"
                 diaginertia="2.23243e-06 2.01881e-06 1.07866e-06"/>
-              <joint name="finger_r_joint16" class="finger_tip"/>
+              <joint name="finger_r_joint16" class="finger_tip" range="0 0"/>
               <geom type="mesh" mesh="hx5_r_finger_tip" material="black" class="visual"/>
               <geom type="capsule" fromto="0.0015 0 0.006005  0.0015 0 0.025755" size="0.01225" class="collision"/>
             </body>
@@ -210,29 +211,29 @@
         </body>
       </body>
 
-      <!-- Pinky finger (4 joints) -->
+      <!-- Pinky finger (4 joints) -- locked at range=0, see Ring finger comment above -->
       <body name="finger_r_link17" pos="-0.0015 -0.04492 0.07875">
         <inertial pos="0.00519340 -1.81631e-05 0.0211155" mass="0.0388044"
           diaginertia="3.52499e-06 5.79216e-06 4.71268e-06"/>
-        <joint name="finger_r_joint17" class="finger_mcp"/>
+        <joint name="finger_r_joint17" class="finger_mcp" range="0 0"/>
         <geom type="mesh" mesh="hx5_r_finger_mcp" material="black" class="visual"/>
         <geom type="capsule" fromto="0.00685 0 0.00858  0.00685 0 0.01818" size="0.014825" class="collision"/>
         <body name="finger_r_link18" pos="0.0165 0 0.0235">
           <inertial pos="4.08056e-06 0.000101462 0.0241565" mass="0.034690"
             diaginertia="5.40298e-06 5.03702e-06 2.25807e-06"/>
-          <joint name="finger_r_joint18" class="finger_pip"/>
+          <joint name="finger_r_joint18" class="finger_pip" range="0 0"/>
           <geom type="mesh" mesh="hx5_r_finger_pip" material="black" class="visual"/>
           <geom type="capsule" fromto="0 0 0.004255  0 0 0.034505" size="0.0105" class="collision"/>
           <body name="finger_r_link19" pos="0 0 0.0355">
             <inertial pos="4.08056e-06 0.000101462 0.0241565" mass="0.034690"
               diaginertia="5.40298e-06 5.03702e-06 2.25807e-06"/>
-            <joint name="finger_r_joint19" class="finger_dip"/>
+            <joint name="finger_r_joint19" class="finger_dip" range="0 0"/>
             <geom type="mesh" mesh="hx5_r_finger_dip" material="black" class="visual"/>
             <geom type="capsule" fromto="0 0 0.004255  0 0 0.034505" size="0.0105" class="collision"/>
             <body name="finger_r_link20" pos="0 0 0.0355">
               <inertial pos="0.000710251 0.000472384 0.0180986" mass="0.013637"
                 diaginertia="2.23243e-06 2.01881e-06 1.07866e-06"/>
-              <joint name="finger_r_joint20" class="finger_tip"/>
+              <joint name="finger_r_joint20" class="finger_tip" range="0 0"/>
               <geom type="mesh" mesh="hx5_r_finger_tip" material="black" class="visual"/>
               <geom type="capsule" fromto="0.0015 0 0.006005  0.0015 0 0.025755" size="0.01225" class="collision"/>
             </body>
@@ -241,9 +242,18 @@
       </body>
     </body>
 
+    <!-- Static support so the can rests in place until grasped instead of free-falling
+         (hand_only has no table yet -- that's Phase 3). Without this, gravity pulls the can
+         out of the fingers' reach faster than the gentle force-limited actuators can close
+         (see NOTES.md "Phase 2"): a real table will replace this in Phase 3. Sized to clear
+         palm_collision (world Y <= 0.021) and stay below the index/middle curl band
+         (world Z >= 0.159) so it doesn't interfere with the grasp itself. -->
+    <geom name="can_support" type="box" size="0.05 0.045 0.01" pos="0.105 0.085 0.095"
+      rgba="0.3 0.3 0.3 1"/>
+
     <!-- Can: freejoint, priority=1 so the can's contact params win over the finger geoms'
          at every hand-can contact (shadow_hand recipe) -->
-    <body name="can" pos="0.13 0.06 0.15">
+    <body name="can" pos="0.105 0.065 0.16">
       <freejoint name="can_free"/>
       <inertial pos="0 0 0" mass="0.35" diaginertia="0.000448 0.000448 0.00019"/>
       <geom name="can_geom" type="cylinder" size="0.033 0.055" material="can_mat"
@@ -255,6 +265,45 @@
   <equality>
     <weld body1="hx5_r_base" body2="hand_mocap" solref="0.005 1" solimp="0.9 0.95 0.001"/>
   </equality>
+
+  <!-- Anatomically-adjacent link pairs that always sit close together by design.
+       Parent-child pairs copied verbatim from the official ffw_sh5.xml <contact> section.
+       The finger_r_link5/9/13/17 (mcp) pairs are new: replacing mesh collision with fatter
+       capsule approximations (Phase 1) made adjacent fingers' mcp capsules overlap even
+       though the original meshes did not -- see NOTES.md "Phase 2". -->
+  <contact>
+    <exclude body1="finger_r_link1" body2="finger_r_link2"/>
+    <exclude body1="finger_r_link2" body2="finger_r_link3"/>
+    <exclude body1="finger_r_link3" body2="finger_r_link4"/>
+    <exclude body1="finger_r_link5" body2="finger_r_link6"/>
+    <exclude body1="finger_r_link6" body2="finger_r_link7"/>
+    <exclude body1="finger_r_link7" body2="finger_r_link8"/>
+    <exclude body1="finger_r_link9" body2="finger_r_link10"/>
+    <exclude body1="finger_r_link10" body2="finger_r_link11"/>
+    <exclude body1="finger_r_link11" body2="finger_r_link12"/>
+    <exclude body1="finger_r_link13" body2="finger_r_link14"/>
+    <exclude body1="finger_r_link14" body2="finger_r_link15"/>
+    <exclude body1="finger_r_link15" body2="finger_r_link16"/>
+    <exclude body1="finger_r_link17" body2="finger_r_link18"/>
+    <exclude body1="finger_r_link18" body2="finger_r_link19"/>
+    <exclude body1="finger_r_link19" body2="finger_r_link20"/>
+    <exclude body1="finger_r_link5" body2="finger_r_link9"/>
+    <exclude body1="finger_r_link9" body2="finger_r_link13"/>
+    <exclude body1="finger_r_link13" body2="finger_r_link17"/>
+    <!-- palm_collision is a crude single box proxy for the real palm mesh (which has
+         finger sockets carved out); at rest several mid-finger links clip into it.
+         Exclude palm-vs-any-finger-link broadly rather than chase individual pairs. -->
+    <exclude body1="hx5_r_base" body2="finger_r_link1"/>
+    <exclude body1="hx5_r_base" body2="finger_r_link2"/>
+    <exclude body1="hx5_r_base" body2="finger_r_link5"/>
+    <exclude body1="hx5_r_base" body2="finger_r_link6"/>
+    <exclude body1="hx5_r_base" body2="finger_r_link9"/>
+    <exclude body1="hx5_r_base" body2="finger_r_link10"/>
+    <exclude body1="hx5_r_base" body2="finger_r_link13"/>
+    <exclude body1="hx5_r_base" body2="finger_r_link14"/>
+    <exclude body1="hx5_r_base" body2="finger_r_link17"/>
+    <exclude body1="hx5_r_base" body2="finger_r_link18"/>
+  </contact>
 
   <actuator>
     <position class="thumb_r_cmc" name="finger_r_joint1" joint="finger_r_joint1" inheritrange="1"/>
@@ -269,13 +318,27 @@
     <position class="finger_pip" name="finger_r_joint10" joint="finger_r_joint10" inheritrange="1"/>
     <position class="finger_dip" name="finger_r_joint11" joint="finger_r_joint11" inheritrange="1"/>
     <position class="finger_tip" name="finger_r_joint12" joint="finger_r_joint12" inheritrange="1"/>
-    <position class="finger_mcp" name="finger_r_joint13" joint="finger_r_joint13" inheritrange="1"/>
-    <position class="finger_pip" name="finger_r_joint14" joint="finger_r_joint14" inheritrange="1"/>
-    <position class="finger_dip" name="finger_r_joint15" joint="finger_r_joint15" inheritrange="1"/>
-    <position class="finger_tip" name="finger_r_joint16" joint="finger_r_joint16" inheritrange="1"/>
-    <position class="finger_mcp" name="finger_r_joint17" joint="finger_r_joint17" inheritrange="1"/>
-    <position class="finger_pip" name="finger_r_joint18" joint="finger_r_joint18" inheritrange="1"/>
-    <position class="finger_dip" name="finger_r_joint19" joint="finger_r_joint19" inheritrange="1"/>
-    <position class="finger_tip" name="finger_r_joint20" joint="finger_r_joint20" inheritrange="1"/>
+    <!-- Ring/pinky (joint13-20) have no actuator: locked at range=0, see body comments above -->
   </actuator>
+
+  <!-- Phase 2 "pregrasp" (grasp=0, thumb=0 in src/grasp.py's synergy mapping): thumb
+       pre-shape (joint1 CMC, joint2 MCP-yaw) found by FK sweep so the thumb opposes the
+       index/middle convergence zone, PLUS index/middle/thumb curl already partway closed
+       (see NOTES.md "Phase 2" -- starting from full extension left ~10cm of empty travel
+       before any contact, giving the freely-falling can time to drop out of reach before
+       the gentle force-limited actuators could catch it. Pre-curling to within ~7mm of the
+       can keeps the final closing motion short). -->
+  <keyframe>
+    <key name="pregrasp"
+      qpos="0 0 0.15  0.5 0.5 0.5 0.5
+            0.131 -1.309 0.3456 0.3456
+            0 0.7527 0.5890 0.5890
+            0 0.7527 0.5890 0.5890
+            0 0 0 0
+            0 0 0 0
+            0.105 0.065 0.16  1 0 0 0"
+      ctrl="0.131 -1.309 0.3456 0.3456
+            0 0.7527 0.5890 0.5890
+            0 0.7527 0.5890 0.5890"/>
+  </keyframe>
 </mujoco>

@@ -29,7 +29,7 @@ CURL_JOINTS = {"finger_r_joint3", "finger_r_joint4"}
 for base in (5, 9, 13, 17):
     CURL_JOINTS.update({f"finger_r_joint{base+1}", f"finger_r_joint{base+2}", f"finger_r_joint{base+3}"})
 
-CAN_INIT_POS = np.array([0.13, 0.06, 0.15])
+CAN_INIT_POS = np.array([0.105, 0.065, 0.16])  # matches models/hand_only.xml can body pos (Phase 2)
 CAN_INIT_QUAT = np.array([1.0, 0.0, 0.0, 0.0])
 
 
@@ -60,6 +60,8 @@ def close_hand(model, data):
         name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, jid)
         if name in CURL_JOINTS:
             aid = actuator_for_joint(model, jid)
+            if aid is None:
+                continue  # locked joint (range=0), no actuator -- see Phase 2 NOTES
             hi = model.jnt_range[jid][1]
             data.ctrl[aid] = hi
 
