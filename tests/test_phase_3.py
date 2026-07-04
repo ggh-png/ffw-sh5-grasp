@@ -30,17 +30,19 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
 MODEL_PATH = REPO_ROOT / "models" / "arm_hand.xml"
 
+import arm_control  # noqa: E402
 import grasp  # noqa: E402
 import ik  # noqa: E402
 
 ARM_JOINTS = [f"arm_r_joint{i}" for i in range(1, 8)]
 
-# "Ready" configuration 5cm back / 25cm above the can -- well clear of the table (see the
-# "home" keyframe in models/arm_hand.xml). A side-approach home (15cm back, 10cm up) was
-# tried first and dragged the palm along the table's near-edge corner during transit; going
-# well above and approaching straight down avoids the table's footprint (see NOTES.md
-# "Phase 3"). Deliberately NOT the grasp pose itself or all-zeros (both tried, both bad).
-HOME_Q = np.array([0.1781, -0.0457, 0.5309, -2.7593, 0.096, 1.0107, -0.4492])
+# "Ready" configuration 10cm back / 20cm above the can -- well clear of the table (see the
+# "home" keyframe in models/arm_hand.xml). Recomputed after fixing the grasp_target site
+# definition bug (see NOTES.md "Phase 3"): the site was defined using the can's *world*
+# coordinates from hand_only.xml as if they were a *local* offset from the palm, which they
+# were not -- every HOME_Q/q_pregrasp/q_grasp computed before the fix targeted the wrong
+# physical point on the hand entirely.
+HOME_Q = np.array([-0.225, -0.394, 0.682, -2.613, -0.704, 0.843, -1.218])
 IK_TEST_SPREAD = 0.2  # rad per joint, defines "reachable workspace" for the unit test
 
 N_IK_SAMPLES = 100
@@ -52,6 +54,14 @@ N_PICK_TRIALS = 10
 PICK_SUCCESS_RATE_TARGET = 0.7
 APPROACH_SPEED = 0.03  # m/s, per PLAN.md
 PRE_GRASP_OFFSET = np.array([0.0, 0.0, 0.10])  # straight above the can, then descend
+# Before fixing models/arm_hand.xml's grasp_target site (it was defined using
+# hand_only.xml's can *world* coordinates as if they were a palm-*local* offset -- they
+# weren't, see NOTES.md "Phase 3"), the resulting bad geometry made the middle finger's MCP
+# knuckle graze the table. Kept at zero now that the real fix (the site itself) is in;
+# a future can/table layout that reintroduces the clearance problem should raise this
+# instead of trying to "float" the can (it has a real freejoint -- it free-falls back to
+# table_top + its own half-height regardless of spawn height).
+GRASP_TARGET_OFFSET = np.array([0.0, 0.0, 0.0])
 RAMP_TIME = 1.0
 SETTLE_TIME = 1.0
 LIFT_HEIGHT = 0.10
@@ -94,44 +104,37 @@ def run_ik_unit_test(model, solver, rng):
     return rate >= IK_SUCCESS_RATE_TARGET
 
 
-def _set_arm_ctrl(model, data, q):
-    for name, val in zip(ARM_JOINTS, q):
-        jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
-        for aid in range(model.nu):
-            if model.actuator_trntype[aid] == mujoco.mjtTrn.mjTRN_JOINT and model.actuator_trnid[aid, 0] == jid:
-                data.ctrl[aid] = val
-                break
-
-
 def _read_arm_q(model, data):
     return np.array([data.qpos[model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, n)]]
                       for n in ARM_JOINTS])
 
 
-def _servo_to_target(model, data, solver, rng, target_pos, target_quat, dt, settle_steps, n_correction=2):
-    """Closed-loop correction: read the arm's actual current joint angles (data.qpos -- a
-    read, never written directly; only ctrl is written) and re-solve/re-servo from there.
-
-    NOTE (see NOTES.md "Phase 3" for the full writeup): this measurably helps but does not
-    fully close the gap. The arm's real settling position for a given ctrl target has a
-    small residual error -- individually-small per-joint errors (~0.01 rad each,
-    correlated with each joint's actuator_forcerange headroom) accumulate through the 7-link
-    chain into an ~15-20mm site error concentrated in one task-space direction. Raising kp
-    5x barely moved it, and a task-space "aim past the target by the observed error"
-    overshoot compensation made it *worse* (different multistart solution each retry, not a
-    stable feedback loop) -- so this is deliberately just the plain re-solve, documented as
-    a known, unresolved limitation rather than a disguised bug.
+def _hold(model, data, controller, q_des, duration, dt, grasp_frac=None, thumb_frac=None):
+    """Step the sim for `duration` seconds, driving the arm to q_des via torque control
+    every step (motor actuators need fresh torque each step -- unlike the old <position>
+    actuators, there's nothing to "hold" a stale ctrl value) and optionally the hand via
+    grasp.apply_grasp at a constant fraction.
     """
-    q_target = _read_arm_q(model, data)
-    for _ in range(n_correction):
-        q_target, _, _, _ = solver.solve_pose_multistart(q_target, target_pos, target_quat, rng)
-        _set_arm_ctrl(model, data, q_target)
-        for _ in range(settle_steps):
-            mujoco.mj_step(model, data)
-    return q_target
+    n = int(duration / dt)
+    for _ in range(n):
+        controller.apply(data, q_des)
+        if grasp_frac is not None:
+            grasp.apply_grasp(model, data, grasp=grasp_frac, thumb=thumb_frac)
+        mujoco.mj_step(model, data)
 
 
-def run_pick_trial(model, data, solver, rng):
+def _move(model, data, controller, q_from, q_to, duration, dt, grasp_frac=None, thumb_frac=None):
+    """Like _hold, but ramps q_des linearly from q_from to q_to over `duration` seconds."""
+    n = int(duration / dt)
+    for i in range(n):
+        frac = i / n
+        controller.apply(data, q_from + frac * (q_to - q_from))
+        if grasp_frac is not None:
+            grasp.apply_grasp(model, data, grasp=grasp_frac, thumb=thumb_frac)
+        mujoco.mj_step(model, data)
+
+
+def run_pick_trial(model, data, solver, controller, rng):
     key_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, "home")
     mujoco.mj_resetDataKeyframe(model, data, key_id)
     can_jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "can_free")
@@ -145,75 +148,50 @@ def run_pick_trial(model, data, solver, rng):
     dt = model.opt.timestep
 
     # IK solve: pre-grasp (offset back along the approach axis) and final grasp pose.
-    pregrasp_pos = can_pos0 + PRE_GRASP_OFFSET
+    # grasp_target_pos aims 3cm above the can's actual center (GRASP_TARGET_OFFSET) so the
+    # hand clears the table; can_pos0 itself (used for noise and lift measurement) is
+    # unaffected.
+    grasp_target_pos = can_pos0 + GRASP_TARGET_OFFSET
+    pregrasp_pos = grasp_target_pos + PRE_GRASP_OFFSET
     q_pregrasp, perr, oerr, ok1 = solver.solve_pose_multistart(HOME_Q, pregrasp_pos, target_quat, rng)
-    q_grasp, perr2, oerr2, ok2 = solver.solve_pose_multistart(q_pregrasp, can_pos0, target_quat, rng)
+    q_grasp, perr2, oerr2, ok2 = solver.solve_pose_multistart(q_pregrasp, grasp_target_pos, target_quat, rng)
     if not (ok1 and ok2):
         return {"success": False, "reason": "ik_failed", "net_lift": 0.0}
 
-    # 1) move arm to pre-grasp. Despite kp=600 the arm settles slowly for large
-    # reconfigurations -- some joints run near their real torque limit (forcerange, taken
-    # directly from the official spec) and creep the last stretch (see NOTES.md "Phase 3").
-    # 5s is generous but this is a real robot arm, not a teleported one.
-    _set_arm_ctrl(model, data, q_pregrasp)
-    grasp.apply_grasp(model, data, grasp=0.0, thumb=0.0)
-    for _ in range(int(5.0 / dt)):
-        mujoco.mj_step(model, data)
+    q_home = _read_arm_q(model, data)
+
+    # 1) move arm to pre-grasp (torque control: gravity/Coriolis feedforward + PD, see
+    # src/arm_control.py -- this is what replaced the old <position>-actuator approach
+    # after diagnosing its ~15-20mm residual site error, NOTES.md "Phase 3").
+    _move(model, data, controller, q_home, q_pregrasp, 3.0, dt, grasp_frac=0.0, thumb_frac=0.0)
+    _hold(model, data, controller, q_pregrasp, 1.0, dt, grasp_frac=0.0, thumb_frac=0.0)
 
     # 2) straight-line approach at APPROACH_SPEED from pre-grasp to grasp pose (interpolate
     # in joint space between the two IK solutions -- both share the same target orientation
     # and are close together, so this tracks a near-straight-line Cartesian path)
     approach_dist = np.linalg.norm(PRE_GRASP_OFFSET)
     approach_time = approach_dist / APPROACH_SPEED
-    t = 0.0
-    while t < approach_time:
-        frac = t / approach_time
-        q_interp = q_pregrasp + frac * (q_grasp - q_pregrasp)
-        _set_arm_ctrl(model, data, q_interp)
-        mujoco.mj_step(model, data)
-        t += dt
-    _set_arm_ctrl(model, data, q_grasp)
-    for _ in range(int(2.0 / dt)):
-        mujoco.mj_step(model, data)
-    # closed-loop correction: open-loop servoing leaves a real residual error (see
-    # NOTES.md "Phase 3") that's too large for Phase 2's grasp tolerances on its own.
-    _servo_to_target(model, data, solver, rng, can_pos0, target_quat, dt, settle_steps=int(1.0 / dt))
+    _move(model, data, controller, q_pregrasp, q_grasp, approach_time, dt, grasp_frac=0.0, thumb_frac=0.0)
+    _hold(model, data, controller, q_grasp, 1.0, dt, grasp_frac=0.0, thumb_frac=0.0)
 
-    # 3) Phase 2 grasp sequence: ramp closed, settle
-    t = 0.0
-    while t < RAMP_TIME:
-        frac = t / RAMP_TIME
+    # 3) Phase 2 grasp sequence: ramp closed, settle (arm holds q_grasp throughout)
+    n = int(RAMP_TIME / dt)
+    for i in range(n):
+        frac = i / n
+        controller.apply(data, q_grasp)
         grasp.apply_grasp(model, data, grasp=frac, thumb=frac)
         mujoco.mj_step(model, data)
-        t += dt
-    t = 0.0
-    while t < SETTLE_TIME:
-        grasp.apply_grasp(model, data, grasp=1.0, thumb=1.0)
-        mujoco.mj_step(model, data)
-        t += dt
+    _hold(model, data, controller, q_grasp, SETTLE_TIME, dt, grasp_frac=1.0, thumb_frac=1.0)
 
     grasped = grasp.is_grasped(model, data)
     can_z_before_lift = data.qpos[can_qadr + 2]
 
     # 4) lift: move the IK target itself up by LIFT_HEIGHT and re-solve, then servo there
-    lift_target_pos = can_pos0 + np.array([0, 0, LIFT_HEIGHT])
+    lift_target_pos = grasp_target_pos + np.array([0, 0, LIFT_HEIGHT])
     q_lift, _, _, _ = solver.solve_pose_multistart(q_grasp, lift_target_pos, target_quat, rng)
     lift_time = LIFT_HEIGHT / LIFT_SPEED
-    t = 0.0
-    while t < lift_time:
-        frac = t / lift_time
-        q_interp = q_grasp + frac * (q_lift - q_grasp)
-        _set_arm_ctrl(model, data, q_interp)
-        grasp.apply_grasp(model, data, grasp=1.0, thumb=1.0)
-        mujoco.mj_step(model, data)
-        t += dt
-    _set_arm_ctrl(model, data, q_lift)
-
-    t = 0.0
-    while t < POST_LIFT_HOLD:
-        grasp.apply_grasp(model, data, grasp=1.0, thumb=1.0)
-        mujoco.mj_step(model, data)
-        t += dt
+    _move(model, data, controller, q_grasp, q_lift, lift_time, dt, grasp_frac=1.0, thumb_frac=1.0)
+    _hold(model, data, controller, q_lift, POST_LIFT_HOLD, dt, grasp_frac=1.0, thumb_frac=1.0)
 
     net_lift = data.qpos[can_qadr + 2] - can_z_before_lift
     return {
@@ -223,11 +201,11 @@ def run_pick_trial(model, data, solver, rng):
     }
 
 
-def run_pick_test(model, solver, rng):
+def run_pick_test(model, solver, controller, rng):
     data = mujoco.MjData(model)
     results = []
     for trial in range(N_PICK_TRIALS):
-        r = run_pick_trial(model, data, solver, rng)
+        r = run_pick_trial(model, data, solver, controller, rng)
         results.append(r)
         print(f"  pick trial {trial}: success={r['success']} net_lift={r['net_lift']*100:.2f}cm reason={r['reason']}")
     n_success = sum(r["success"] for r in results)
@@ -239,10 +217,11 @@ def run_pick_test(model, solver, rng):
 def main():
     model = mujoco.MjModel.from_xml_path(str(MODEL_PATH))
     solver = ik.InverseKinematics(model, "grasp_target", ARM_JOINTS)
+    controller = arm_control.ArmTorqueController(model, ARM_JOINTS)
     rng = np.random.default_rng(0)
 
     ik_ok = run_ik_unit_test(model, solver, rng)
-    pick_ok = run_pick_test(model, solver, rng)
+    pick_ok = run_pick_test(model, solver, controller, rng)
 
     ok = ik_ok and pick_ok
     print("PASS" if ok else "FAIL")

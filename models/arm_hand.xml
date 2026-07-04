@@ -130,7 +130,11 @@
          wide enough in Y and deep enough under the can to look and behave like a table. -->
     <geom name="table" type="box" size="0.08 0.15 0.05" pos="0.5 0.0 0.60" material="table_mat"/>
 
-    <!-- Can resting on the table, within the right arm's reach -->
+    <!-- Can resting on the table (freejoint -- it always settles to table_top + its own
+         half-height = 0.705 regardless of spawn height, so "floating" it here wouldn't
+         work; the table-clearance fix lives in tests/test_phase_3.py's
+         GRASP_TARGET_OFFSET instead, which aims the IK target 3cm above the can's actual
+         resting center -- see NOTES.md "Phase 3"). -->
     <body name="can" pos="0.5 0.0 0.705">
       <freejoint name="can_free"/>
       <inertial pos="0 0 0" mass="0.35" diaginertia="0.000448 0.000448 0.00019"/>
@@ -203,12 +207,21 @@
                       <geom name="palm_collision" type="box" size="0.02421 0.05536 0.06126"
                         pos="-0.00321 -0.00121 0.06126" class="collision"/>
 
-                      <!-- IK target site: local offset (0.105, 0.065, 0.16) is the exact
-                           can-relative-to-palm placement validated in Phase 1/2
-                           (models/hand_only.xml). Driving this site to the can's world
-                           pose reproduces that same grasp geometry regardless of where the
-                           can sits, since it's the same rigid offset from the palm. -->
-                      <site name="grasp_target" pos="0.105 0.065 0.16" size="0.006" rgba="0 1 0 1"/>
+                      <!-- IK target site. The Phase 1/2 validated can placement
+                           (models/hand_only.xml) is (0.105, 0.065, 0.16) in WORLD
+                           coordinates there, with hx5_r_base at world (0, 0, 0.15). That is
+                           NOT the same as a (0.105, 0.065, 0.16) offset in the palm's own
+                           LOCAL frame -- this site was defined with that exact bug for most
+                           of Phase 3 (copied the world-frame numbers directly), which is
+                           the actual root cause of the integrated pick failures, not arm
+                           precision (see NOTES.md "Phase 3" for the full story and how the
+                           bug was found: finger-to-can relative positions computed here
+                           didn't match hand_only.xml's at all, by a large *constant* offset
+                           across all three fingers -- the signature of a frame bug, not a
+                           joint/control error). Correct local offset, verified by direct
+                           computation (palm_R.T @ (can_world_pos - palm_world_pos)):
+                           (0.065, 0.01, 0.105). -->
+                      <site name="grasp_target" pos="0.065 0.01 0.105" size="0.006" rgba="0 1 0 1"/>
 
                       <!-- Thumb (4 joints) -->
                       <body name="finger_r_link1" pos="-0.0125 0.03493 0.04475">
@@ -424,13 +437,18 @@
   </contact>
 
   <actuator>
-    <position class="arm_r_joint1" name="arm_r_joint1" joint="arm_r_joint1" inheritrange="1"/>
-    <position class="arm_r_joint2" name="arm_r_joint2" joint="arm_r_joint2" inheritrange="1"/>
-    <position class="arm_r_joint3" name="arm_r_joint3" joint="arm_r_joint3" inheritrange="1"/>
-    <position class="arm_r_joint4" name="arm_r_joint4" joint="arm_r_joint4" inheritrange="1"/>
-    <position class="arm_r_joint5" name="arm_r_joint5" joint="arm_r_joint5" inheritrange="1"/>
-    <position class="arm_r_joint6" name="arm_r_joint6" joint="arm_r_joint6" inheritrange="1"/>
-    <position class="arm_r_joint7" name="arm_r_joint7" joint="arm_r_joint7" inheritrange="1"/>
+    <!-- Arm: pure torque (motor) actuators, driven every step by src/arm_control.py's
+         software PD + gravity/Coriolis feedforward (see NOTES.md "Phase 3" for why
+         MuJoCo's built-in <position> actuator wasn't accurate enough here: no integral, no
+         feedforward, and the per-joint dampratio=1 doesn't critically damp a coupled
+         7-link chain). ctrlrange matches the official forcerange values. -->
+    <motor name="arm_r_joint1" joint="arm_r_joint1" ctrlrange="-61.4 61.4"/>
+    <motor name="arm_r_joint2" joint="arm_r_joint2" ctrlrange="-61.4 61.4"/>
+    <motor name="arm_r_joint3" joint="arm_r_joint3" ctrlrange="-31.7 31.7"/>
+    <motor name="arm_r_joint4" joint="arm_r_joint4" ctrlrange="-31.7 31.7"/>
+    <motor name="arm_r_joint5" joint="arm_r_joint5" ctrlrange="-31.7 31.7"/>
+    <motor name="arm_r_joint6" joint="arm_r_joint6" ctrlrange="-31.7 31.7"/>
+    <motor name="arm_r_joint7" joint="arm_r_joint7" ctrlrange="-5.1 5.1"/>
 
     <position class="thumb_r_cmc" name="finger_r_joint1" joint="finger_r_joint1" inheritrange="1"/>
     <position class="thumb_r_mcp_yaw" name="finger_r_joint2" joint="finger_r_joint2" inheritrange="1"/>
@@ -446,22 +464,23 @@
     <position class="finger_tip" name="finger_r_joint12" joint="finger_r_joint12" inheritrange="1"/>
   </actuator>
 
-  <!-- "home": arm at a ready pose 5cm back / 25cm above the can (HOME_Q in
-       tests/test_phase_3.py, found via IK), well clear of the table -- an earlier
-       side-approach home (15cm back, 10cm up) put the palm right at the table's near-edge
-       height during transit and it dragged along the table corner the whole way (see
-       NOTES.md "Phase 3"). Approaching from above instead avoids the table's footprint
-       entirely until the final straight-down descent. Hand in its Phase 2 pregrasp shape. -->
+  <!-- "home": arm at a ready pose 10cm back / 20cm above the can (HOME_Q in
+       tests/test_phase_3.py, found via IK), well clear of the table. Recomputed after
+       fixing the grasp_target site definition bug -- see NOTES.md "Phase 3": the site's
+       local offset was copy-pasted from hand_only.xml's can *world* position without
+       transforming into the palm's local frame, so every arm pose computed against it
+       before the fix targeted the wrong physical point on the hand. Hand in its Phase 2
+       pregrasp shape. -->
   <keyframe>
     <key name="home"
       qpos="0.5 0.0 0.705  1 0 0 0
-            0.1781 -0.0457 0.5309 -2.7593 0.096 1.0107 -0.4492
+            -0.225 -0.394 0.682 -2.613 -0.704 0.843 -1.218
             0.131 -1.309 0 0
             0 0.4014 0.3142 0.3142
             0 0.4014 0.3142 0.3142
             0 0 0 0
             0 0 0 0"
-      ctrl="0.1781 -0.0457 0.5309 -2.7593 0.096 1.0107 -0.4492
+      ctrl="0 0 0 0 0 0 0
             0.131 -1.309 0 0
             0 0.4014 0.3142 0.3142
             0 0.4014 0.3142 0.3142"/>
