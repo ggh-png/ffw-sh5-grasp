@@ -1,37 +1,50 @@
-"""Phase 4 -- slider teleop app for models/full_scene.xml.
+"""Phase 4 -- slider teleop app for models/full_scene.xml, single native window.
 
-Reproduces the reference video's interface: EE pose target sliders (X/Y/Z/Roll/Pitch/Yaw)
-per hand driving the Phase 3 IK (src/ik.py) + Phase 3 arm torque control (src/arm_control.py),
-grasp/thumb sliders per hand driving the Phase 2 synergy (src/grasp.py), a joint position
-monitor, and an HUD (ik_err, sim/wall time, loop freq).
+Reproduces the reference video's interface directly in the same window as the 3D view:
+EE pose target sliders (X/Y/Z/Roll/Pitch/Yaw) per hand driving the Phase 3 IK
+(src/ik.py) + Phase 3 arm torque control (src/arm_control.py), grasp/thumb sliders per
+hand driving the Phase 2 synergy (src/grasp.py), a joint position monitor, and an HUD
+(ik_err, sim/wall time, loop freq).
 
-**GUI toolkit note**: dearpygui segfaults on import in this environment (Python 3.14, no
-prebuilt wheel compatible with this ABI) and no working PyQt/Tk/GLFW+imgui context could be
-established here either (see NOTES.md "Phase 4"), so the slider panel is a small static HTML
-page served over loopback HTTP instead of an in-process GUI toolkit. This sidesteps the
-GLFW/EGL context-sharing problem PLAN.md warns about entirely (the browser is a separate
-process; there is no shared GL context to conflict with MuJoCo's own viewer window) and still
-satisfies the same architectural constraint PLAN.md asks for: the browser thread only ever
-writes into `TeleopState`'s target fields and reads its readout fields, never touches `data`
-directly. The physics loop is the only thing that steps the simulation or writes `data.ctrl`.
+**Rendering note**: this does NOT use mujoco.viewer.launch_passive, because that owns its
+own window with no hook for drawing custom widgets inside it. Instead it opens one GLFW
+window and drives MuJoCo's own low-level render API (MjrContext/MjvScene/mjr_render)
+directly, with Dear ImGui (via imgui-bundle) drawn on top in the same framebuffer each
+frame -- the same approach MuJoCo's own C++ "simulate" app uses internally. Earlier
+attempts at this in this sandboxed environment (Python 3.14, Wayland session) hit
+`OpenGL.error.Error: Attempt to retrieve context when no valid context` from imgui-bundle's
+PyOpenGL-based renderer; the fix is `glfw.init_hint(glfw.PLATFORM, glfw.PLATFORM_X11)`
+before `glfw.init()`, which makes GLFW create an XWayland (GLX) window instead of a native
+Wayland (EGL) one, matching the platform PyOpenGL's context tracking expects (see
+NOTES.md "Phase 4" for the diagnosis; imgui_bundle's own glfw_backend.py has a related
+PYOPENGL_PLATFORM workaround, but it only takes effect if applied before `OpenGL` is
+imported anywhere in the process -- forcing GLFW's own platform sidesteps that ordering
+requirement entirely).
 
-Run: `python3 src/teleop_app.py` (from anywhere), then open http://localhost:8000 in a
-browser. The MuJoCo viewer window opens separately for the 3D view.
-Keyboard (focus the MuJoCo window): R = reset can (+-2cm random), G = toggle contact
-force/point visualization, C = cycle camera preset (overview / right-hand close-up). The
-same three actions also have buttons on the HTML page.
+Since everything now runs in one thread/one loop (no more GUI-thread-writes-targets /
+physics-thread-reads split), the one-way-data-flow constraint PLAN.md asks for is trivially
+true: there's only one flow, target sliders read by the physics update each frame, no
+concurrent access at all.
+
+Run: `python3 src/teleop_app.py`.
+Mouse: left-drag orbit, right-drag pan, scroll zoom (standard MuJoCo camera controls).
+Keyboard: R = reset can (+-2cm random), G = toggle contact force/point visualization,
+C = cycle camera preset (overview / right-hand close-up). Same three actions also have
+buttons in the on-screen panel.
 """
 
-import http.server
-import json
 import math
 import pathlib
 import sys
-import threading
 import time
 
+import glfw
+# Must precede glfw.init() -- see module docstring.
+glfw.init_hint(glfw.PLATFORM, glfw.PLATFORM_X11)
+
+from imgui_bundle import imgui
+from imgui_bundle.python_backends.glfw_backend import GlfwRenderer
 import mujoco
-import mujoco.viewer
 import numpy as np
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -57,10 +70,9 @@ MONITOR_JOINTS = (
     + ["lift_joint", "head_joint1", "head_joint2"]
 )
 
+WINDOW_W, WINDOW_H = 1440, 900
 LOOP_HZ = 25.0
 IK_MAX_ITER = 30
-
-HTTP_PORT = 8000
 
 
 def rpy_deg_to_quat(rpy_deg):
@@ -85,268 +97,13 @@ def quat_to_rpy_deg(q):
     return [math.degrees(v) for v in (roll, pitch, yaw)]
 
 
-class TeleopState:
-    """Shared target/readout state. GUI (HTTP thread) only ever writes `pos`/`rpy_deg`/
-    `grasp`/`thumb`/`lift`/`camera_preset`/`contact_viz` and reads the `*_readout` fields
-    below; the physics loop is the mirror image -- this keeps the "GUI writes targets,
-    physics writes readouts" one-way structure PLAN.md asks for explicit."""
-
-    def __init__(self, pos, rpy_deg, lift):
-        self._lock = threading.Lock()
-        self.pos = {"l": list(pos["l"]), "r": list(pos["r"])}
-        self.rpy_deg = {"l": list(rpy_deg["l"]), "r": list(rpy_deg["r"])}
-        self.grasp = {"l": 0.0, "r": 0.0}
-        self.thumb = {"l": 0.0, "r": 0.0}
-        self.lift = lift
-        self.camera_preset = 0
-        self.contact_viz = False
-        self._reset_can = False
-        # readouts
-        self.ik_err_mm = {"l": 0.0, "r": 0.0}
-        self.sim_time = 0.0
-        self.wall_time = 0.0
-        self.freq_hz = 0.0
-        self.joint_deg = {}
-
-    def set_target(self, data):
-        with self._lock:
-            for side in ("l", "r"):
-                if f"pos_{side}" in data:
-                    self.pos[side] = [float(v) for v in data[f"pos_{side}"]]
-                if f"rpy_{side}" in data:
-                    self.rpy_deg[side] = [float(v) for v in data[f"rpy_{side}"]]
-                if f"grasp_{side}" in data:
-                    self.grasp[side] = float(np.clip(data[f"grasp_{side}"], 0.0, 1.0))
-                if f"thumb_{side}" in data:
-                    self.thumb[side] = float(np.clip(data[f"thumb_{side}"], 0.0, 1.0))
-            if "lift" in data:
-                self.lift = float(np.clip(data["lift"], *LIFT_RANGE))
-            if "camera_preset" in data:
-                self.camera_preset = int(data["camera_preset"])
-            if "contact_viz" in data:
-                self.contact_viz = bool(data["contact_viz"])
-
-    def request_reset_can(self):
-        with self._lock:
-            self._reset_can = True
-
-    def pop_reset_can(self):
-        with self._lock:
-            v = self._reset_can
-            self._reset_can = False
-            return v
-
-    def toggle_contact_viz(self):
-        with self._lock:
-            self.contact_viz = not self.contact_viz
-
-    def cycle_camera(self):
-        with self._lock:
-            self.camera_preset = 1 - self.camera_preset
-
-    def snapshot_targets(self):
-        with self._lock:
-            return dict(
-                pos={k: list(v) for k, v in self.pos.items()},
-                rpy_deg={k: list(v) for k, v in self.rpy_deg.items()},
-                grasp=dict(self.grasp), thumb=dict(self.thumb),
-                lift=self.lift, camera_preset=self.camera_preset,
-                contact_viz=self.contact_viz,
-            )
-
-    def update_readout(self, ik_err_mm, sim_time, wall_time, freq_hz, joint_deg):
-        with self._lock:
-            self.ik_err_mm = dict(ik_err_mm)
-            self.sim_time = sim_time
-            self.wall_time = wall_time
-            self.freq_hz = freq_hz
-            self.joint_deg = dict(joint_deg)
-
-    def snapshot_all(self):
-        with self._lock:
-            return dict(
-                pos={k: list(v) for k, v in self.pos.items()},
-                rpy_deg={k: list(v) for k, v in self.rpy_deg.items()},
-                grasp=dict(self.grasp), thumb=dict(self.thumb),
-                lift=self.lift, camera_preset=self.camera_preset,
-                contact_viz=self.contact_viz,
-                ik_err_mm=dict(self.ik_err_mm), sim_time=self.sim_time,
-                wall_time=self.wall_time, freq_hz=self.freq_hz,
-                joint_deg=dict(self.joint_deg),
-            )
-
-
-INDEX_HTML = """<!doctype html><html><head><meta charset="utf-8">
-<title>FFW-SH5 Teleop</title>
-<style>
-body{font-family:monospace;background:#1a1a1a;color:#ddd;margin:0;padding:12px;}
-h2{color:#7ec8ff;margin:6px 0}
-.cols{display:flex;gap:24px;flex-wrap:wrap}
-.col{background:#242424;border-radius:8px;padding:10px 14px;min-width:280px}
-.row{display:flex;align-items:center;gap:8px;margin:4px 0}
-.row label{width:60px;color:#aaa}
-.row input[type=range]{flex:1}
-.row span{width:70px;text-align:right;color:#7ec8ff}
-button{background:#333;color:#ddd;border:1px solid #555;border-radius:4px;padding:6px 10px;margin:4px 4px 4px 0;cursor:pointer}
-button:hover{background:#3a5;}
-#hud{background:#242424;border-radius:8px;padding:10px 14px;margin-bottom:12px}
-#hud span{color:#7ec8ff;margin-right:18px}
-#monitor{max-height:340px;overflow-y:auto;font-size:12px;background:#1c1c1c;padding:6px;border-radius:4px;margin-top:6px}
-#monitor div{display:flex;justify-content:space-between;color:#999}
-</style></head><body>
-<h2>FFW-SH5 Slider Teleop (Phase 4)</h2>
-<div id="hud">
-  <span id="hud_sim">sim: 0.0s</span>
-  <span id="hud_wall">wall: 0.0s</span>
-  <span id="hud_freq">0.0 Hz</span>
-  <span id="hud_ikl">IK-L: 0.0mm</span>
-  <span id="hud_ikr">IK-R: 0.0mm</span>
-</div>
-<div class="cols">
-  <div class="col" id="col_l"></div>
-  <div class="col" id="col_r"></div>
-  <div class="col">
-    <h2>Lift / Utils</h2>
-    <div class="row"><label>lift</label><input type="range" id="lift" min="-0.5" max="0" step="0.001"><span id="lift_v"></span></div>
-    <button onclick="postAction('/reset_can')">Reset Can (R)</button>
-    <button onclick="postAction('/toggle_contact')">Toggle Contact Viz (G)</button>
-    <button onclick="postAction('/camera')">Cycle Camera (C)</button>
-    <h2>Joint Monitor</h2>
-    <div id="monitor"></div>
-  </div>
-</div>
-<script>
-const AXES = [["x","X",-0.2,1.0,0.01],["y","Y",-0.6,0.6,0.01],["z","Z",0.5,1.7,0.01],
-              ["roll","Roll",-180,180,1],["pitch","Pitch",-180,180,1],["yaw","Yaw",-180,180,1]];
-function buildCol(side, label){
-  const col = document.getElementById("col_"+side);
-  col.innerHTML = "<h2>"+label+"</h2>";
-  for (const [key,name,lo,hi,step] of AXES){
-    const id = side+"_"+key;
-    col.innerHTML += `<div class="row"><label>${name}</label>
-      <input type="range" id="${id}" min="${lo}" max="${hi}" step="${step}">
-      <span id="${id}_v"></span></div>`;
-  }
-  for (const key of ["grasp","thumb"]){
-    const id = side+"_"+key;
-    col.innerHTML += `<div class="row"><label>${key}</label>
-      <input type="range" id="${id}" min="0" max="1" step="0.01">
-      <span id="${id}_v"></span></div>`;
-  }
-}
-buildCol("l","Left Arm/Hand");
-buildCol("r","Right Arm/Hand");
-
-let dragging = new Set();
-function wire(id, onInput){
-  const el = document.getElementById(id);
-  el.addEventListener("pointerdown", ()=>dragging.add(id));
-  el.addEventListener("pointerup", ()=>dragging.delete(id));
-  el.addEventListener("input", onInput);
-}
-for (const side of ["l","r"]){
-  for (const [key] of AXES) wire(side+"_"+key, ()=>pushTarget(side));
-  wire(side+"_grasp", ()=>pushTarget(side));
-  wire(side+"_thumb", ()=>pushTarget(side));
-}
-wire("lift", ()=>{
-  fetch("/target", {method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({lift: parseFloat(document.getElementById("lift").value)})});
-});
-
-function pushTarget(side){
-  const g = id=>parseFloat(document.getElementById(id).value);
-  const body = {};
-  body["pos_"+side] = [g(side+"_x"), g(side+"_y"), g(side+"_z")];
-  body["rpy_"+side] = [g(side+"_roll"), g(side+"_pitch"), g(side+"_yaw")];
-  body["grasp_"+side] = g(side+"_grasp");
-  body["thumb_"+side] = g(side+"_thumb");
-  fetch("/target", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
-}
-function postAction(path){ fetch(path, {method:"POST"}); }
-
-async function poll(){
-  try {
-    const r = await fetch("/state");
-    const s = await r.json();
-    for (const side of ["l","r"]){
-      const p = s.pos[side], rp = s.rpy_deg[side];
-      const vals = {x:p[0], y:p[1], z:p[2], roll:rp[0], pitch:rp[1], yaw:rp[2],
-                    grasp:s.grasp[side], thumb:s.thumb[side]};
-      for (const [k,v] of Object.entries(vals)){
-        const id = side+"_"+k;
-        if (!dragging.has(id)) document.getElementById(id).value = v;
-        document.getElementById(id+"_v").textContent = (typeof v === "number") ? v.toFixed(3) : v;
-      }
-    }
-    if (!dragging.has("lift")) document.getElementById("lift").value = s.lift;
-    document.getElementById("lift_v").textContent = s.lift.toFixed(3);
-    document.getElementById("hud_sim").textContent = "sim: "+s.sim_time.toFixed(1)+"s";
-    document.getElementById("hud_wall").textContent = "wall: "+s.wall_time.toFixed(1)+"s";
-    document.getElementById("hud_freq").textContent = s.freq_hz.toFixed(1)+" Hz";
-    document.getElementById("hud_ikl").textContent = "IK-L: "+s.ik_err_mm.l.toFixed(2)+"mm";
-    document.getElementById("hud_ikr").textContent = "IK-R: "+s.ik_err_mm.r.toFixed(2)+"mm";
-    const mon = document.getElementById("monitor");
-    mon.innerHTML = Object.entries(s.joint_deg).map(([n,d])=>`<div><span>${n}</span><span>${d.toFixed(1)}</span></div>`).join("");
-  } catch(e) {}
-  setTimeout(poll, 150);
-}
-poll();
-</script>
-</body></html>"""
-
-
-def make_handler(state):
-    class Handler(http.server.BaseHTTPRequestHandler):
-        def log_message(self, fmt, *args):
-            pass
-
-        def _send_json(self, obj, code=200):
-            body = json.dumps(obj).encode()
-            self.send_response(code)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        def do_GET(self):
-            if self.path == "/":
-                body = INDEX_HTML.encode()
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-            elif self.path == "/state":
-                self._send_json(state.snapshot_all())
-            else:
-                self.send_response(404)
-                self.end_headers()
-
-        def do_POST(self):
-            length = int(self.headers.get("Content-Length", 0))
-            raw = self.rfile.read(length) if length else b""
-            if self.path == "/target":
-                try:
-                    data = json.loads(raw) if raw else {}
-                except json.JSONDecodeError:
-                    data = {}
-                state.set_target(data)
-                self._send_json({"ok": True})
-            elif self.path == "/reset_can":
-                state.request_reset_can()
-                self._send_json({"ok": True})
-            elif self.path == "/toggle_contact":
-                state.toggle_contact_viz()
-                self._send_json({"ok": True})
-            elif self.path == "/camera":
-                state.cycle_camera()
-                self._send_json({"ok": True})
-            else:
-                self.send_response(404)
-                self.end_headers()
-
-    return Handler
+def _begin_expanded(title, flags=0):
+    """imgui.begin's return type varies (plain bool vs. (expanded, opened) tuple)
+    depending on binding version -- normalize to just the "should I draw contents" bool."""
+    result = imgui.begin(title, None, flags) if flags else imgui.begin(title)
+    if isinstance(result, tuple):
+        return result[0]
+    return result
 
 
 def _set_camera_preset(cam, preset):
@@ -360,11 +117,6 @@ def _set_camera_preset(cam, preset):
         cam.distance = 0.5
         cam.azimuth = 90
         cam.elevation = -15
-
-
-def _apply_contact_viz(viewer_opt, on):
-    viewer_opt.flags[mujoco.mjtVisFlag.mjVIS_CONTACTPOINT] = on
-    viewer_opt.flags[mujoco.mjtVisFlag.mjVIS_CONTACTFORCE] = on
 
 
 def _reset_can_random(model, data, rng):
@@ -381,6 +133,22 @@ def _reset_can_random(model, data, rng):
     data.qvel[dof:dof + 6] = 0.0
 
 
+class KeyEdge:
+    """Edge-triggered key check (fires once per press, not once per frame held)."""
+
+    def __init__(self):
+        self._prev = set()
+
+    def pressed(self, window, key):
+        down = glfw.get_key(window, key) == glfw.PRESS
+        was_down = key in self._prev
+        if down:
+            self._prev.add(key)
+        else:
+            self._prev.discard(key)
+        return down and not was_down
+
+
 def main():
     model = mujoco.MjModel.from_xml_path(str(MODEL_PATH))
     data = mujoco.MjData(model)
@@ -395,6 +163,8 @@ def main():
     lift_aid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, "lift_joint")
     monitor_qposadr = {n: model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, n)]
                         for n in MONITOR_JOINTS}
+    monitor_ranges = {n: model.jnt_range[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, n)]
+                       for n in MONITOR_JOINTS}
     rng = np.random.default_rng()
 
     site_r = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "grasp_target_r")
@@ -404,16 +174,35 @@ def main():
     init_quat_l = np.zeros(4)
     mujoco.mju_mat2Quat(init_quat_l, data.site_xmat[site_l])
 
-    state = TeleopState(
-        pos={"l": data.site_xpos[site_l].tolist(), "r": data.site_xpos[site_r].tolist()},
-        rpy_deg={"l": quat_to_rpy_deg(init_quat_l), "r": quat_to_rpy_deg(init_quat_r)},
-        lift=float(data.qpos[model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "lift_joint")]]),
-    )
+    targets = {
+        "pos_r": data.site_xpos[site_r].tolist(), "rpy_r": quat_to_rpy_deg(init_quat_r),
+        "pos_l": data.site_xpos[site_l].tolist(), "rpy_l": quat_to_rpy_deg(init_quat_l),
+        "grasp_r": 0.0, "thumb_r": 0.0, "grasp_l": 0.0, "thumb_l": 0.0,
+        "lift": float(data.qpos[model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "lift_joint")]]),
+    }
+    contact_viz = [False]
+    camera_preset = [0]
 
-    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", HTTP_PORT), make_handler(state))
-    http_thread = threading.Thread(target=httpd.serve_forever, daemon=True)
-    http_thread.start()
-    print(f"Teleop control panel: http://localhost:{HTTP_PORT}")
+    if not glfw.init():
+        raise RuntimeError("glfw.init() failed")
+    window = glfw.create_window(WINDOW_W, WINDOW_H, "FFW-SH5 Teleop", None, None)
+    if not window:
+        glfw.terminate()
+        raise RuntimeError("glfw.create_window() failed")
+    glfw.make_context_current(window)
+    glfw.swap_interval(0)
+
+    imgui.create_context()
+    impl = GlfwRenderer(window)
+
+    scene = mujoco.MjvScene(model, maxgeom=10000)
+    cam = mujoco.MjvCamera()
+    mujoco.mjv_defaultCamera(cam)
+    _set_camera_preset(cam, 0)
+    opt = mujoco.MjvOption()
+    mujoco.mjv_defaultOption(opt)
+    pert = mujoco.MjvPerturb()
+    context = mujoco.MjrContext(model, mujoco.mjtFontScale.mjFONTSCALE_150)
 
     q_des_r = HOME_Q_R.copy()
     q_des_l = HOME_Q_L.copy()
@@ -421,61 +210,139 @@ def main():
     steps_per_frame = max(1, round(frame_dt / model.opt.timestep))
     freq_ema = LOOP_HZ
     wall_start = time.perf_counter()
+    last_mouse = list(glfw.get_cursor_pos(window))
+    keys = KeyEdge()
+    ik_err_mm = {"l": 0.0, "r": 0.0}
 
-    def on_key(keycode):
-        if keycode == ord("R"):
-            state.request_reset_can()
-        elif keycode == ord("G"):
-            state.toggle_contact_viz()
-        elif keycode == ord("C"):
-            state.cycle_camera()
+    while not glfw.window_should_close(window):
+        t0 = time.perf_counter()
+        glfw.poll_events()
+        impl.process_inputs()
+        imgui.new_frame()
 
-    with mujoco.viewer.launch_passive(model, data, key_callback=on_key) as viewer:
-        _set_camera_preset(viewer.cam, 0)
-        while viewer.is_running():
-            t0 = time.perf_counter()
-            targets = state.snapshot_targets()
+        io = imgui.get_io()
 
-            if state.pop_reset_can():
+        # --- camera mouse interaction (skip while ImGui wants the mouse, e.g. dragging a
+        # slider) ---
+        cur_mouse = list(glfw.get_cursor_pos(window))
+        dx, dy = cur_mouse[0] - last_mouse[0], cur_mouse[1] - last_mouse[1]
+        last_mouse = cur_mouse
+        if not io.want_capture_mouse:
+            left = glfw.get_mouse_button(window, glfw.MOUSE_BUTTON_LEFT) == glfw.PRESS
+            right = glfw.get_mouse_button(window, glfw.MOUSE_BUTTON_RIGHT) == glfw.PRESS
+            middle = glfw.get_mouse_button(window, glfw.MOUSE_BUTTON_MIDDLE) == glfw.PRESS
+            if left or right or middle:
+                _, win_h = glfw.get_window_size(window)
+                mod_shift = (glfw.get_key(window, glfw.KEY_LEFT_SHIFT) == glfw.PRESS
+                             or glfw.get_key(window, glfw.KEY_RIGHT_SHIFT) == glfw.PRESS)
+                if right:
+                    action = mujoco.mjtMouse.mjMOUSE_MOVE_H if mod_shift else mujoco.mjtMouse.mjMOUSE_MOVE_V
+                elif left:
+                    action = mujoco.mjtMouse.mjMOUSE_ROTATE_H if mod_shift else mujoco.mjtMouse.mjMOUSE_ROTATE_V
+                else:
+                    action = mujoco.mjtMouse.mjMOUSE_ZOOM
+                mujoco.mjv_moveCamera(model, action, dx / win_h, dy / win_h, scene, cam)
+            if io.mouse_wheel != 0:
+                mujoco.mjv_moveCamera(model, mujoco.mjtMouse.mjMOUSE_ZOOM, 0.0, -0.05 * io.mouse_wheel, scene, cam)
+
+        if not io.want_capture_keyboard:
+            if keys.pressed(window, glfw.KEY_R):
                 _reset_can_random(model, data, rng)
                 mujoco.mj_forward(model, data)
+            if keys.pressed(window, glfw.KEY_G):
+                contact_viz[0] = not contact_viz[0]
+            if keys.pressed(window, glfw.KEY_C):
+                camera_preset[0] = 1 - camera_preset[0]
+                _set_camera_preset(cam, camera_preset[0])
 
-            ctx = data.qpos.copy()
-            quat_r = rpy_deg_to_quat(targets["rpy_deg"]["r"])
-            quat_l = rpy_deg_to_quat(targets["rpy_deg"]["l"])
-            q_des_r, perr_r, _ = solver_r.solve_pose(
-                q_des_r, np.array(targets["pos"]["r"]), quat_r,
-                max_iter=IK_MAX_ITER, context_qpos=ctx)
-            q_des_l, perr_l, _ = solver_l.solve_pose(
-                q_des_l, np.array(targets["pos"]["l"]), quat_l,
-                max_iter=IK_MAX_ITER, context_qpos=ctx)
+        # --- UI panel ---
+        imgui.set_next_window_pos((10, 10), imgui.Cond_.first_use_ever)
+        imgui.set_next_window_size((380, WINDOW_H - 20), imgui.Cond_.first_use_ever)
+        if _begin_expanded("FFW-SH5 Teleop"):
+            imgui.text(f"sim {data.time:6.1f}s  wall {time.perf_counter()-wall_start:6.1f}s  "
+                       f"{freq_ema:4.1f} Hz")
+            imgui.text(f"IK err  L: {ik_err_mm['l']:.2f}mm   R: {ik_err_mm['r']:.2f}mm")
+            imgui.separator()
 
-            for _ in range(steps_per_frame):
-                ctrl_r.apply(data, q_des_r)
-                ctrl_l.apply(data, q_des_l)
-                data.ctrl[lift_aid] = targets["lift"]
-                grasp.apply_grasp(model, data, grasp=targets["grasp"]["r"], thumb=targets["thumb"]["r"], side="r")
-                grasp.apply_grasp(model, data, grasp=targets["grasp"]["l"], thumb=targets["thumb"]["l"], side="l")
-                mujoco.mj_step(model, data)
+            for side, label in (("r", "Right hand control target"), ("l", "Left hand control target")):
+                if imgui.collapsing_header(label, imgui.TreeNodeFlags_.default_open):
+                    pos = targets[f"pos_{side}"]
+                    rpy = targets[f"rpy_{side}"]
+                    for i, axis in enumerate(("X", "Y", "Z")):
+                        _, pos[i] = imgui.slider_float(f"{axis}##{side}pos", pos[i], -0.2, 1.2, "%.3f m")
+                    for i, axis in enumerate(("Roll", "Pitch", "Yaw")):
+                        _, rpy[i] = imgui.slider_float(f"{axis}##{side}rpy", rpy[i], -180.0, 180.0, "%.1f deg")
 
-            _set_camera_preset(viewer.cam, targets["camera_preset"])
-            _apply_contact_viz(viewer.opt, targets["contact_viz"])
-            viewer.sync()
+            if imgui.collapsing_header("Hand grasp targets", imgui.TreeNodeFlags_.default_open):
+                for side, label in (("r", "Right"), ("l", "Left")):
+                    _, targets[f"grasp_{side}"] = imgui.slider_float(
+                        f"{label} grasp##{side}", targets[f"grasp_{side}"], 0.0, 1.0)
+                    _, targets[f"thumb_{side}"] = imgui.slider_float(
+                        f"{label} thumb##{side}", targets[f"thumb_{side}"], 0.0, 1.0)
 
-            elapsed = time.perf_counter() - t0
-            freq_ema = 0.9 * freq_ema + 0.1 * (1.0 / max(elapsed, 1e-6))
-            joint_deg = {n: math.degrees(float(data.qpos[a])) for n, a in monitor_qposadr.items()}
-            state.update_readout(
-                ik_err_mm={"l": perr_l * 1000.0, "r": perr_r * 1000.0},
-                sim_time=data.time, wall_time=time.perf_counter() - wall_start,
-                freq_hz=freq_ema, joint_deg=joint_deg,
-            )
+            if imgui.collapsing_header("Lift / Utils", imgui.TreeNodeFlags_.default_open):
+                _, targets["lift"] = imgui.slider_float("Lift", targets["lift"], LIFT_RANGE[0], LIFT_RANGE[1], "%.3f m")
+                if imgui.button("Reset Can (R)"):
+                    _reset_can_random(model, data, rng)
+                    mujoco.mj_forward(model, data)
+                imgui.same_line()
+                if imgui.button("Toggle Contact Viz (G)"):
+                    contact_viz[0] = not contact_viz[0]
+                imgui.same_line()
+                if imgui.button("Cycle Camera (C)"):
+                    camera_preset[0] = 1 - camera_preset[0]
+                    _set_camera_preset(cam, camera_preset[0])
 
-            sleep_time = frame_dt - elapsed
-            if sleep_time > 0:
-                time.sleep(sleep_time)
+            if imgui.collapsing_header("Joint position monitor"):
+                imgui.begin_child("joint_monitor", (0, 260), True)
+                for name in MONITOR_JOINTS:
+                    val = float(data.qpos[monitor_qposadr[name]])
+                    lo, hi = monitor_ranges[name]
+                    frac = (val - lo) / (hi - lo) if hi > lo else 0.0
+                    frac = min(1.0, max(0.0, frac))
+                    imgui.progress_bar(frac, (200, 0), f"{name} {math.degrees(val):+.1f}deg")
+                imgui.end_child()
+        imgui.end()
 
-    httpd.shutdown()
+        # --- physics step ---
+        ctx_qpos = data.qpos.copy()
+        quat_r = rpy_deg_to_quat(targets["rpy_r"])
+        quat_l = rpy_deg_to_quat(targets["rpy_l"])
+        q_des_r, perr_r, _ = solver_r.solve_pose(q_des_r, np.array(targets["pos_r"]), quat_r,
+                                                  max_iter=IK_MAX_ITER, context_qpos=ctx_qpos)
+        q_des_l, perr_l, _ = solver_l.solve_pose(q_des_l, np.array(targets["pos_l"]), quat_l,
+                                                  max_iter=IK_MAX_ITER, context_qpos=ctx_qpos)
+        ik_err_mm["r"] = perr_r * 1000.0
+        ik_err_mm["l"] = perr_l * 1000.0
+
+        for _ in range(steps_per_frame):
+            ctrl_r.apply(data, q_des_r)
+            ctrl_l.apply(data, q_des_l)
+            data.ctrl[lift_aid] = targets["lift"]
+            grasp.apply_grasp(model, data, grasp=targets["grasp_r"], thumb=targets["thumb_r"], side="r")
+            grasp.apply_grasp(model, data, grasp=targets["grasp_l"], thumb=targets["thumb_l"], side="l")
+            mujoco.mj_step(model, data)
+
+        # --- render 3D scene ---
+        opt.flags[mujoco.mjtVisFlag.mjVIS_CONTACTPOINT] = contact_viz[0]
+        opt.flags[mujoco.mjtVisFlag.mjVIS_CONTACTFORCE] = contact_viz[0]
+        fb_w, fb_h = glfw.get_framebuffer_size(window)
+        viewport = mujoco.MjrRect(0, 0, fb_w, fb_h)
+        mujoco.mjv_updateScene(model, data, opt, pert, cam, mujoco.mjtCatBit.mjCAT_ALL, scene)
+        mujoco.mjr_render(viewport, scene, context)
+
+        imgui.render()
+        impl.render(imgui.get_draw_data())
+        glfw.swap_buffers(window)
+
+        elapsed = time.perf_counter() - t0
+        freq_ema = 0.9 * freq_ema + 0.1 * (1.0 / max(elapsed, 1e-6))
+        sleep_time = frame_dt - elapsed
+        if sleep_time > 0:
+            time.sleep(sleep_time)
+
+    impl.shutdown()
+    glfw.terminate()
 
 
 if __name__ == "__main__":

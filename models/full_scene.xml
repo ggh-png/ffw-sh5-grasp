@@ -762,7 +762,6 @@
     <!-- Palm collision box is a crude stand-in for the real palm mesh; excluded vs world-attached
          geoms (table) the same way models/arm_hand.xml does (Phase 3) -->
     <exclude body1="hx5_l_base" body2="world"/>
-    <exclude body1="hx5_r_base" body2="world"/>
     <!-- Ring/pinky locked at range=0 (3-point grasp fallback, Phase 2); excluded vs world same as palm -->
     <exclude body1="finger_l_link13" body2="world"/>
     <exclude body1="finger_l_link14" body2="world"/>
