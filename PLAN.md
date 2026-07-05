@@ -4,7 +4,7 @@
 
 kinematic 치팅 없이, **contact force만으로** ROBOTIS FFW-SH5(HX5-D20 5지 핸드)가 테이블 위 캔을 집어 들어올리는 MuJoCo **텔레오퍼레이션** 시뮬레이션을 구축한다.
 
-레퍼런스는 최성준 교수의 "AI Worker FFW-SH5 Teleoperation" 영상이다. 재현할 핵심 요소:
+레퍼런스는 "AI Worker FFW-SH5 Teleoperation" 영상이다. 재현할 핵심 요소:
 - EE pose target 6D 슬라이더(X/Y/Z/Roll/Pitch/Yaw) 기반 텔레옵 + 6DOF IK (ik_err 실시간 표시)
 - **Grasp synergy**: 스칼라 슬라이더 하나(0~1)로 손 전체가 닫히고, force-limited position actuator의 토크 포화로 손가락이 캔을 자연스럽게 감싸쥠
 - Joint position monitor 패널, sim/wall time, loop freq HUD
