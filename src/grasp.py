@@ -65,6 +65,20 @@ THUMB_CURL_JOINTS = {
     "l": ("finger_l_joint3", "finger_l_joint4"),
     "r": ("finger_r_joint3", "finger_r_joint4"),
 }
+# Session 8 후속 6 -- unlike FINGER_CURL_JOINTS (index/middle curl the same physical
+# direction on both hands, so both hands' ranges start at 0 = extended), the thumb's
+# mcp_pitch/ip joints are mirrored: finger_r_joint3/4's range is [0, 1.5708] (lo=extended,
+# hi=curled) but finger_l_joint3/4's is the geometric mirror [-1.5708, 0] (so *hi*=extended,
+# lo=curled -- the sign convention flips, it isn't just relabeled). apply_grasp used to
+# always take `lo` as the open end regardless of side, which for the left hand commanded
+# the thumb toward its curled extreme even at thumb=0 -- self-colliding finger_l_link3/4
+# into the palm (measured ~40N contact, actuator pinned at its force limit, ~26 deg short of
+# target) instead of reaching a clean, contact-free extended pose the way the right hand
+# does. This also silently inverted the left thumb's curl *direction* (thumb=1 commanded it
+# toward 0 = MORE extended, not more curled) -- a real behavioral bug, not just a rest-pose
+# cosmetic one, though never exercised since the left hand's grasp has no can of its own to
+# test against (see module docstring).
+THUMB_CURL_OPEN_AT_HI = {"l": True, "r": False}
 RING_PINKY_CURL_JOINTS = {
     "l": ("finger_l_joint14", "finger_l_joint15", "finger_l_joint16",
           "finger_l_joint18", "finger_l_joint19", "finger_l_joint20"),
@@ -152,7 +166,11 @@ def apply_grasp(model, data, grasp: float, thumb: float, side: str = "r"):
         jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, joint_name)
         lo, hi = model.jnt_range[jid]
         frac = THUMB_OPEN_FRAC + thumb * (1.0 - THUMB_OPEN_FRAC)
-        _set_joint_ctrl(model, data, joint_name, lo + frac * (hi - lo))
+        if THUMB_CURL_OPEN_AT_HI[side]:
+            value = hi - frac * (hi - lo)
+        else:
+            value = lo + frac * (hi - lo)
+        _set_joint_ctrl(model, data, joint_name, value)
 
     for finger_joints in FINGER_CURL_JOINTS[side].values():
         for joint_name in finger_joints:

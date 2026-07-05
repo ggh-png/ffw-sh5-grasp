@@ -317,7 +317,7 @@
           <inertial pos="0 -0.0015 0" mass="3.80" diaginertia="0.00719 0.01156 0.00719"/>
           <joint name="left_wheel_drive_joint" class="wheel_drive"/>
           <geom type="mesh" mesh="left_wheel" friction="5.0 1.0 0.3" class="visual"/>
-          <geom type="cylinder" size="0.09 0.035" quat="0.707107 -0.707107 0 0" friction="5.0 1.0 0.3" group="3"/>
+          <geom name="left_wheel_collision" type="cylinder" size="0.09 0.035" quat="0.707107 -0.707107 0 0" friction="5.0 1.0 0.3" group="3"/>
         </body>
       </body>
 
@@ -329,7 +329,7 @@
           <inertial pos="0 0.0015 0" mass="3.80" diaginertia="0.00719 0.01156 0.00719"/>
           <joint name="right_wheel_drive_joint" class="wheel_drive"/>
           <geom type="mesh" mesh="right_wheel" friction="5.0 1.0 0.3" class="visual"/>
-          <geom type="cylinder" size="0.09 0.035" quat="0.707107 -0.707107 0 0" friction="5.0 1.0 0.3" group="3"/>
+          <geom name="right_wheel_collision" type="cylinder" size="0.09 0.035" quat="0.707107 -0.707107 0 0" friction="5.0 1.0 0.3" group="3"/>
         </body>
       </body>
 
@@ -341,7 +341,7 @@
           <inertial pos="0 -0.0015 0" mass="3.80" diaginertia="0.00719 0.01156 0.00719"/>
           <joint name="rear_wheel_drive_joint" class="wheel_drive"/>
           <geom type="mesh" mesh="rear_wheel" friction="5.0 1.0 0.3" class="visual"/>
-          <geom type="cylinder" size="0.09 0.035" quat="0.707107 -0.707107 0 0" friction="5.0 1.0 0.3" group="3"/>
+          <geom name="rear_wheel_collision" type="cylinder" size="0.09 0.035" quat="0.707107 -0.707107 0 0" friction="5.0 1.0 0.3" group="3"/>
         </body>
       </body>
 
@@ -868,6 +868,30 @@
     <pair geom1="palm_r_collision" geom2="table" solref="0.005 1" solimp="0.0001 0.95 0.015"/>
     <pair geom1="palm_l_collision" geom2="floor" solref="0.005 1" solimp="0.0001 0.95 0.015"/>
     <pair geom1="palm_r_collision" geom2="floor" solref="0.005 1" solimp="0.0001 0.95 0.015"/>
+    <!-- Wheel-floor contact (Session 8 후속 6): base_link only has base_x/base_y/base_yaw
+         joints (Phase 4's deliberate simplification, no vertical or tilt DOF -- see the
+         wheel bodies' comment above), so the wheels' ~1.5mm floor overlap (itself deliberate,
+         see NOTES.md "Phase 5 후속 2" on numerically-unstable exact-zero gaps) can never
+         settle to a natural equilibrium depth the way it would on a body that's actually
+         free to sink under load -- there's no DOF for it to sink into. With MuJoCo's default
+         solref (0.02 1) at that fixed, unrelaxable 1.5mm depth, the resulting restoring force
+         measured ~27,500N total across the 3 wheels (2 contact points each) -- 28x the
+         robot's actual 982N weight. That artificial over-stiffness doesn't blow up
+         (nothing to run away into) but makes every wheel behave as if pinned into the
+         ground far harder than its real load, which is exactly why steering felt sluggish:
+         pivoting a wheel scrubbing against that much phantom normal force (via friction=5.0)
+         needed far more torque than a realistically-loaded wheel would, saturating the
+         steer actuator's forcerange for seconds at a time (measured: ~5s to swing the rear
+         wheel 90 deg for an in-place turn). Softening this specific pair's solref to "0.1 1"
+         (measured directly: total wheel-floor normal force drops to ~1100N at the same fixed
+         1.5mm depth, matching the real weight) cut that to ~0.5s with zero regression in the
+         existing idle/straight-drive/table-collision tests (identical slip%, distance,
+         drift numbers). Steady-state in-place rotation rate is still well under the
+         commanded rate even after this fix -- a separate, deeper traction/torque limit, not
+         resolved here (see NOTES.md "Phase 5 후속 6"). -->
+    <pair geom1="left_wheel_collision" geom2="floor" solref="0.1 1"/>
+    <pair geom1="right_wheel_collision" geom2="floor" solref="0.1 1"/>
+    <pair geom1="rear_wheel_collision" geom2="floor" solref="0.1 1"/>
     <!-- Ring/pinky locked at range=0 (3-point grasp fallback, Phase 2); excluded vs world same as palm -->
     <exclude body1="finger_l_link13" body2="world"/>
     <exclude body1="finger_l_link14" body2="world"/>
