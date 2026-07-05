@@ -122,6 +122,27 @@ IK_MAX_ITER = 15
 # deg/frame is 125 deg/s, generous but bounded.
 MAX_POS_STEP_PER_FRAME = 0.02
 MAX_RPY_STEP_PER_FRAME_DEG = 5.0
+# Session 8 후속 3 -- rate-limiting the target (above) fixed *literally unreachable* jumps
+# (e.g. a slider yanked to a corner of its range) but not every real case: some in-range
+# position+RPY combinations land solve_pose in a genuine local-minimum/joint-limit lockup
+# where the per-frame error stops shrinking and plateaus tens of cm off target -- measured
+# directly (pos+rpy target home+(0.2,0.15,-0.1)m / (30,20,15)deg plateaus at ~130mm error
+# even at the full IK_MAX_ITER=15, forever, ~11ms/frame/hand the whole time it's held).
+# That's the same cost profile as the fixed corner-case bug, just reached by an ordinary
+# slider drag instead of an extreme one, so rate-limiting alone doesn't catch it. Fix: track
+# each hand's per-frame solve error; once it's stayed above STUCK_POS_TOL for
+# STUCK_FRAMES_THRESHOLD consecutive frames (a real lockup, not a normal multi-frame
+# convergence -- legitimate reachable targets converge under 5mm within 1-2 frames given the
+# warm start, per direct measurement), drop that hand's iteration budget to STUCK_MAX_ITER
+# until it recovers. This changes nothing about *whether* a target converges (a target stuck
+# at max_iter=15 was never going to converge at 15 either -- confirmed the same plateau value
+# is reached either way) or the accuracy of any target that does converge -- convergent
+# tracking always still gets the full IK_MAX_ITER budget every frame. It only stops paying
+# full price to keep re-discovering the same non-improving result once that's already been
+# established.
+STUCK_POS_TOL = 0.03
+STUCK_FRAMES_THRESHOLD = 5
+STUCK_MAX_ITER = 4
 
 
 def rpy_deg_to_quat(rpy_deg):
@@ -245,6 +266,9 @@ def main():
     # teleport-style jump.
     smoothed_pos = {"r": np.array(targets["pos_r"]), "l": np.array(targets["pos_l"])}
     smoothed_rpy = {"r": np.array(targets["rpy_r"]), "l": np.array(targets["rpy_l"])}
+    # See STUCK_POS_TOL note above -- counts consecutive frames each hand's solve_pose has
+    # failed to converge, so a genuine lockup can be throttled to STUCK_MAX_ITER.
+    stuck_counter = {"r": 0, "l": 0}
     contact_viz = [False]
     camera_preset = [0]
 
@@ -442,10 +466,17 @@ def main():
         mujoco.mju_mulQuat(quat_l, base_quat, quat_l)
         pos_r_world = local_to_world_pos(smoothed_pos["r"])
         pos_l_world = local_to_world_pos(smoothed_pos["l"])
+        # See STUCK_POS_TOL note above -- a hand that's been stuck (unconverged) for several
+        # frames in a row gets thrown into a cheap iteration budget instead of repeatedly
+        # paying full price to re-discover the same non-improving result.
+        iter_r = STUCK_MAX_ITER if stuck_counter["r"] >= STUCK_FRAMES_THRESHOLD else IK_MAX_ITER
+        iter_l = STUCK_MAX_ITER if stuck_counter["l"] >= STUCK_FRAMES_THRESHOLD else IK_MAX_ITER
         q_des_r, perr_r, _ = solver_r.solve_pose(q_des_r, pos_r_world, quat_r,
-                                                  max_iter=IK_MAX_ITER, context_qpos=ctx_qpos)
+                                                  max_iter=iter_r, context_qpos=ctx_qpos)
         q_des_l, perr_l, _ = solver_l.solve_pose(q_des_l, pos_l_world, quat_l,
-                                                  max_iter=IK_MAX_ITER, context_qpos=ctx_qpos)
+                                                  max_iter=iter_l, context_qpos=ctx_qpos)
+        stuck_counter["r"] = stuck_counter["r"] + 1 if perr_r > STUCK_POS_TOL else 0
+        stuck_counter["l"] = stuck_counter["l"] + 1 if perr_l > STUCK_POS_TOL else 0
         ik_err_mm["r"] = perr_r * 1000.0
         ik_err_mm["l"] = perr_l * 1000.0
 
