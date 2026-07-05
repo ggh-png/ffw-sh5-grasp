@@ -38,8 +38,10 @@ import grasp  # noqa: E402
 
 ARM_R = [f"arm_r_joint{i}" for i in range(1, 8)]
 ARM_L = [f"arm_l_joint{i}" for i in range(1, 8)]
-HOME_Q_R = np.array([-0.225, -0.394, 0.682, -2.613, -0.704, 0.843, -1.218])
-HOME_Q_L = np.array([-0.2222, 0.3763, -0.4512, -1.2252, 0.8006, 0.9576, 0.0270])
+# Matches models/full_scene.xml's "home" keyframe (Session 8 Phase 5 follow-up) -- see
+# NOTES.md "Phase 5 후속".
+HOME_Q_R = np.array([0.0, 0.0, 0.0, -1.5707963267948966, 0.0, 0.0, 0.0])
+HOME_Q_L = np.array([0.0, 0.0, 0.0, -1.5707963267948966, 0.0, 0.0, 0.0])
 
 QACC_LIMIT = 1e5
 IDLE_DRIFT_LIMIT = 0.002  # 2mm / matching radians order of magnitude, see part 2c

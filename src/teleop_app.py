@@ -84,11 +84,11 @@ import ik  # noqa: E402
 
 ARM_R = [f"arm_r_joint{i}" for i in range(1, 8)]
 ARM_L = [f"arm_l_joint{i}" for i in range(1, 8)]
-# Reused from tests/test_phase_3.py / tests/test_phase_4.py -- see NOTES.md "Phase 4" for
-# why these carry over unchanged onto full_scene.xml (pure rigid translation, no rotation,
-# between arm_hand.xml's fixed arm_base and this scene's lift-jointed one).
-HOME_Q_R = np.array([-0.225, -0.394, 0.682, -2.613, -0.704, 0.843, -1.218])
-HOME_Q_L = np.array([-0.2222, 0.3763, -0.4512, -1.2252, 0.8006, 0.9576, 0.0270])
+# Matches models/full_scene.xml's "home" keyframe, which as of Session 8 (Phase 5 follow-up)
+# matches the sibling ffw-sh5-mujoco repo's rest pose (only the elbow/joint4 bent -90 deg,
+# everything else 0) -- see NOTES.md "Phase 5 후속".
+HOME_Q_R = np.array([0.0, 0.0, 0.0, -1.5707963267948966, 0.0, 0.0, 0.0])
+HOME_Q_L = np.array([0.0, 0.0, 0.0, -1.5707963267948966, 0.0, 0.0, 0.0])
 LIFT_RANGE = (-0.5, 0.0)
 MONITOR_JOINTS = (
     [f"arm_r_joint{i}" for i in range(1, 8)] + [f"arm_l_joint{i}" for i in range(1, 8)]
@@ -99,7 +99,17 @@ MONITOR_JOINTS = (
 
 WINDOW_W, WINDOW_H = 1440, 900
 LOOP_HZ = 25.0
-IK_MAX_ITER = 30
+# Session 8 (Phase 5 후속): each solve_pose outer iteration costs several mj_forward calls
+# on this full-robot model (~71us each, measured directly) via its backtracking line
+# search. Once an RPY target goes past the reachable orientation workspace from the new
+# (folded-elbow) home pose, position converges but orientation never does, so the loop
+# spends every iteration up to max_iter re-discovering the same non-improving result --
+# measured directly: dragging Pitch from 0 to 90 deg (warm-started frame to frame, as the
+# live UI does) cost ~20ms/frame once stuck past ~63 deg at max_iter=30, vs ~9.6ms at
+# max_iter=15 with *no measurable convergence-quality loss* in the reachable range (checked
+# at 30/45/60/63 deg -- pos/ori error identical to 2 decimal places). Two hands stuck at
+# once could otherwise burn ~40ms alone, the entire frame budget at LOOP_HZ=25.
+IK_MAX_ITER = 15
 
 
 def rpy_deg_to_quat(rpy_deg):

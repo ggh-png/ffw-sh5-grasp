@@ -48,19 +48,15 @@ import ik  # noqa: E402
 ARM_R = [f"arm_r_joint{i}" for i in range(1, 8)]
 ARM_L = [f"arm_l_joint{i}" for i in range(1, 8)]
 
-# Reused verbatim from tests/test_phase_3.py's HOME_Q -- the arm_base translation between
-# arm_hand.xml (fixed at world (0,0,1.0)) and full_scene.xml (arm_base_link resting at
-# (0.0055, 0, 1.0816) with lift_joint at its "home" value -0.5) is a pure rigid translation
-# with no orientation change anywhere in the chain, so identical joint angles reproduce the
-# identical relative arm-to-can geometry once the can/table are translated by the same
-# offset (see models/full_scene.xml's table/can comment and NOTES.md "Phase 4"). Verified
-# directly by this file's part 1, not just assumed.
-HOME_Q_R = np.array([-0.225, -0.394, 0.682, -2.613, -0.704, 0.843, -1.218])
-# Freshly solved via src/ik.py (no prior validated left-arm pose exists) targeting a
-# reasonable clear-of-table ready position mirrored across the shoulder centerline; see
-# NOTES.md "Phase 4" for the derivation. Not tied to any can -- the left hand has none.
-HOME_Q_L = np.array([-0.2222, 0.3763, -0.4512, -1.2252, 0.8006, 0.9576, 0.0270])
-LIFT_HOME = -0.5
+# Session 8 (Phase 5 follow-up): matches the rest pose used by the sibling ffw-sh5-mujoco
+# repo's Controller.reset() (only joint4/elbow set to -90 deg, everything else 0; see
+# NOTES.md "Phase 5 후속" for the derivation) rather than the old arm_hand.xml-derived
+# "already reaching for the can" pose. This is now just a generic ready/rest seed for IK
+# multistart, not tied to any particular can geometry -- solve_pose_multistart's random
+# restarts (not this seed) do the real work of finding the pregrasp/grasp configuration.
+HOME_Q_R = np.array([0.0, 0.0, 0.0, -1.5707963267948966, 0.0, 0.0, 0.0])
+HOME_Q_L = np.array([0.0, 0.0, 0.0, -1.5707963267948966, 0.0, 0.0, 0.0])
+LIFT_HOME = -0.39
 THUMB_PRESHAPE_R = {"finger_r_joint1": 0.131, "finger_r_joint2": -1.309}
 THUMB_PRESHAPE_L = {"finger_l_joint1": 0.131, "finger_l_joint2": 1.309}
 

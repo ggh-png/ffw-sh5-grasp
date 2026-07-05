@@ -20,6 +20,16 @@
     <material name="table_mat" rgba="0.55 0.4 0.3 1"/>
     <material name="can_mat" rgba="0.75 0.1 0.1 1"/>
 
+    <!-- Visual-only soda can mesh (Session 8), from the sibling ffw-sh5-teleoperation repo's
+         assets/soda_can_stl/soda_can.stl -- copied in (assets/soda_can/), not referenced by
+         absolute path, matching how assets/robotis_ffw was vendored in Phase 0. STL has no
+         UV data so it can't carry the source texture; scaled per-axis (1.1 xy, 0.7333 z) to
+         match can_geom's already-validated collision cylinder (r=0.033, half-height=0.055)
+         exactly rather than its own native proportions (0.03 radius x 0.15 height) -- the
+         collision shape is Phase 1/2's tuned grasp geometry and is not being touched, only
+         the rendered surface now sits flush against it instead of the plain cylinder. -->
+    <mesh name="soda_can" file="../../soda_can/soda_can.stl" scale="1.1 1.1 0.7333"/>
+
 
     <mesh name="base_mobile_assy" file="ffw_s/base_mobile_assy.stl" scale="0.001 0.001 0.001"/>
     <mesh name="left_wheel" file="ffw_s/left_wheel_drive_link.stl" scale="0.001 0.001 0.001"/>
@@ -83,10 +93,22 @@
       <joint type="hinge" axis="0 1 0" damping="2" frictionloss="0.2"/>
       <velocity kv="1" ctrlrange="-50 50" ctrllimited="true"/>
     </default>
-    <!-- Slider: lift_joint -->
+    <!-- Slider: lift_joint. kp raised from the official 10000 (Session 8, Phase 5 후속):
+         this is a plain <position> actuator with no gravity feedforward (same class of
+         issue Phase 3 hit with the arms, see src/arm_control.py), so it has a real
+         proportional-only static droop under load -- measured directly: qfrc_bias on this
+         DOF is ~323N regardless of arm pose (total system weight along the lift axis is
+         pose-invariant, confirmed empirically), so droop ~= 323/kp. This was invisible at
+         kp=10000 with the old "arms already reaching for the table" pose (converged to
+         <0.3mm quickly for reasons not fully explained -- possibly a lucky low-vibration
+         settling path) but became a ~30mm+ slowly-growing sag once the home pose changed to
+         match ffw-sh5-mujoco's rest pose (arms hanging, elbow -90 deg) -- same total load,
+         different transient dynamics exposed the same latent per-actuator weakness a much
+         higher kp (like arm_control.py's feedforward) fixes directly. kp=500000 keeps droop
+         under ~0.7mm with no added instability (max|qacc| unchanged). -->
     <default class="slider">
       <joint type="slide" frictionloss="100.0" armature="10.0" damping="5000.0"/>
-      <position kp="10000" forcerange="-100000 100000"/>
+      <position kp="500000" forcerange="-100000 100000"/>
       <default class="lift_joint">
         <joint axis="0 0 1" range="-0.5 0.0"/>
       </default>
@@ -706,7 +728,8 @@
     <body name="can" pos="0.5055 0.0 0.7866">
       <freejoint name="can_free"/>
       <inertial pos="0 0 0" mass="0.35" diaginertia="0.000448 0.000448 0.00019"/>
-      <geom name="can_geom" type="cylinder" size="0.033 0.055" material="can_mat"
+      <geom type="mesh" mesh="soda_can" material="can_mat" class="visual"/>
+      <geom name="can_geom" type="cylinder" size="0.033 0.055" rgba="0 0 0 0"
         priority="1" condim="6" friction="0.5 0.01 0.003"
         solimp="0.5 0.99 0.0001" solref="0.005 1"/>
     </body>
@@ -886,7 +909,7 @@
 
   <keyframe>
     <key name="home"
-      qpos="0 0 0 -0.5 0 0 -0.2222 0.3763 -0.4512 -1.2252 0.8006 0.9576 0.027 0.131 1.309 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -0.225 -0.394 0.682 -2.613 -0.704 0.843 -1.218 0.131 -1.309 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.5055 0 0.7866 1 0 0 0"
-      ctrl="0 0 0 -0.5 0 0 0 0 0 0 0 0 0 0.131 1.309 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.131 -1.309 0 0 0 0 0 0 0 0 0 0"/>
+      qpos="0 0 0 -0.39 0 0 0 0 0 -1.570796 0 0 0 0.131 1.309 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -1.570796 0 0 0 0.131 -1.309 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.5055 0 0.7866 1 0 0 0"
+      ctrl="0 0 0 -0.39 0 0 0 0 0 0 0 0 0 0.131 1.309 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.131 -1.309 0 0 0 0 0 0 0 0 0 0"/>
   </keyframe>
 </mujoco>
