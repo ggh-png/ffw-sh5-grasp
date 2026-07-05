@@ -88,10 +88,17 @@
         <joint axis="0 0 1" range="-1.58 1.58"/>
       </default>
     </default>
-    <!-- Wheel drive -->
+    <!-- Wheel drive. kv raised from the vendored ffw_sh5.xml's 1 (Session 8 후속): a
+         velocity actuator only develops torque proportional to (ctrl - qvel), and at kv=1
+         the wheel's own rotational inertia is so much smaller than the ~100kg base+arms it
+         must accelerate via ground friction that it settles near its own target speed while
+         delivering nowhere near enough sustained torque to also move the base -- measured
+         directly, base crawled <2mm in 4s of "full speed" forward commands. kv=30 reaches
+         ~90% of the commanded cruise speed with no added instability (max|qacc| unchanged
+         from baseline). -->
     <default class="wheel_drive">
       <joint type="hinge" axis="0 1 0" damping="2" frictionloss="0.2"/>
-      <velocity kv="1" ctrlrange="-50 50" ctrllimited="true"/>
+      <velocity kv="30" ctrlrange="-50 50" ctrllimited="true"/>
     </default>
     <!-- Slider: lift_joint. kp raised from the official 10000 (Session 8, Phase 5 후속):
          this is a plain <position> actuator with no gravity feedforward (same class of
@@ -269,7 +276,19 @@
 
   <worldbody>
     <light pos="0 0 2.2" dir="0 0 -1" directional="true"/>
-    <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"/>
+    <!-- z=0.148 (Session 8 후속, wheel-friction locomotion): the wheel collision cylinders'
+         own resting height (radius 0.09, center world z=0.2365 at the authored base_link/
+         wheel pose, measured directly via mj_forward) is exactly 0.1465, but placing the
+         floor at EXACTLY that height left it sitting at a numerically unstable zero-gap
+         boundary -- measured directly: with pos=0.1465 only the rear wheel kept a contact
+         (front-left/front-right silently dropped out of `data.contact`, all three wheels'
+         xpos identical to float precision) and the base could not move at all (>99% wheel
+         slip, since two of three contact patches simply weren't there). A deliberate ~1.5mm
+         overlap makes contact detection robust for all three wheels; verified directly
+         (wheel rolling speed now matches actual base velocity, no slip). Arm/table/can
+         height calibration (Phase 4) is untouched -- this only redefines where "the ground"
+         is, not where base_link/the arm sit. -->
+    <geom name="floor" size="0 0 0.05" type="plane" pos="0 0 0.148" material="groundplane"/>
 
     <body name="base_link" pos="0 0 0.15">
       <joint name="base_x" class="base_planar" axis="1 0 0"/>
@@ -282,11 +301,21 @@
       <!-- base_mobile_assy collision -->
       <geom type="box" size="0.2 0.2 0.12" pos="0 0 0.24" rgba="0 0 0 0"/>
 
-      <!-- Left front wheel (steering + driving) -->
+      <!-- Left front wheel (steering + driving) -- real joints restored (Session 8 후속,
+           see src/base_teleop.py) from the vendored ffw_sh5.xml's own wheel_steer/wheel_drive
+           default classes (already present above, just unused since Phase 4 removed these
+           joints for simplicity). Ground contact is what actually propels the base now --
+           the base_x/base_y/base_yaw joints on base_link stay (keeps the base from tipping/
+           rolling, an intentional simplification vs. the vendored model's full 6dof
+           floating_base freejoint) but are no longer directly actuated; wheel-ground
+           friction, transmitted through these steer/drive joints, is what pushes base_link
+           along them now. -->
       <body name="left_wheel_steer" pos="0.1371 0.2554 0.27555">
         <inertial pos="0 0 0" mass="0.5" diaginertia="0.001 0.001 0.001"/>
+        <joint name="left_wheel_steer_joint" class="left_wheel_steer"/>
         <body name="left_wheel_drive" pos="0 0 -0.18905">
           <inertial pos="0 -0.0015 0" mass="3.80" diaginertia="0.00719 0.01156 0.00719"/>
+          <joint name="left_wheel_drive_joint" class="wheel_drive"/>
           <geom type="mesh" mesh="left_wheel" friction="5.0 1.0 0.3" class="visual"/>
           <geom type="cylinder" size="0.09 0.035" quat="0.707107 -0.707107 0 0" friction="5.0 1.0 0.3" group="3"/>
         </body>
@@ -295,8 +324,10 @@
       <!-- Right front wheel (steering + driving) -->
       <body name="right_wheel_steer" pos="0.1371 -0.2554 0.27555">
         <inertial pos="0 0 0" mass="0.5" diaginertia="0.001 0.001 0.001"/>
+        <joint name="right_wheel_steer_joint" class="right_wheel_steer"/>
         <body name="right_wheel_drive" pos="0 0 -0.18905">
           <inertial pos="0 0.0015 0" mass="3.80" diaginertia="0.00719 0.01156 0.00719"/>
+          <joint name="right_wheel_drive_joint" class="wheel_drive"/>
           <geom type="mesh" mesh="right_wheel" friction="5.0 1.0 0.3" class="visual"/>
           <geom type="cylinder" size="0.09 0.035" quat="0.707107 -0.707107 0 0" friction="5.0 1.0 0.3" group="3"/>
         </body>
@@ -305,8 +336,10 @@
       <!-- Rear wheel (steering + driving) -->
       <body name="rear_wheel_steer" pos="-0.2899 0 0.27555">
         <inertial pos="0 0 0" mass="0.5" diaginertia="0.001 0.001 0.001"/>
+        <joint name="rear_wheel_steer_joint" class="rear_wheel_steer"/>
         <body name="rear_wheel_drive" pos="0 0 -0.18905">
           <inertial pos="0 -0.0015 0" mass="3.80" diaginertia="0.00719 0.01156 0.00719"/>
+          <joint name="rear_wheel_drive_joint" class="wheel_drive"/>
           <geom type="mesh" mesh="rear_wheel" friction="5.0 1.0 0.3" class="visual"/>
           <geom type="cylinder" size="0.09 0.035" quat="0.707107 -0.707107 0 0" friction="5.0 1.0 0.3" group="3"/>
         </body>
@@ -475,17 +508,17 @@
                             <geom type="capsule" fromto="0.00685 0 0.00858  0.00685 0 0.01818" size="0.014825" class="hand_collision"/>
                             <body name="finger_l_link14" pos="0.0165 0 0.0235">
                               <inertial pos="4.08056e-06 0.000101462 0.0241565" mass="0.034690" diaginertia="5.40298e-06 5.03702e-06 2.25807e-06"/>
-                              <joint name="finger_l_joint14" class="finger_pip" range="0 0"/>
+                              <joint name="finger_l_joint14" class="finger_pip"/>
                               <geom type="mesh" mesh="hx5_l_finger_pip" material="black" class="visual"/>
                               <geom type="capsule" fromto="0 0 0.004255  0 0 0.034505" size="0.0105" class="hand_collision"/>
                               <body name="finger_l_link15" pos="0 0 0.0355">
                                 <inertial pos="4.08056e-06 0.000101462 0.0241565" mass="0.034690" diaginertia="5.40298e-06 5.03702e-06 2.25807e-06"/>
-                                <joint name="finger_l_joint15" class="finger_dip" range="0 0"/>
+                                <joint name="finger_l_joint15" class="finger_dip"/>
                                 <geom type="mesh" mesh="hx5_l_finger_dip" material="black" class="visual"/>
                                 <geom type="capsule" fromto="0 0 0.004255  0 0 0.034505" size="0.0105" class="hand_collision"/>
                                 <body name="finger_l_link16" pos="0 0 0.0355">
                                   <inertial pos="0.000710251 0.000472384 0.0180986" mass="0.013637" diaginertia="2.23243e-06 2.01881e-06 1.07866e-06"/>
-                                  <joint name="finger_l_joint16" class="finger_tip" range="0 0"/>
+                                  <joint name="finger_l_joint16" class="finger_tip"/>
                                   <geom type="mesh" mesh="hx5_l_finger_tip" material="black" class="visual"/>
                                   <geom type="capsule" fromto="0.0015 0 0.006005  0.0015 0 0.025755" size="0.01225" class="hand_collision"/>
                                 </body>
@@ -501,17 +534,17 @@
                             <geom type="capsule" fromto="0.00685 0 0.00858  0.00685 0 0.01818" size="0.014825" class="hand_collision"/>
                             <body name="finger_l_link18" pos="0.0165 0 0.0235">
                               <inertial pos="4.08056e-06 0.000101462 0.0241565" mass="0.034690" diaginertia="5.40298e-06 5.03702e-06 2.25807e-06"/>
-                              <joint name="finger_l_joint18" class="finger_pip" range="0 0"/>
+                              <joint name="finger_l_joint18" class="finger_pip"/>
                               <geom type="mesh" mesh="hx5_l_finger_pip" material="black" class="visual"/>
                               <geom type="capsule" fromto="0 0 0.004255  0 0 0.034505" size="0.0105" class="hand_collision"/>
                               <body name="finger_l_link19" pos="0 0 0.0355">
                                 <inertial pos="4.08056e-06 0.000101462 0.0241565" mass="0.034690" diaginertia="5.40298e-06 5.03702e-06 2.25807e-06"/>
-                                <joint name="finger_l_joint19" class="finger_dip" range="0 0"/>
+                                <joint name="finger_l_joint19" class="finger_dip"/>
                                 <geom type="mesh" mesh="hx5_l_finger_dip" material="black" class="visual"/>
                                 <geom type="capsule" fromto="0 0 0.004255  0 0 0.034505" size="0.0105" class="hand_collision"/>
                                 <body name="finger_l_link20" pos="0 0 0.0355">
                                   <inertial pos="0.000710251 0.000472384 0.0180986" mass="0.013637" diaginertia="2.23243e-06 2.01881e-06 1.07866e-06"/>
-                                  <joint name="finger_l_joint20" class="finger_tip" range="0 0"/>
+                                  <joint name="finger_l_joint20" class="finger_tip"/>
                                   <geom type="mesh" mesh="hx5_l_finger_tip" material="black" class="visual"/>
                                   <geom type="capsule" fromto="0.0015 0 0.006005  0.0015 0 0.025755" size="0.01225" class="hand_collision"/>
                                 </body>
@@ -664,17 +697,17 @@
                             <geom type="capsule" fromto="0.00685 0 0.00858  0.00685 0 0.01818" size="0.014825" class="hand_collision"/>
                             <body name="finger_r_link14" pos="0.0165 0 0.0235">
                               <inertial pos="4.08056e-06 0.000101462 0.0241565" mass="0.034690" diaginertia="5.40298e-06 5.03702e-06 2.25807e-06"/>
-                              <joint name="finger_r_joint14" class="finger_pip" range="0 0"/>
+                              <joint name="finger_r_joint14" class="finger_pip"/>
                               <geom type="mesh" mesh="hx5_r_finger_pip" material="black" class="visual"/>
                               <geom type="capsule" fromto="0 0 0.004255  0 0 0.034505" size="0.0105" class="hand_collision"/>
                               <body name="finger_r_link15" pos="0 0 0.0355">
                                 <inertial pos="4.08056e-06 0.000101462 0.0241565" mass="0.034690" diaginertia="5.40298e-06 5.03702e-06 2.25807e-06"/>
-                                <joint name="finger_r_joint15" class="finger_dip" range="0 0"/>
+                                <joint name="finger_r_joint15" class="finger_dip"/>
                                 <geom type="mesh" mesh="hx5_r_finger_dip" material="black" class="visual"/>
                                 <geom type="capsule" fromto="0 0 0.004255  0 0 0.034505" size="0.0105" class="hand_collision"/>
                                 <body name="finger_r_link16" pos="0 0 0.0355">
                                   <inertial pos="0.000710251 0.000472384 0.0180986" mass="0.013637" diaginertia="2.23243e-06 2.01881e-06 1.07866e-06"/>
-                                  <joint name="finger_r_joint16" class="finger_tip" range="0 0"/>
+                                  <joint name="finger_r_joint16" class="finger_tip"/>
                                   <geom type="mesh" mesh="hx5_r_finger_tip" material="black" class="visual"/>
                                   <geom type="capsule" fromto="0.0015 0 0.006005  0.0015 0 0.025755" size="0.01225" class="hand_collision"/>
                                 </body>
@@ -690,17 +723,17 @@
                             <geom type="capsule" fromto="0.00685 0 0.00858  0.00685 0 0.01818" size="0.014825" class="hand_collision"/>
                             <body name="finger_r_link18" pos="0.0165 0 0.0235">
                               <inertial pos="4.08056e-06 0.000101462 0.0241565" mass="0.034690" diaginertia="5.40298e-06 5.03702e-06 2.25807e-06"/>
-                              <joint name="finger_r_joint18" class="finger_pip" range="0 0"/>
+                              <joint name="finger_r_joint18" class="finger_pip"/>
                               <geom type="mesh" mesh="hx5_r_finger_pip" material="black" class="visual"/>
                               <geom type="capsule" fromto="0 0 0.004255  0 0 0.034505" size="0.0105" class="hand_collision"/>
                               <body name="finger_r_link19" pos="0 0 0.0355">
                                 <inertial pos="4.08056e-06 0.000101462 0.0241565" mass="0.034690" diaginertia="5.40298e-06 5.03702e-06 2.25807e-06"/>
-                                <joint name="finger_r_joint19" class="finger_dip" range="0 0"/>
+                                <joint name="finger_r_joint19" class="finger_dip"/>
                                 <geom type="mesh" mesh="hx5_r_finger_dip" material="black" class="visual"/>
                                 <geom type="capsule" fromto="0 0 0.004255  0 0 0.034505" size="0.0105" class="hand_collision"/>
                                 <body name="finger_r_link20" pos="0 0 0.0355">
                                   <inertial pos="0.000710251 0.000472384 0.0180986" mass="0.013637" diaginertia="2.23243e-06 2.01881e-06 1.07866e-06"/>
-                                  <joint name="finger_r_joint20" class="finger_tip" range="0 0"/>
+                                  <joint name="finger_r_joint20" class="finger_tip"/>
                                   <geom type="mesh" mesh="hx5_r_finger_tip" material="black" class="visual"/>
                                   <geom type="capsule" fromto="0.0015 0 0.006005  0.0015 0 0.025755" size="0.01225" class="hand_collision"/>
                                 </body>
@@ -853,10 +886,17 @@
 
   <actuator>
 
-    <!-- Mobile base: planar drive (Phase 5, velocity control -- see src/base_teleop.py) -->
-    <velocity class="base_planar" name="base_x" joint="base_x"/>
-    <velocity class="base_planar" name="base_y" joint="base_y"/>
-    <velocity class="base_yaw" name="base_yaw" joint="base_yaw"/>
+    <!-- Mobile base (Session 8 후속): base_x/base_y/base_yaw joints are no longer directly
+         actuated -- they're still there (base_link stays planar-constrained, no tipping)
+         but now only move in reaction to real wheel-ground friction, via the wheel
+         steer/drive actuators below. See src/base_teleop.py for the swerve-style per-wheel
+         steer angle + drive speed conversion from a desired body-frame velocity. -->
+    <position class="left_wheel_steer" name="left_wheel_steer" joint="left_wheel_steer_joint" inheritrange="1"/>
+    <position class="right_wheel_steer" name="right_wheel_steer" joint="right_wheel_steer_joint" inheritrange="1"/>
+    <position class="rear_wheel_steer" name="rear_wheel_steer" joint="rear_wheel_steer_joint" inheritrange="1"/>
+    <velocity class="wheel_drive" name="left_wheel_drive" joint="left_wheel_drive_joint"/>
+    <velocity class="wheel_drive" name="right_wheel_drive" joint="right_wheel_drive_joint"/>
+    <velocity class="wheel_drive" name="rear_wheel_drive" joint="rear_wheel_drive_joint"/>
     <!-- Slider -->
     <position class="lift_joint" name="lift_joint" joint="lift_joint" inheritrange="1"/>
     <!-- Head -->
@@ -883,6 +923,18 @@
     <position class="finger_pip" name="finger_l_joint10" joint="finger_l_joint10" inheritrange="1"/>
     <position class="finger_dip" name="finger_l_joint11" joint="finger_l_joint11" inheritrange="1"/>
     <position class="finger_tip" name="finger_l_joint12" joint="finger_l_joint12" inheritrange="1"/>
+    <!-- Left ring/pinky (Session 8 후속): pip/dip/tip range widened from the Phase 2
+         locked-at-0 fallback (see NOTES.md "Phase 5 후속") only enough for a static relaxed-
+         hand curl, not synced to the grasp scalar -- they still don't participate in the
+         actual can grasp, this is cosmetic only. mcp (spread) stays locked at 0/unactuated,
+         same as Phase 2 -- inheritrange can't attach to a zero-width range anyway (Session 2
+         finding), and no spread is wanted here regardless. -->
+    <position class="finger_pip" name="finger_l_joint14" joint="finger_l_joint14" inheritrange="1"/>
+    <position class="finger_dip" name="finger_l_joint15" joint="finger_l_joint15" inheritrange="1"/>
+    <position class="finger_tip" name="finger_l_joint16" joint="finger_l_joint16" inheritrange="1"/>
+    <position class="finger_pip" name="finger_l_joint18" joint="finger_l_joint18" inheritrange="1"/>
+    <position class="finger_dip" name="finger_l_joint19" joint="finger_l_joint19" inheritrange="1"/>
+    <position class="finger_tip" name="finger_l_joint20" joint="finger_l_joint20" inheritrange="1"/>
     <!-- Right arm -->
     <motor name="arm_r_joint1" joint="arm_r_joint1" ctrlrange="-61.4 61.4"/>
     <motor name="arm_r_joint2" joint="arm_r_joint2" ctrlrange="-61.4 61.4"/>
@@ -904,12 +956,19 @@
     <position class="finger_pip" name="finger_r_joint10" joint="finger_r_joint10" inheritrange="1"/>
     <position class="finger_dip" name="finger_r_joint11" joint="finger_r_joint11" inheritrange="1"/>
     <position class="finger_tip" name="finger_r_joint12" joint="finger_r_joint12" inheritrange="1"/>
-  
+    <!-- Right ring/pinky (Session 8 후속, see left hand comment above) -->
+    <position class="finger_pip" name="finger_r_joint14" joint="finger_r_joint14" inheritrange="1"/>
+    <position class="finger_dip" name="finger_r_joint15" joint="finger_r_joint15" inheritrange="1"/>
+    <position class="finger_tip" name="finger_r_joint16" joint="finger_r_joint16" inheritrange="1"/>
+    <position class="finger_pip" name="finger_r_joint18" joint="finger_r_joint18" inheritrange="1"/>
+    <position class="finger_dip" name="finger_r_joint19" joint="finger_r_joint19" inheritrange="1"/>
+    <position class="finger_tip" name="finger_r_joint20" joint="finger_r_joint20" inheritrange="1"/>
+
   </actuator>
 
   <keyframe>
     <key name="home"
-      qpos="0 0 0 -0.39 0 0 0 0 0 -1.570796 0 0 0 0.131 1.309 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -1.570796 0 0 0 0.131 -1.309 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.5055 0 0.7866 1 0 0 0"
-      ctrl="0 0 0 -0.39 0 0 0 0 0 0 0 0 0 0.131 1.309 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.131 -1.309 0 0 0 0 0 0 0 0 0 0"/>
+      qpos="0 0 0 0 0 0 0 0 0 -0.39 0 0 0 0 0 -1.570796 0 0 0 0.131 1.309 0 0 0 0 0 0 0 0 0 0 0 0.4014 0.3142 0.3142 0 0.4014 0.3142 0.3142 0 0 0 -1.570796 0 0 0 0.131 -1.309 0 0 0 0 0 0 0 0 0 0 0 0.4014 0.3142 0.3142 0 0.4014 0.3142 0.3142 0.5055 0 0.7866 1 0 0 0"
+      ctrl="0 0 0 0 0 0 -0.39 0 0 0 0 0 0 0 0 0 0.131 1.309 0 0 0 0 0 0 0 0 0 0 0.4014 0.3142 0.3142 0.4014 0.3142 0.3142 0 0 0 0 0 0 0 0.131 -1.309 0 0 0 0 0 0 0 0 0 0 0.4014 0.3142 0.3142 0.4014 0.3142 0.3142"/>
   </keyframe>
 </mujoco>

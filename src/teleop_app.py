@@ -46,15 +46,21 @@ the coupling that was previously present even at the resting/default slider posi
 **Mobile base (Phase 5, src/base_teleop.py)**: EE pose sliders are base-local, not world-
 fixed -- every frame the current pos_r/pos_l/rpy_r/rpy_l target is rotated+translated by the
 base's live `(base_x, base_y, base_yaw)` qpos before being handed to IK, so the arm doesn't
-have to fight the base moving/turning under it (ffw-sh5-mobile-and-box-plan.md S3.3). Driving
-itself never touches qpos -- WASD/arrow keys go through `base_teleop.BaseTeleop` (accel/brake
-smoothing ported from the sibling ffw-sh5-teleoperation repo's reference feel) into the three
-base velocity actuators' `ctrl`, same "state feedback in, ctrl out" shape as arm_control.py.
+have to fight the base moving/turning under it (ffw-sh5-mobile-and-box-plan.md S3.3).
+Driving itself never touches qpos -- arrow keys go through `base_teleop.SwerveDrive`
+(accel/brake smoothing ported from the sibling ffw-sh5-teleoperation repo's reference feel,
+then converted to per-wheel steer angle + drive speed) into the three wheels' real steer/
+drive actuators. Motion is genuinely wheel-friction-driven now (Session 8 후속): the
+base_x/base_y/base_yaw joints are still there so base_link can't tip over, but nothing
+actuates them directly any more -- ground contact under the spinning wheels is what pushes
+base_link along them. Deliberately arrow-keys-only, not WASD -- WASD collides with the
+keybindings a MuJoCo user already expects from other tools (see NOTES.md "Phase 5 후속").
 
 Run: `python3 src/teleop_app.py`.
 Mouse: left-drag orbit, right-drag pan, scroll zoom (standard MuJoCo camera controls).
-Keyboard: W/A/S/D = base forward/back/strafe (robot-local), Left/Right = base yaw,
-Q/E = lift down/up, R = reset can (+-2cm random), G = toggle contact force/point
+Keyboard: Up/Down = base forward/back (robot-local), Left/Right = base yaw,
+Shift+Left/Right = base strafe, Q/E = lift down/up, R = reset can (+-2cm random),
+G = toggle contact force/point
 visualization, C = cycle camera preset (overview / right-hand close-up). R/G/C also have
 buttons in the on-screen panel.
 """
@@ -110,6 +116,12 @@ LOOP_HZ = 25.0
 # at 30/45/60/63 deg -- pos/ori error identical to 2 decimal places). Two hands stuck at
 # once could otherwise burn ~40ms alone, the entire frame budget at LOOP_HZ=25.
 IK_MAX_ITER = 15
+# See "IK target rate limiting" note near `smoothed_pos`/`smoothed_rpy` below: caps how far
+# the *effective* IK target can move in one frame, independent of how far the raw slider
+# jumped. 0.02m/frame at LOOP_HZ=25 is 0.5 m/s -- a brisk but trackable teleop speed; 5
+# deg/frame is 125 deg/s, generous but bounded.
+MAX_POS_STEP_PER_FRAME = 0.02
+MAX_RPY_STEP_PER_FRAME_DEG = 5.0
 
 
 def rpy_deg_to_quat(rpy_deg):
@@ -189,13 +201,19 @@ def main():
     ctrl_r = arm_control.ArmTorqueController(model, ARM_R)
     ctrl_l = arm_control.ArmTorqueController(model, ARM_L)
     lift_aid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, "lift_joint")
-    base_x_aid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, "base_x")
-    base_y_aid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, "base_y")
-    base_yaw_aid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, "base_yaw")
     base_x_qadr = model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "base_x")]
     base_y_qadr = model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "base_y")]
     base_yaw_qadr = model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "base_yaw")]
-    base_drive = base_teleop.BaseTeleop()
+    # Real per-wheel steer (position) + drive (velocity) actuators -- see
+    # src/base_teleop.py's SwerveDrive and the module docstring's "Mobile base" note. Base
+    # motion is now a *consequence* of wheel-ground friction, not a direct actuator on
+    # base_x/base_y/base_yaw (those joints still exist so base_link can't tip, but nothing
+    # actuates them directly any more).
+    wheel_steer_aids = {w: mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, f"{w}_steer")
+                         for w in ("left_wheel", "right_wheel", "rear_wheel")}
+    wheel_drive_aids = {w: mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, f"{w}_drive")
+                         for w in ("left_wheel", "right_wheel", "rear_wheel")}
+    base_drive = base_teleop.SwerveDrive()
     monitor_qposadr = {n: model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, n)]
                         for n in MONITOR_JOINTS}
     monitor_ranges = {n: model.jnt_range[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, n)]
@@ -217,6 +235,16 @@ def main():
         "grasp_r": 0.0, "thumb_r": 0.0, "grasp_l": 0.0, "thumb_l": 0.0,
         "lift": float(data.qpos[model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "lift_joint")]]),
     }
+    # IK actually chases these smoothed copies, not the raw slider values directly (see
+    # module docstring's "IK target rate limiting" note) -- a slider yanked/typed to a
+    # distant value in one frame otherwise sends solve_pose a target it can't reach within
+    # max_joint_delta's per-iteration step size, burning the full IK_MAX_ITER budget on a
+    # jump that will take several frames to close anyway (measured directly: ~11ms/frame for
+    # a 0.3m single-frame position jump). Capping how far the effective target itself can
+    # move per frame keeps every solve_pose call cheap AND produces smoother motion than a
+    # teleport-style jump.
+    smoothed_pos = {"r": np.array(targets["pos_r"]), "l": np.array(targets["pos_l"])}
+    smoothed_rpy = {"r": np.array(targets["rpy_r"]), "l": np.array(targets["rpy_l"])}
     contact_viz = [False]
     camera_preset = [0]
 
@@ -294,15 +322,23 @@ def main():
 
         # --- continuous drive/lift keys (level-triggered, not edge-triggered like R/G/C
         # above -- driving should keep responding for as long as the key is held) ---
+        # Arrow keys only (no WASD): Up/Down = forward/back, plain Left/Right = yaw,
+        # Shift+Left/Right = strafe -- WASD was dropped since it collides with the
+        # keybindings a MuJoCo user already expects from other tools; Shift-as-modifier
+        # matches the existing mouse-camera convention just above (mod_shift).
         drive_keys = {"w": False, "a": False, "s": False, "d": False, "left": False, "right": False}
         lift_dir = 0.0
         if not io.want_capture_keyboard:
-            drive_keys["w"] = glfw.get_key(window, glfw.KEY_W) == glfw.PRESS
-            drive_keys["a"] = glfw.get_key(window, glfw.KEY_A) == glfw.PRESS
-            drive_keys["s"] = glfw.get_key(window, glfw.KEY_S) == glfw.PRESS
-            drive_keys["d"] = glfw.get_key(window, glfw.KEY_D) == glfw.PRESS
-            drive_keys["left"] = glfw.get_key(window, glfw.KEY_LEFT) == glfw.PRESS
-            drive_keys["right"] = glfw.get_key(window, glfw.KEY_RIGHT) == glfw.PRESS
+            shift_held = (glfw.get_key(window, glfw.KEY_LEFT_SHIFT) == glfw.PRESS
+                          or glfw.get_key(window, glfw.KEY_RIGHT_SHIFT) == glfw.PRESS)
+            drive_keys["w"] = glfw.get_key(window, glfw.KEY_UP) == glfw.PRESS
+            drive_keys["s"] = glfw.get_key(window, glfw.KEY_DOWN) == glfw.PRESS
+            if shift_held:
+                drive_keys["a"] = glfw.get_key(window, glfw.KEY_LEFT) == glfw.PRESS
+                drive_keys["d"] = glfw.get_key(window, glfw.KEY_RIGHT) == glfw.PRESS
+            else:
+                drive_keys["left"] = glfw.get_key(window, glfw.KEY_LEFT) == glfw.PRESS
+                drive_keys["right"] = glfw.get_key(window, glfw.KEY_RIGHT) == glfw.PRESS
             if glfw.get_key(window, glfw.KEY_E) == glfw.PRESS:
                 lift_dir += 1.0
             if glfw.get_key(window, glfw.KEY_Q) == glfw.PRESS:
@@ -320,7 +356,7 @@ def main():
             imgui.text(f"IK err  L: {ik_err_mm['l']:.2f}mm   R: {ik_err_mm['r']:.2f}mm")
             imgui.text(f"Base  x={data.qpos[base_x_qadr]:+.2f}m y={data.qpos[base_y_qadr]:+.2f}m "
                        f"yaw={math.degrees(data.qpos[base_yaw_qadr]):+.1f}deg  "
-                       f"(WASD drive, Left/Right yaw, Q/E lift)")
+                       f"(Up/Down drive, Left/Right yaw, Shift+Left/Right strafe, Q/E lift)")
             imgui.separator()
 
             for side, label in (("r", "Right hand control target"), ("l", "Left hand control target")):
@@ -368,6 +404,17 @@ def main():
 
         # --- physics step ---
         ctx_qpos = data.qpos.copy()
+
+        # Rate-limit the raw slider targets into the smoothed copies IK actually chases (see
+        # "IK target rate limiting" note near their declaration above).
+        for side in ("r", "l"):
+            raw_pos = np.array(targets[f"pos_{side}"])
+            delta = np.clip(raw_pos - smoothed_pos[side], -MAX_POS_STEP_PER_FRAME, MAX_POS_STEP_PER_FRAME)
+            smoothed_pos[side] = smoothed_pos[side] + delta
+            raw_rpy = np.array(targets[f"rpy_{side}"])
+            delta_rpy = np.clip(raw_rpy - smoothed_rpy[side], -MAX_RPY_STEP_PER_FRAME_DEG, MAX_RPY_STEP_PER_FRAME_DEG)
+            smoothed_rpy[side] = smoothed_rpy[side] + delta_rpy
+
         # EE pose targets are base-local (see module docstring's "Mobile base" note): rotate
         # +translate by the base's CURRENT pose so driving/turning the base carries the
         # target along with it instead of the arm having to chase a world-fixed point.
@@ -388,13 +435,13 @@ def main():
         # base_quat is then applied on the left so the whole hand-relative-to-base target
         # turns together with the base, same reasoning as the position transform above.
         quat_r = np.zeros(4)
-        mujoco.mju_mulQuat(quat_r, home_quat_r, rpy_deg_to_quat(targets["rpy_r"]))
+        mujoco.mju_mulQuat(quat_r, home_quat_r, rpy_deg_to_quat(smoothed_rpy["r"]))
         mujoco.mju_mulQuat(quat_r, base_quat, quat_r)
         quat_l = np.zeros(4)
-        mujoco.mju_mulQuat(quat_l, home_quat_l, rpy_deg_to_quat(targets["rpy_l"]))
+        mujoco.mju_mulQuat(quat_l, home_quat_l, rpy_deg_to_quat(smoothed_rpy["l"]))
         mujoco.mju_mulQuat(quat_l, base_quat, quat_l)
-        pos_r_world = local_to_world_pos(targets["pos_r"])
-        pos_l_world = local_to_world_pos(targets["pos_l"])
+        pos_r_world = local_to_world_pos(smoothed_pos["r"])
+        pos_l_world = local_to_world_pos(smoothed_pos["l"])
         q_des_r, perr_r, _ = solver_r.solve_pose(q_des_r, pos_r_world, quat_r,
                                                   max_iter=IK_MAX_ITER, context_qpos=ctx_qpos)
         q_des_l, perr_l, _ = solver_l.solve_pose(q_des_l, pos_l_world, quat_l,
@@ -402,15 +449,15 @@ def main():
         ik_err_mm["r"] = perr_r * 1000.0
         ik_err_mm["l"] = perr_l * 1000.0
 
-        vx_w, vy_w, vyaw = base_drive.update(drive_keys, frame_dt, base_yaw)
+        wheel_cmds = base_drive.update(drive_keys, frame_dt, base_yaw)
 
         for _ in range(steps_per_frame):
             ctrl_r.apply(data, q_des_r)
             ctrl_l.apply(data, q_des_l)
             data.ctrl[lift_aid] = targets["lift"]
-            data.ctrl[base_x_aid] = vx_w
-            data.ctrl[base_y_aid] = vy_w
-            data.ctrl[base_yaw_aid] = vyaw
+            for wheel, (steer_angle, drive_angvel) in wheel_cmds.items():
+                data.ctrl[wheel_steer_aids[wheel]] = steer_angle
+                data.ctrl[wheel_drive_aids[wheel]] = drive_angvel
             grasp.apply_grasp(model, data, grasp=targets["grasp_r"], thumb=targets["thumb_r"], side="r")
             grasp.apply_grasp(model, data, grasp=targets["grasp_l"], thumb=targets["thumb_l"], side="l")
             mujoco.mj_step(model, data)
