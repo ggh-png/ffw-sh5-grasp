@@ -757,7 +757,10 @@
          scene's arm_base_link resting position with lift_joint at its "home" value -0.5
          ((0.0055, 0, 1.0816), see NOTES.md "Phase 4") -- so grasp_target's local offset,
          the thumb pre-shape, HOME_Q and every capsule number above carry over unchanged. -->
-    <geom name="table" type="box" size="0.08 0.15 0.05" pos="0.5055 0.0 0.6816" material="table_mat"/>
+    <!-- Footprint enlarged (Session 8 후속, user request) from 0.08x0.15 -- height/position
+         unchanged (table top stays at exactly the same world z the can/grasp geometry was
+         validated against), only made to look more like an actual table. -->
+    <geom name="table" type="box" size="0.14 0.25 0.05" pos="0.5055 0.0 0.6816" material="table_mat"/>
     <body name="can" pos="0.5055 0.0 0.7866">
       <freejoint name="can_free"/>
       <inertial pos="0 0 0" mass="0.35" diaginertia="0.000448 0.000448 0.00019"/>
@@ -928,7 +931,15 @@
          hand curl, not synced to the grasp scalar -- they still don't participate in the
          actual can grasp, this is cosmetic only. mcp (spread) stays locked at 0/unactuated,
          same as Phase 2 -- inheritrange can't attach to a zero-width range anyway (Session 2
-         finding), and no spread is wanted here regardless. -->
+         finding), and no spread is wanted here regardless.
+         Curl amount is 35% of each joint's range (0.7025/0.5498/0.5498 rad), not the
+         initially-tried 20% -- a user screenshot showed the two locked fingers looking
+         "still open" next to the actively-curling ones during a real grasp (grasp=0.74,
+         thumb=1.0), and swept the curl fraction empirically against tests/test_phase_4.py's
+         pick success: 20-40% all held 10/10, 45%+ dropped to 0/10 (a sharp cliff, not a
+         gradual falloff -- ring/pinky start interfering with the actual 3-point grasp).
+         35% keeps clear margin below that cliff while still visibly matching the other
+         fingers' curl instead of the barely-perceptible-bend look 20% gave from a distance. -->
     <position class="finger_pip" name="finger_l_joint14" joint="finger_l_joint14" inheritrange="1"/>
     <position class="finger_dip" name="finger_l_joint15" joint="finger_l_joint15" inheritrange="1"/>
     <position class="finger_tip" name="finger_l_joint16" joint="finger_l_joint16" inheritrange="1"/>
@@ -968,7 +979,7 @@
 
   <keyframe>
     <key name="home"
-      qpos="0 0 0 0 0 0 0 0 0 -0.39 0 0 0 0 0 -1.570796 0 0 0 0.131 1.309 0 0 0 0 0 0 0 0 0 0 0 0.4014 0.3142 0.3142 0 0.4014 0.3142 0.3142 0 0 0 -1.570796 0 0 0 0.131 -1.309 0 0 0 0 0 0 0 0 0 0 0 0.4014 0.3142 0.3142 0 0.4014 0.3142 0.3142 0.5055 0 0.7866 1 0 0 0"
-      ctrl="0 0 0 0 0 0 -0.39 0 0 0 0 0 0 0 0 0 0.131 1.309 0 0 0 0 0 0 0 0 0 0 0.4014 0.3142 0.3142 0.4014 0.3142 0.3142 0 0 0 0 0 0 0 0.131 -1.309 0 0 0 0 0 0 0 0 0 0 0.4014 0.3142 0.3142 0.4014 0.3142 0.3142"/>
+      qpos="0 0 0 0 0 0 0 0 0 -0.39 0 0 0 0 0 -1.570796 0 0 0 0.131 1.309 0 0 0 0 0 0 0 0 0 0 0 0.7025 0.5498 0.5498 0 0.7025 0.5498 0.5498 0 0 0 -1.570796 0 0 0 0.131 -1.309 0 0 0 0 0 0 0 0 0 0 0 0.7025 0.5498 0.5498 0 0.7025 0.5498 0.5498 0.5055 0 0.7866 1 0 0 0"
+      ctrl="0 0 0 0 0 0 -0.39 0 0 0 0 0 0 0 0 0 0.131 1.309 0 0 0 0 0 0 0 0 0 0 0.7025 0.5498 0.5498 0.7025 0.5498 0.5498 0 0 0 0 0 0 0 0.131 -1.309 0 0 0 0 0 0 0 0 0 0 0.7025 0.5498 0.5498 0.7025 0.5498 0.5498"/>
   </keyframe>
 </mujoco>
