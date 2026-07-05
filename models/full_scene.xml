@@ -19,37 +19,45 @@
     <material name="grey" rgba="0.7 0.7 0.7 1"/>
     <material name="table_mat" rgba="0.55 0.4 0.3 1"/>
 
-    <!-- Visual-only soda can mesh (Session 8), from the sibling ffw-sh5-teleoperation repo's
-         assets/soda_can_stl/soda_can.stl -- copied in (assets/soda_can/), not referenced by
-         absolute path, matching how assets/robotis_ffw was vendored in Phase 0. STL has no
-         UV data so it can't carry the source texture. Kept only as an unused reference --
-         the actual visual geoms (below) use plain + custom-UV cylinder geometry instead,
-         see the label texture comment below for why. -->
-    <mesh name="soda_can" file="../../soda_can/soda_can.stl" scale="1.1 1.1 0.7333"/>
-
-    <!-- Can label texture (Session 8 후속 9): source is the same ffw-sh5-teleoperation
-         asset pack's soda_can_color2.png, a 4096x4096 UV atlas (label + cap/rim detail
-         islands for the actual soda_can.stl's own UV layout, which MuJoCo can't read since
-         STL never carries UV data regardless). Cropped out just the label island (the full
+    <!-- Can visual mesh + label texture (Session 8 후속 9, rewritten 후속 10 to use the
+         actual detailed STL instead of a bare substitute cylinder -- see below). Source
+         mesh: the sibling ffw-sh5-teleoperation repo's assets/soda_can_stl/soda_can.stl,
+         copied in (assets/soda_can/), not referenced by absolute path, matching how
+         assets/robotis_ffw was vendored in Phase 0. Label texture: the same repo's
+         soda_can_color2.png (4096x4096 UV atlas for the mesh's own -- MuJoCo-unreadable,
+         STL never carries UV -- layout); cropped out just the label island (the full
          circumferential wrap, already doubled around 360 deg in the source art) and
-         downscaled to assets/soda_can/soda_can_label.png (1024px, matching every other
-         vendored-asset convention in this file).
-         Getting this to actually wrap around the can took two attempts: first tried a
-         plain `type="cylinder"` primitive geom, expecting MuJoCo to auto-generate
-         circumferential texture coordinates for it -- confirmed empirically (dumped
-         MuJoCo's own loaded texture pixel data to rule out a load/decode bug first) that a
-         primitive cylinder's auto-UV does NOT produce a usable single wrap for a detailed
-         2D image; every viewing angle showed the same compressed/aliased slice regardless
-         of texture resolution or geom scale. What actually works: an explicit-UV mesh.
-         `tests/generate_can_label_mesh.py` builds assets/soda_can/can_side.obj, a bare
-         cylinder-side mesh with per-vertex UV (u wraps 0->1 around the circumference, v
-         0->1 bottom-to-top) -- OBJ (unlike STL) supports `vt` texture-coordinate lines, so
-         MuJoCo renders it with a correct, legible wrap. Verified directly with an 8-angle
-         render sweep (see NOTES.md "Phase 5 후속 9"). -->
+         downscaled to assets/soda_can/soda_can_label.png (1024px).
+
+         Getting the label to actually wrap around the can took two attempts. First tried a
+         plain `type="cylinder"` primitive geom (not the real mesh at all), expecting
+         MuJoCo to auto-generate circumferential texture coordinates -- confirmed
+         empirically (dumped MuJoCo's own loaded texture pixel data to rule out a
+         load/decode bug first) that a primitive cylinder's auto-UV does not produce a
+         usable single wrap for a detailed 2D image; every viewing angle showed the same
+         compressed/aliased slice regardless of texture resolution or geom scale.
+
+         Second attempt (current): re-derive real UV coordinates for the actual soda_can.stl
+         geometry instead of substituting a bare cylinder, so the rendered can keeps the
+         mesh's rim/pull-tab/domed-top/concave-base detail. `tests/generate_can_label_mesh.py`
+         profiles the STL's own vertex radius vs. height (it's a near-perfect constant-radius
+         cylinder from about 5% to 92% of its height, with the rest of its ~15k vertices
+         concentrated in the complex top/bottom caps -- a face-normal heuristic was tried
+         first and rejected, see NOTES.md "Phase 5 후속 10", because the tab/rim detail is
+         locally steep enough to fool it), splits the mesh's faces into that side band vs.
+         the two cap regions by height, and computes real UV for the side faces (u = angle
+         around the can's own axis, unwrapped per-face to avoid a seam artifact since this
+         is an irregular triangulation, not a hand-built regular grid; v = height fraction).
+         Produces two OBJs (OBJ, unlike STL, supports `vt` lines) sharing the STL's original
+         vertex positions exactly: can_side_detail.obj (label texture) and
+         can_cap_detail.obj (plain aluminum color, no meaningful UV needed). Verified with a
+         render sweep including a close-up on the pull-tab -- wraps cleanly, seamless
+         join between the two pieces since both come from the same source mesh. -->
     <texture type="2d" name="can_label" file="../assets/soda_can/soda_can_label.png"/>
     <material name="can_mat" texture="can_label" specular="0.3" shininess="0.4"/>
     <material name="can_cap_mat" rgba="0.82 0.82 0.85 1" specular="0.6" shininess="0.6"/>
-    <mesh name="can_side" file="../../soda_can/can_side.obj"/>
+    <mesh name="can_side_detail" file="../../soda_can/can_side_detail.obj" scale="1.1 1.1 0.7333"/>
+    <mesh name="can_cap_detail" file="../../soda_can/can_cap_detail.obj" scale="1.1 1.1 0.7333"/>
 
 
     <mesh name="base_mobile_assy" file="ffw_s/base_mobile_assy.stl" scale="0.001 0.001 0.001"/>
@@ -796,17 +804,14 @@
     <body name="can" pos="0.5055 0.0 0.7866">
       <freejoint name="can_free"/>
       <inertial pos="0 0 0" mass="0.35" diaginertia="0.000448 0.000448 0.00019"/>
-      <!-- Labeled side (custom-UV can_side mesh, see <asset> comment) + plain
-           aluminum-colored caps (Session 8 후속 9) -- split into 3 geoms so only the
-           side gets the label and the caps stay plain, since a single geom would stretch
-           the label texture onto the flat caps too. Sized to butt together with zero
-           gap/overlap and exactly span can_geom's real -0.055..+0.055 extent (0.050 side,
-           can_side.obj's own baked-in half-height, + 0.0025 cap x2 = 0.055), matching it
-           precisely since this is still purely a rendering split of the same validated
-           collision shape below, not a new size. -->
-      <geom type="mesh" mesh="can_side" material="can_mat" class="visual"/>
-      <geom type="cylinder" size="0.033 0.0025" pos="0 0 0.0525" material="can_cap_mat" class="visual"/>
-      <geom type="cylinder" size="0.033 0.0025" pos="0 0 -0.0525" material="can_cap_mat" class="visual"/>
+      <!-- Real detailed-mesh visual, split into the labeled side + plain aluminum caps
+           (Session 8 후속 10, see <asset> comment for how these two meshes were derived
+           from the same soda_can.stl) -- two geoms sharing the STL's original vertex
+           positions exactly, so they join with no gap/seam, at no explicit pos/quat (same
+           convention the original single-mesh soda_can visual used: raw mesh-local
+           coordinates, scaled 1.1/1.1/0.7333 in <asset> to match can_geom below). -->
+      <geom type="mesh" mesh="can_side_detail" material="can_mat" class="visual"/>
+      <geom type="mesh" mesh="can_cap_detail" material="can_cap_mat" class="visual"/>
       <geom name="can_geom" type="cylinder" size="0.033 0.055" rgba="0 0 0 0"
         priority="1" condim="6" friction="0.5 0.01 0.003"
         solimp="0.5 0.99 0.0001" solref="0.005 1"/>
