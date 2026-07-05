@@ -4,5 +4,6 @@ __pycache__/
 *.mp4
 *.png
 !docs/**/*.png
+!assets/soda_can/*.png
 .DS_Store
 MUJOCO_LOG.TXT
