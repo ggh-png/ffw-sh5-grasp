@@ -95,10 +95,21 @@
          delivering nowhere near enough sustained torque to also move the base -- measured
          directly, base crawled <2mm in 4s of "full speed" forward commands. kv=30 reaches
          ~90% of the commanded cruise speed with no added instability (max|qacc| unchanged
-         from baseline). -->
+         from baseline).
+         Raised again 30->150 (Session 8 후속 8, alongside the wheel-floor solref retune to
+         "0.15 1" above) once the contact-stiffness bug was fixed and in-place rotation was
+         still far under its commanded rate: swept kv up to 1500 against both in-place
+         rotation rate and straight-line speed/slip -- rotation improves steadily through
+         kv=200 then gets noisy/non-monotonic beyond it (a sign something else, likely the
+         rear wheel's near-boundary steer angle, starts dominating rather than kv itself),
+         while straight-line speed/slip stays flat-to-improving the whole way and idle drift
+         never changes (as expected, kv only matters when there's a drive command). kv=150
+         combined with solref="0.15 1" gave the best rotation improvement (~23% of commanded
+         vs ~0.5% before any of this) with the lowest peak transient among the combinations
+         swept, and improved straight-line speed as a side effect (0.46->0.49 m/s). -->
     <default class="wheel_drive">
       <joint type="hinge" axis="0 1 0" damping="2" frictionloss="0.2"/>
-      <velocity kv="30" ctrlrange="-50 50" ctrllimited="true"/>
+      <velocity kv="150" ctrlrange="-50 50" ctrllimited="true"/>
     </default>
     <!-- Slider: lift_joint. kp raised from the official 10000 (Session 8, Phase 5 후속):
          this is a plain <position> actuator with no gravity feedforward (same class of
@@ -868,30 +879,32 @@
     <pair geom1="palm_r_collision" geom2="table" solref="0.005 1" solimp="0.0001 0.95 0.015"/>
     <pair geom1="palm_l_collision" geom2="floor" solref="0.005 1" solimp="0.0001 0.95 0.015"/>
     <pair geom1="palm_r_collision" geom2="floor" solref="0.005 1" solimp="0.0001 0.95 0.015"/>
-    <!-- Wheel-floor contact (Session 8 후속 6): base_link only has base_x/base_y/base_yaw
-         joints (Phase 4's deliberate simplification, no vertical or tilt DOF -- see the
-         wheel bodies' comment above), so the wheels' ~1.5mm floor overlap (itself deliberate,
-         see NOTES.md "Phase 5 후속 2" on numerically-unstable exact-zero gaps) can never
-         settle to a natural equilibrium depth the way it would on a body that's actually
-         free to sink under load -- there's no DOF for it to sink into. With MuJoCo's default
-         solref (0.02 1) at that fixed, unrelaxable 1.5mm depth, the resulting restoring force
-         measured ~27,500N total across the 3 wheels (2 contact points each) -- 28x the
-         robot's actual 982N weight. That artificial over-stiffness doesn't blow up
-         (nothing to run away into) but makes every wheel behave as if pinned into the
-         ground far harder than its real load, which is exactly why steering felt sluggish:
-         pivoting a wheel scrubbing against that much phantom normal force (via friction=5.0)
-         needed far more torque than a realistically-loaded wheel would, saturating the
-         steer actuator's forcerange for seconds at a time (measured: ~5s to swing the rear
-         wheel 90 deg for an in-place turn). Softening this specific pair's solref to "0.1 1"
-         (measured directly: total wheel-floor normal force drops to ~1100N at the same fixed
-         1.5mm depth, matching the real weight) cut that to ~0.5s with zero regression in the
-         existing idle/straight-drive/table-collision tests (identical slip%, distance,
-         drift numbers). Steady-state in-place rotation rate is still well under the
-         commanded rate even after this fix -- a separate, deeper traction/torque limit, not
-         resolved here (see NOTES.md "Phase 5 후속 6"). -->
-    <pair geom1="left_wheel_collision" geom2="floor" solref="0.1 1"/>
-    <pair geom1="right_wheel_collision" geom2="floor" solref="0.1 1"/>
-    <pair geom1="rear_wheel_collision" geom2="floor" solref="0.1 1"/>
+    <!-- Wheel-floor contact (Session 8 후속 6, retuned 후속 8): base_link only has
+         base_x/base_y/base_yaw joints (Phase 4's deliberate simplification, no vertical or
+         tilt DOF -- see the wheel bodies' comment above), so the wheels' ~1.5mm floor
+         overlap (itself deliberate, see NOTES.md "Phase 5 후속 2" on numerically-unstable
+         exact-zero gaps) can never settle to a natural equilibrium depth the way it would
+         on a body that's actually free to sink under load -- there's no DOF for it to sink
+         into. With MuJoCo's default solref (0.02 1) at that fixed, unrelaxable 1.5mm depth,
+         the resulting restoring force measured ~27,500N total across the 3 wheels (2
+         contact points each) -- 28x the robot's actual 982N weight. That artificial
+         over-stiffness doesn't blow up (nothing to run away into) but makes every wheel
+         behave as if pinned into the ground far harder than its real load, which is why
+         steering felt sluggish (pivoting a wheel scrubbing against that much phantom normal
+         force needed far more torque than a realistically-loaded wheel would) and in-place
+         rotation barely happened at all. solref="0.15 1" (retuned from the first pass's
+         "0.1 1" -- see NOTES.md "Phase 5 후속 8") plus wheel_drive's kv=150 (below,
+         retuned from 30) together were the best swept combination: steering aligns in
+         ~0.5s (vs ~5s unfixed), steady in-place yaw rate reaches ~23% of the commanded
+         rate (vs ~0.5% unfixed) with the lowest peak transient among combinations tried,
+         and straight-line driving actually improves slightly (0.46->0.49 m/s, same 0.8%
+         slip) as a side effect of the higher kv. Idle drift is byte-for-byte unchanged
+         (0.645mm) since neither knob does anything without a drive command. Rotation is
+         still well under the commanded 1.2 rad/s -- a further, deeper traction ceiling
+         this combination doesn't fully remove, see NOTES.md for the fuller sweep data. -->
+    <pair geom1="left_wheel_collision" geom2="floor" solref="0.15 1"/>
+    <pair geom1="right_wheel_collision" geom2="floor" solref="0.15 1"/>
+    <pair geom1="rear_wheel_collision" geom2="floor" solref="0.15 1"/>
     <!-- Ring/pinky locked at range=0 (3-point grasp fallback, Phase 2); excluded vs world same as palm -->
     <exclude body1="finger_l_link13" body2="world"/>
     <exclude body1="finger_l_link14" body2="world"/>
