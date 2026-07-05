@@ -9,8 +9,19 @@ sliders:
     pre-shape, not part of either scalar -- found by FK sweep in Phase 2 (see NOTES.md) so
     the thumb opposes the index/middle convergence zone around the can.
 
-Ring and pinky are locked at range=0 in models/hand_only.xml (3-point grasp fallback from
-PLAN.md's own guidance), so this module only ever drives 3 digits.
+Ring and pinky mcp (spread) stay locked at range=0 (3-point grasp fallback from PLAN.md's
+own guidance), so this module never actively grasps with them. Their pip/dip/tip *do* get a
+small cosmetic curl here (Session 8 후속 4), scaled by the same `grasp` scalar as index/
+middle but capped at RING_PINKY_MAX_FRAC (0.35, not 1.0) of their own range -- purely so the
+hand doesn't look like two fingers are frozen open while the other three visibly close.
+0.35 is not an arbitrary cosmetic choice: it's the exact ceiling found by sweeping this
+fraction against tests/test_phase_4.py's pick success (see NOTES.md "Phase 5 후속 3") --
+20-40% all held 10/10, 45%+ dropped to 0/10 (ring/pinky start interfering with the real
+3-point grasp past that point). Scaling by `grasp` (0 at rest, 0.35 at grasp=1.0) rather than
+holding 0.35 as a flat constant regardless of `grasp` was a deliberate change from the
+previous session's approach: a *constant* curl meant ring/pinky started the session already
+curled even at grasp=0/rest, which looked wrong and differed from every other digit's
+fully-extended rest pose (see NOTES.md "Phase 5 후속 4").
 
 Both scalars map to a *sub-range* of each joint's travel, not [lo, hi]: starting fully
 extended left ~10cm of empty travel before any contact, which meant the freely-falling can
@@ -54,6 +65,12 @@ THUMB_CURL_JOINTS = {
     "l": ("finger_l_joint3", "finger_l_joint4"),
     "r": ("finger_r_joint3", "finger_r_joint4"),
 }
+RING_PINKY_CURL_JOINTS = {
+    "l": ("finger_l_joint14", "finger_l_joint15", "finger_l_joint16",
+          "finger_l_joint18", "finger_l_joint19", "finger_l_joint20"),
+    "r": ("finger_r_joint14", "finger_r_joint15", "finger_r_joint16",
+          "finger_r_joint18", "finger_r_joint19", "finger_r_joint20"),
+}
 THUMB_PRESHAPE = {
     "l": {
         "finger_l_joint1": 0.131,   # CMC abduction (symmetric range, same value as right)
@@ -67,6 +84,7 @@ THUMB_PRESHAPE = {
 
 FINGER_OPEN_FRAC = 0.20
 THUMB_OPEN_FRAC = 0.0
+RING_PINKY_MAX_FRAC = 0.35
 
 FINGER_BODY_GROUPS = {
     "l": {
@@ -83,17 +101,35 @@ FINGER_BODY_GROUPS = {
 
 CAN_GEOM_NAME = "can_geom"
 
+# apply_grasp runs once per physics *substep* (thousands of calls per pick trial), and each
+# call used to re-resolve every joint name via mj_name2id plus a linear O(nu) Python scan
+# over every actuator to find its transmission -- harmless at the original 10 lookups/call,
+# but adding RING_PINKY_CURL_JOINTS's 6 more (Session 8 후속 4) measurably slowed
+# tests/test_phase_4.py's already-long pick trials (measured: ~1.1ms/step with the scan vs
+# ~0.1ms/step for mj_step alone). Caching each (model, joint_name) -> (jid, aid) lookup the
+# first time it's resolved removes the repeat cost without changing any behavior -- keyed by
+# id(model) since tests construct a fresh MjModel per test file.
+_JOINT_ACTUATOR_CACHE = {}
 
-def _actuator_for_joint(model, jid):
-    for aid in range(model.nu):
-        if model.actuator_trntype[aid] == mujoco.mjtTrn.mjTRN_JOINT and model.actuator_trnid[aid, 0] == jid:
-            return aid
-    return None
+
+def _resolve_joint_actuator(model, joint_name):
+    key = (id(model), joint_name)
+    cached = _JOINT_ACTUATOR_CACHE.get(key)
+    if cached is not None:
+        return cached
+    jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, joint_name)
+    aid = None
+    if jid != -1:
+        for a in range(model.nu):
+            if model.actuator_trntype[a] == mujoco.mjtTrn.mjTRN_JOINT and model.actuator_trnid[a, 0] == jid:
+                aid = a
+                break
+    _JOINT_ACTUATOR_CACHE[key] = (jid, aid)
+    return jid, aid
 
 
 def _set_joint_ctrl(model, data, joint_name, value):
-    jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, joint_name)
-    aid = _actuator_for_joint(model, jid)
+    _jid, aid = _resolve_joint_actuator(model, joint_name)
     data.ctrl[aid] = value
 
 
@@ -124,6 +160,20 @@ def apply_grasp(model, data, grasp: float, thumb: float, side: str = "r"):
             lo, hi = model.jnt_range[jid]
             frac = FINGER_OPEN_FRAC + grasp * (1.0 - FINGER_OPEN_FRAC)
             _set_joint_ctrl(model, data, joint_name, lo + frac * (hi - lo))
+
+    for joint_name in RING_PINKY_CURL_JOINTS[side]:
+        # jid can be -1 (hand_only.xml/arm_hand.xml have no left hand at all) and aid can be
+        # None even when jid is valid (those two models still hard-lock ring/pinky pip/dip/
+        # tip at range="0 0" with no actuator, unlike full_scene.xml -- see NOTES.md "Phase 5
+        # 후속 4"). Must check both explicitly: data.ctrl[None] silently broadcasts to the
+        # *entire* ctrl array instead of raising (the exact bug Session 2 already hit once,
+        # see NOTES.md "Phase 2").
+        jid, aid = _resolve_joint_actuator(model, joint_name)
+        if jid == -1 or aid is None:
+            continue
+        lo, hi = model.jnt_range[jid]
+        frac = grasp * RING_PINKY_MAX_FRAC
+        data.ctrl[aid] = lo + frac * (hi - lo)
 
 
 def get_finger_can_contacts(model, data, side: str = "r"):

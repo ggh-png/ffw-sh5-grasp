@@ -927,19 +927,22 @@
     <position class="finger_dip" name="finger_l_joint11" joint="finger_l_joint11" inheritrange="1"/>
     <position class="finger_tip" name="finger_l_joint12" joint="finger_l_joint12" inheritrange="1"/>
     <!-- Left ring/pinky (Session 8 후속): pip/dip/tip range widened from the Phase 2
-         locked-at-0 fallback (see NOTES.md "Phase 5 후속") only enough for a static relaxed-
-         hand curl, not synced to the grasp scalar -- they still don't participate in the
-         actual can grasp, this is cosmetic only. mcp (spread) stays locked at 0/unactuated,
-         same as Phase 2 -- inheritrange can't attach to a zero-width range anyway (Session 2
-         finding), and no spread is wanted here regardless.
-         Curl amount is 35% of each joint's range (0.7025/0.5498/0.5498 rad), not the
-         initially-tried 20% -- a user screenshot showed the two locked fingers looking
-         "still open" next to the actively-curling ones during a real grasp (grasp=0.74,
-         thumb=1.0), and swept the curl fraction empirically against tests/test_phase_4.py's
-         pick success: 20-40% all held 10/10, 45%+ dropped to 0/10 (a sharp cliff, not a
-         gradual falloff -- ring/pinky start interfering with the actual 3-point grasp).
-         35% keeps clear margin below that cliff while still visibly matching the other
-         fingers' curl instead of the barely-perceptible-bend look 20% gave from a distance. -->
+         locked-at-0 fallback (see NOTES.md "Phase 5 후속") for a cosmetic curl driven by
+         grasp.py's RING_PINKY_CURL_JOINTS mapping -- they still never touch the can (no
+         actuator here overrides that, it's purely grasp.py's ctrl writes each step), this
+         is visual only. mcp (spread) stays locked at 0/unactuated, same as Phase 2 --
+         inheritrange can't attach to a zero-width range anyway (Session 2 finding), and no
+         spread is wanted here regardless.
+         grasp.py scales this curl by the live `grasp` scalar (0 at rest -> fully extended,
+         capped at 35% of range at grasp=1.0), not a flat constant -- see NOTES.md "Phase 5
+         후속 4" for why a flat 35%-regardless-of-grasp constant (Session 8 후속 3's original
+         fix) was replaced: it left these two fingers visibly curled even at rest while every
+         other digit starts fully open, which is wrong on its own terms regardless of how it
+         looks mid-grasp. The keyframe below now leaves qpos/ctrl at 0 for these joints
+         (matching grasp=0's fully-extended rest state) since grasp.py re-commands them every
+         physics step from there. 35% remains the cap actually reached at grasp=1.0, same
+         cliff-tested value as before (20-40% all held tests/test_phase_4.py's pick at 10/10,
+         45%+ dropped to 0/10). -->
     <position class="finger_pip" name="finger_l_joint14" joint="finger_l_joint14" inheritrange="1"/>
     <position class="finger_dip" name="finger_l_joint15" joint="finger_l_joint15" inheritrange="1"/>
     <position class="finger_tip" name="finger_l_joint16" joint="finger_l_joint16" inheritrange="1"/>
@@ -979,7 +982,7 @@
 
   <keyframe>
     <key name="home"
-      qpos="0 0 0 0 0 0 0 0 0 -0.39 0 0 0 0 0 -1.570796 0 0 0 0.131 1.309 0 0 0 0 0 0 0 0 0 0 0 0.7025 0.5498 0.5498 0 0.7025 0.5498 0.5498 0 0 0 -1.570796 0 0 0 0.131 -1.309 0 0 0 0 0 0 0 0 0 0 0 0.7025 0.5498 0.5498 0 0.7025 0.5498 0.5498 0.5055 0 0.7866 1 0 0 0"
-      ctrl="0 0 0 0 0 0 -0.39 0 0 0 0 0 0 0 0 0 0.131 1.309 0 0 0 0 0 0 0 0 0 0 0.7025 0.5498 0.5498 0.7025 0.5498 0.5498 0 0 0 0 0 0 0 0.131 -1.309 0 0 0 0 0 0 0 0 0 0 0.7025 0.5498 0.5498 0.7025 0.5498 0.5498"/>
+      qpos="0 0 0 0 0 0 0 0 0 -0.39 0 0 0 0 0 -1.570796 0 0 0 0.131 1.309 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -1.570796 0 0 0 0.131 -1.309 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.5055 0 0.7866 1 0 0 0"
+      ctrl="0 0 0 0 0 0 -0.39 0 0 0 0 0 0 0 0 0 0.131 1.309 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.131 -1.309 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0"/>
   </keyframe>
 </mujoco>
