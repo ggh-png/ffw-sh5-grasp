@@ -1,0 +1,88 @@
+site_name: "ffw-sh5-grasp"
+site_author: ggh-png
+repo_url: https://github.com/ggh-png/ffw-sh5-grasp
+site_url: https://ggh-png.github.io/ffw-sh5-grasp/
+site_description: "MuJoCo 물리 기반 grasp 시뮬레이터 — ROBOTIS FFW-SH5가 contact force만으로 캔을 집어 드는 텔레오퍼레이션 프로젝트, 그리고 그 과정을 그대로 따라가는 MuJoCo 입문 튜토리얼."
+
+theme:
+    name: material
+    language: ko
+    palette:
+        - media: "(prefers-color-scheme: light)"
+          scheme: default
+          primary: indigo
+          accent: indigo
+          toggle:
+              icon: material/weather-night
+              name: 다크 모드로 전환
+        - media: "(prefers-color-scheme: dark)"
+          scheme: slate
+          primary: indigo
+          accent: indigo
+          toggle:
+              icon: material/weather-sunny
+              name: 라이트 모드로 전환
+    features:
+        - navigation.tabs
+        - navigation.sections
+        - navigation.top
+        - navigation.indexes
+        - content.code.copy
+        - content.code.annotate
+        - toc.follow
+
+use_directory_urls: false
+
+markdown_extensions:
+    - meta
+    - attr_list
+    - md_in_html
+    - admonition
+    - def_list
+    - tables
+    - footnotes
+    - toc:
+        permalink: true
+    - pymdownx.details
+    - pymdownx.highlight:
+        anchor_linenums: true
+    - pymdownx.inlinehilite
+    - pymdownx.snippets
+    - pymdownx.superfences
+    - pymdownx.tabbed:
+        alternate_style: true
+    - pymdownx.arithmatex:
+        generic: true
+    - pymdownx.emoji:
+        emoji_index: !!python/name:material.extensions.emoji.twemoji
+        emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+copyright: Copyright &copy; 2026 ggh-png
+
+extra:
+    social:
+        - icon: fontawesome/brands/github
+          link: https://github.com/ggh-png/ffw-sh5-grasp
+
+extra_css:
+    - css/custom.css
+
+extra_javascript:
+    - javascripts/mathjax.js
+    - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
+
+nav:
+    - Home: index.md
+    - 프로젝트 개요: overview.md
+    - MuJoCo 튜토리얼:
+        - guide/index.md
+        - "0. MuJoCo 최소 개념 사전": guide/00-basics.md
+        - "Phase 0 · 공식 모델 검증": guide/phase0.md
+        - "Phase 1 · 손 콜리전 정비": guide/phase1.md
+        - "Phase 2 · 고정 손 grasp": guide/phase2.md
+        - "Phase 3 · 팔 + IK": guide/phase3.md
+        - "Phase 4 · 전체 조립 + 텔레옵": guide/phase4.md
+        - "Phase 5 · 바퀴 주행": guide/phase5.md
+        - 흔한 함정 총정리: guide/pitfalls.md
+        - API 치트시트: guide/cheatsheet.md
+    - 직접 실행하기: run.md

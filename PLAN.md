@@ -156,9 +156,9 @@ ffw-sh5-grasp/
       -- `src/teleop_app.py`로 직접 조작해 확인할 것(에이전트가 사람 대신 슬라이더를 못 끎).
       대신 `tests/test_phase_4.py`가 동일 파이프라인(IK+토크제어+grasp synergy)을
       스크립트로 10/10 재현해 물리적으로 가능함을 검증함. NOTES.md "Phase 4" 참고.
-- [x] 파지 시 손가락이 캔 형상에 순응하며 감기는 것이 시각적으로 확인됨 (관통 없음) -- `docs/demo.gif`
+- [x] 파지 시 손가락이 캔 형상에 순응하며 감기는 것이 시각적으로 확인됨 (관통 없음) -- `docs/assets/demo.gif`
 - [x] 전체 코드베이스에 kinematic override 없음 (grep으로 `qpos[` 쓰기 검사, reset 제외)
-- [x] contact force 시각화 켠 상태의 데모 영상 촬영 완료 -- `docs/demo.gif`
+- [x] contact force 시각화 켠 상태의 데모 영상 촬영 완료 -- `docs/assets/demo.gif`
       (`tests/record_demo.py`로 생성; 실시간 텔레옵 GUI 자체의 화면 녹화는 아님)
 
 ---

@@ -102,7 +102,7 @@ def _hold(model, data, ctrl_r, ctrl_l, grabber, q_des, duration, dt, grasp_frac=
 
 
 def main():
-    out_path = sys.argv[1] if len(sys.argv) > 1 else str(REPO_ROOT / "docs" / "demo.gif")
+    out_path = sys.argv[1] if len(sys.argv) > 1 else str(REPO_ROOT / "docs" / "assets" / "demo.gif")
     pathlib.Path(out_path).parent.mkdir(parents=True, exist_ok=True)
 
     model = mujoco.MjModel.from_xml_path(str(MODEL_PATH))

@@ -7,3 +7,4 @@ __pycache__/
 !assets/soda_can/*.png
 .DS_Store
 MUJOCO_LOG.TXT
+site/
