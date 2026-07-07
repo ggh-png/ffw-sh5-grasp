@@ -63,6 +63,14 @@ Shift+Left/Right = base strafe, Q/E = lift down/up, R = reset can (+-2cm random)
 G = toggle contact force/point
 visualization, C = cycle camera preset (overview / right-hand close-up). R/G/C also have
 buttons in the on-screen panel.
+
+**코드 구조 (가독성 정리)**: 이 파일의 실행 로직은 전부 `TeleopApp` 클래스 하나에
+모여 있다. `__init__`이 (1) 모델/솔버/제어기 (2) 창/렌더링 (3) 루프 타이밍 상태를
+순서대로 구성하고, `run()`의 메인 루프는 매 프레임 아래 메서드들을 정확히 이 순서로
+호출한다: 마우스 카메라 → 엣지 트리거 키(R/G/C) → 연속 입력 키(주행/리프트) → UI
+패널 → 물리 스텝(IK+제어+mj_step) → 렌더링 → 프레임 타이밍. 각 메서드는 딱 그
+단계만 담당하고, 상태는 전부 self.* 속성으로 공유한다 -- 원래 하나의 거대한 main()
+함수 안에서 지역 변수로 얽혀 있던 것을 단계별로 나눈 것뿐, 동작은 전혀 바뀌지 않았다.
 """
 
 import math
@@ -88,6 +96,7 @@ import base_teleop  # noqa: E402
 import grasp  # noqa: E402
 import ik  # noqa: E402
 
+# 양팔 관절 이름 목록 (IK solver / 토크 제어기에 그대로 넘겨진다).
 ARM_R = [f"arm_r_joint{i}" for i in range(1, 8)]
 ARM_L = [f"arm_l_joint{i}" for i in range(1, 8)]
 # Matches models/full_scene.xml's "home" keyframe, which as of Session 8 (Phase 5 follow-up)
@@ -96,6 +105,7 @@ ARM_L = [f"arm_l_joint{i}" for i in range(1, 8)]
 HOME_Q_R = np.array([0.0, 0.0, 0.0, -1.5707963267948966, 0.0, 0.0, 0.0])
 HOME_Q_L = np.array([0.0, 0.0, 0.0, -1.5707963267948966, 0.0, 0.0, 0.0])
 LIFT_RANGE = (-0.5, 0.0)
+# 패널의 "Joint position monitor"에 진행률 막대로 표시할 관절 전체 목록.
 MONITOR_JOINTS = (
     [f"arm_r_joint{i}" for i in range(1, 8)] + [f"arm_l_joint{i}" for i in range(1, 8)]
     + [f"finger_r_joint{i}" for i in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)]
@@ -210,240 +220,314 @@ class KeyEdge:
         return down and not was_down
 
 
-def main():
-    model = mujoco.MjModel.from_xml_path(str(MODEL_PATH))
-    data = mujoco.MjData(model)
-    key_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, "home")
-    mujoco.mj_resetDataKeyframe(model, data, key_id)
-    mujoco.mj_forward(model, data)
+class TeleopApp:
+    """단일 네이티브 창 텔레옵 앱. `run()`의 메인 루프가 매 프레임 아래 단계를
+    순서대로 실행한다: 마우스 카메라 -> 엣지 키(R/G/C) -> 연속 키(주행/리프트) ->
+    UI 패널 -> 물리 스텝 -> 렌더링. 상태는 전부 인스턴스 속성(self.*)에 있다."""
 
-    solver_r = ik.InverseKinematics(model, "grasp_target_r", ARM_R)
-    solver_l = ik.InverseKinematics(model, "grasp_target_l", ARM_L)
-    ctrl_r = arm_control.ArmTorqueController(model, ARM_R)
-    ctrl_l = arm_control.ArmTorqueController(model, ARM_L)
-    lift_aid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, "lift_joint")
-    base_x_qadr = model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "base_x")]
-    base_y_qadr = model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "base_y")]
-    base_yaw_qadr = model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "base_yaw")]
-    # Real per-wheel steer (position) + drive (velocity) actuators -- see
-    # src/base_teleop.py's SwerveDrive and the module docstring's "Mobile base" note. Base
-    # motion is now a *consequence* of wheel-ground friction, not a direct actuator on
-    # base_x/base_y/base_yaw (those joints still exist so base_link can't tip, but nothing
-    # actuates them directly any more).
-    wheel_steer_aids = {w: mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, f"{w}_steer")
-                         for w in ("left_wheel", "right_wheel", "rear_wheel")}
-    wheel_drive_aids = {w: mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, f"{w}_drive")
-                         for w in ("left_wheel", "right_wheel", "rear_wheel")}
-    base_drive = base_teleop.SwerveDrive()
-    monitor_qposadr = {n: model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, n)]
-                        for n in MONITOR_JOINTS}
-    monitor_ranges = {n: model.jnt_range[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, n)]
-                       for n in MONITOR_JOINTS}
-    rng = np.random.default_rng()
+    def __init__(self):
+        self._setup_sim()
+        self._setup_render()
+        self._setup_loop_state()
 
-    site_r = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "grasp_target_r")
-    site_l = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "grasp_target_l")
-    # Reference orientation each hand's RPY sliders are relative to (see module docstring's
-    # "RPY control" note): the home-pose site orientation, fixed for the whole session.
-    home_quat_r = np.zeros(4)
-    mujoco.mju_mat2Quat(home_quat_r, data.site_xmat[site_r])
-    home_quat_l = np.zeros(4)
-    mujoco.mju_mat2Quat(home_quat_l, data.site_xmat[site_l])
+    # ------------------------------------------------------------------
+    # 초기화
+    # ------------------------------------------------------------------
 
-    targets = {
-        "pos_r": data.site_xpos[site_r].tolist(), "rpy_r": [0.0, 0.0, 0.0],
-        "pos_l": data.site_xpos[site_l].tolist(), "rpy_l": [0.0, 0.0, 0.0],
-        "grasp_r": 0.0, "thumb_r": 0.0, "grasp_l": 0.0, "thumb_l": 0.0,
-        "lift": float(data.qpos[model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "lift_joint")]]),
-    }
-    # IK actually chases these smoothed copies, not the raw slider values directly (see
-    # module docstring's "IK target rate limiting" note) -- a slider yanked/typed to a
-    # distant value in one frame otherwise sends solve_pose a target it can't reach within
-    # max_joint_delta's per-iteration step size, burning the full IK_MAX_ITER budget on a
-    # jump that will take several frames to close anyway (measured directly: ~11ms/frame for
-    # a 0.3m single-frame position jump). Capping how far the effective target itself can
-    # move per frame keeps every solve_pose call cheap AND produces smoother motion than a
-    # teleport-style jump.
-    smoothed_pos = {"r": np.array(targets["pos_r"]), "l": np.array(targets["pos_l"])}
-    smoothed_rpy = {"r": np.array(targets["rpy_r"]), "l": np.array(targets["rpy_l"])}
-    # See STUCK_POS_TOL note above -- counts consecutive frames each hand's solve_pose has
-    # failed to converge, so a genuine lockup can be throttled to STUCK_MAX_ITER.
-    stuck_counter = {"r": 0, "l": 0}
-    contact_viz = [False]
-    camera_preset = [0]
+    def _setup_sim(self):
+        """모델 로드, 홈 자세 리셋, IK 솔버/토크 제어기, actuator/joint id 조회,
+        슬라이더 목표값(targets) 초기화까지 -- 렌더링/윈도우와 무관한 부분 전부."""
+        model = mujoco.MjModel.from_xml_path(str(MODEL_PATH))
+        data = mujoco.MjData(model)
+        key_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, "home")
+        mujoco.mj_resetDataKeyframe(model, data, key_id)
+        mujoco.mj_forward(model, data)
+        self.model = model
+        self.data = data
 
-    if not glfw.init():
-        raise RuntimeError("glfw.init() failed")
-    window = glfw.create_window(WINDOW_W, WINDOW_H, "FFW-SH5 Teleop", None, None)
-    if not window:
+        # 손별 IK 솔버 + 팔 토크 제어기 (양팔 각각 독립).
+        self.solver_r = ik.InverseKinematics(model, "grasp_target_r", ARM_R)
+        self.solver_l = ik.InverseKinematics(model, "grasp_target_l", ARM_L)
+        self.ctrl_r = arm_control.ArmTorqueController(model, ARM_R)
+        self.ctrl_l = arm_control.ArmTorqueController(model, ARM_L)
+        self.lift_aid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, "lift_joint")
+        self.base_x_qadr = model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "base_x")]
+        self.base_y_qadr = model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "base_y")]
+        self.base_yaw_qadr = model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "base_yaw")]
+        # Real per-wheel steer (position) + drive (velocity) actuators -- see
+        # src/base_teleop.py's SwerveDrive and the module docstring's "Mobile base" note. Base
+        # motion is now a *consequence* of wheel-ground friction, not a direct actuator on
+        # base_x/base_y/base_yaw (those joints still exist so base_link can't tip, but nothing
+        # actuates them directly any more).
+        self.wheel_steer_aids = {w: mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, f"{w}_steer")
+                                  for w in ("left_wheel", "right_wheel", "rear_wheel")}
+        self.wheel_drive_aids = {w: mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, f"{w}_drive")
+                                  for w in ("left_wheel", "right_wheel", "rear_wheel")}
+        # 모바일 베이스: SwerveDrive가 키 입력을 바퀴별 조향각+구동속도로 변환.
+        self.base_drive = base_teleop.SwerveDrive()
+        self.monitor_qposadr = {n: model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, n)]
+                                 for n in MONITOR_JOINTS}
+        self.monitor_ranges = {n: model.jnt_range[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, n)]
+                                for n in MONITOR_JOINTS}
+        self.rng = np.random.default_rng()
+
+        site_r = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "grasp_target_r")
+        site_l = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "grasp_target_l")
+        # Reference orientation each hand's RPY sliders are relative to (see module docstring's
+        # "RPY control" note): the home-pose site orientation, fixed for the whole session.
+        self.home_quat_r = np.zeros(4)
+        mujoco.mju_mat2Quat(self.home_quat_r, data.site_xmat[site_r])
+        self.home_quat_l = np.zeros(4)
+        mujoco.mju_mat2Quat(self.home_quat_l, data.site_xmat[site_l])
+
+        # 슬라이더가 직접 쓰는 "목표값" 딕셔너리 -- 물리 루프는 이 값만 읽고, 이 값을
+        # 쓰는 건 GUI 슬라이더뿐이다(단방향 데이터 흐름, 모듈 docstring 참고).
+        self.targets = {
+            "pos_r": data.site_xpos[site_r].tolist(), "rpy_r": [0.0, 0.0, 0.0],
+            "pos_l": data.site_xpos[site_l].tolist(), "rpy_l": [0.0, 0.0, 0.0],
+            "grasp_r": 0.0, "thumb_r": 0.0, "grasp_l": 0.0, "thumb_l": 0.0,
+            "lift": float(data.qpos[model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "lift_joint")]]),
+        }
+        # IK actually chases these smoothed copies, not the raw slider values directly (see
+        # module docstring's "IK target rate limiting" note) -- a slider yanked/typed to a
+        # distant value in one frame otherwise sends solve_pose a target it can't reach within
+        # max_joint_delta's per-iteration step size, burning the full IK_MAX_ITER budget on a
+        # jump that will take several frames to close anyway (measured directly: ~11ms/frame for
+        # a 0.3m single-frame position jump). Capping how far the effective target itself can
+        # move per frame keeps every solve_pose call cheap AND produces smoother motion than a
+        # teleport-style jump.
+        self.smoothed_pos = {"r": np.array(self.targets["pos_r"]), "l": np.array(self.targets["pos_l"])}
+        self.smoothed_rpy = {"r": np.array(self.targets["rpy_r"]), "l": np.array(self.targets["rpy_l"])}
+        # See STUCK_POS_TOL note above -- counts consecutive frames each hand's solve_pose has
+        # failed to converge, so a genuine lockup can be throttled to STUCK_MAX_ITER.
+        self.stuck_counter = {"r": 0, "l": 0}
+        self.contact_viz = False
+        self.camera_preset = 0
+
+    def _setup_render(self):
+        """창/렌더링 초기화: GLFW 창 하나 + 그 위에 ImGui, MuJoCo 저수준 렌더 API로
+        3D 장면을 직접 그린다(모듈 docstring의 "Rendering note" 참고)."""
+        if not glfw.init():
+            raise RuntimeError("glfw.init() failed")
+        window = glfw.create_window(WINDOW_W, WINDOW_H, "FFW-SH5 Teleop", None, None)
+        if not window:
+            glfw.terminate()
+            raise RuntimeError("glfw.create_window() failed")
+        glfw.make_context_current(window)
+        glfw.swap_interval(0)
+        self.window = window
+
+        imgui.create_context()
+        self.impl = GlfwRenderer(window)
+
+        self.scene = mujoco.MjvScene(self.model, maxgeom=10000)
+        self.cam = mujoco.MjvCamera()
+        mujoco.mjv_defaultCamera(self.cam)
+        _set_camera_preset(self.cam, 0)
+        self.opt = mujoco.MjvOption()
+        mujoco.mjv_defaultOption(self.opt)
+        self.pert = mujoco.MjvPerturb()
+        self.context = mujoco.MjrContext(self.model, mujoco.mjtFontScale.mjFONTSCALE_150)
+
+    def _setup_loop_state(self):
+        """메인 루프에서만 쓰는 상태(IK 웜스타트 값, 타이밍, 입력 헬퍼)."""
+        self.q_des_r = HOME_Q_R.copy()
+        self.q_des_l = HOME_Q_L.copy()
+        self.frame_dt = 1.0 / LOOP_HZ
+        self.steps_per_frame = max(1, round(self.frame_dt / self.model.opt.timestep))
+        self.freq_ema = LOOP_HZ
+        self.wall_start = time.perf_counter()
+        self.last_mouse = list(glfw.get_cursor_pos(self.window))
+        self.keys = KeyEdge()
+        self.ik_err_mm = {"l": 0.0, "r": 0.0}
+
+    # ------------------------------------------------------------------
+    # 메인 루프
+    # ------------------------------------------------------------------
+
+    def run(self):
+        # 매 프레임 (1) 입력 처리 (2) IK 풀기 (3) 물리 스텝 (4) 렌더링을 전부 한
+        # 스레드/한 루프 안에서 순서대로 실행한다.
+        while not glfw.window_should_close(self.window):
+            t0 = time.perf_counter()
+            glfw.poll_events()
+            self.impl.process_inputs()
+            imgui.new_frame()
+            io = imgui.get_io()
+
+            self._handle_camera_mouse(io)
+            self._handle_edge_keys(io)
+            drive_keys = self._read_drive_and_lift_keys(io)
+            self._draw_ui_panel()
+            self._step_physics(drive_keys)
+            self._render_scene()
+            self._end_frame(t0)
+
+        self.impl.shutdown()
         glfw.terminate()
-        raise RuntimeError("glfw.create_window() failed")
-    glfw.make_context_current(window)
-    glfw.swap_interval(0)
 
-    imgui.create_context()
-    impl = GlfwRenderer(window)
+    def _handle_camera_mouse(self, io):
+        """마우스 카메라 조작 -- 슬라이더를 드래그하는 중이면(want_capture_mouse)
+        카메라가 같이 돌지 않도록 건너뛴다."""
+        cur_mouse = list(glfw.get_cursor_pos(self.window))
+        dx, dy = cur_mouse[0] - self.last_mouse[0], cur_mouse[1] - self.last_mouse[1]
+        self.last_mouse = cur_mouse
+        if io.want_capture_mouse:
+            return
+        left = glfw.get_mouse_button(self.window, glfw.MOUSE_BUTTON_LEFT) == glfw.PRESS
+        right = glfw.get_mouse_button(self.window, glfw.MOUSE_BUTTON_RIGHT) == glfw.PRESS
+        middle = glfw.get_mouse_button(self.window, glfw.MOUSE_BUTTON_MIDDLE) == glfw.PRESS
+        if left or right or middle:
+            _, win_h = glfw.get_window_size(self.window)
+            mod_shift = (glfw.get_key(self.window, glfw.KEY_LEFT_SHIFT) == glfw.PRESS
+                         or glfw.get_key(self.window, glfw.KEY_RIGHT_SHIFT) == glfw.PRESS)
+            if right:
+                action = mujoco.mjtMouse.mjMOUSE_MOVE_H if mod_shift else mujoco.mjtMouse.mjMOUSE_MOVE_V
+            elif left:
+                action = mujoco.mjtMouse.mjMOUSE_ROTATE_H if mod_shift else mujoco.mjtMouse.mjMOUSE_ROTATE_V
+            else:
+                action = mujoco.mjtMouse.mjMOUSE_ZOOM
+            mujoco.mjv_moveCamera(self.model, action, dx / win_h, dy / win_h, self.scene, self.cam)
+        if io.mouse_wheel != 0:
+            mujoco.mjv_moveCamera(self.model, mujoco.mjtMouse.mjMOUSE_ZOOM, 0.0,
+                                   -0.05 * io.mouse_wheel, self.scene, self.cam)
 
-    scene = mujoco.MjvScene(model, maxgeom=10000)
-    cam = mujoco.MjvCamera()
-    mujoco.mjv_defaultCamera(cam)
-    _set_camera_preset(cam, 0)
-    opt = mujoco.MjvOption()
-    mujoco.mjv_defaultOption(opt)
-    pert = mujoco.MjvPerturb()
-    context = mujoco.MjrContext(model, mujoco.mjtFontScale.mjFONTSCALE_150)
+    def _handle_edge_keys(self, io):
+        """눌렀다 뗄 때 한 번만 반응하는 키(R=캔 리셋, G=접촉 시각화 토글,
+        C=카메라 전환) -- 계속 누르고 있어도 반복 발동하지 않는다."""
+        if io.want_capture_keyboard:
+            return
+        if self.keys.pressed(self.window, glfw.KEY_R):
+            _reset_can_random(self.model, self.data, self.rng)
+            mujoco.mj_forward(self.model, self.data)
+        if self.keys.pressed(self.window, glfw.KEY_G):
+            self.contact_viz = not self.contact_viz
+        if self.keys.pressed(self.window, glfw.KEY_C):
+            self.camera_preset = 1 - self.camera_preset
+            _set_camera_preset(self.cam, self.camera_preset)
 
-    q_des_r = HOME_Q_R.copy()
-    q_des_l = HOME_Q_L.copy()
-    frame_dt = 1.0 / LOOP_HZ
-    steps_per_frame = max(1, round(frame_dt / model.opt.timestep))
-    freq_ema = LOOP_HZ
-    wall_start = time.perf_counter()
-    last_mouse = list(glfw.get_cursor_pos(window))
-    keys = KeyEdge()
-    ik_err_mm = {"l": 0.0, "r": 0.0}
+    def _read_drive_and_lift_keys(self, io):
+        """continuous drive/lift keys (level-triggered, not edge-triggered like R/G/C
+        above -- driving should keep responding for as long as the key is held).
+        (한글) 주행/리프트 키는 누르고 있는 동안 계속 반응해야 하므로(edge-triggered
+        아님) 매 프레임 눌림 상태를 그대로 읽는다.
 
-    while not glfw.window_should_close(window):
-        t0 = time.perf_counter()
-        glfw.poll_events()
-        impl.process_inputs()
-        imgui.new_frame()
-
-        io = imgui.get_io()
-
-        # --- camera mouse interaction (skip while ImGui wants the mouse, e.g. dragging a
-        # slider) ---
-        cur_mouse = list(glfw.get_cursor_pos(window))
-        dx, dy = cur_mouse[0] - last_mouse[0], cur_mouse[1] - last_mouse[1]
-        last_mouse = cur_mouse
-        if not io.want_capture_mouse:
-            left = glfw.get_mouse_button(window, glfw.MOUSE_BUTTON_LEFT) == glfw.PRESS
-            right = glfw.get_mouse_button(window, glfw.MOUSE_BUTTON_RIGHT) == glfw.PRESS
-            middle = glfw.get_mouse_button(window, glfw.MOUSE_BUTTON_MIDDLE) == glfw.PRESS
-            if left or right or middle:
-                _, win_h = glfw.get_window_size(window)
-                mod_shift = (glfw.get_key(window, glfw.KEY_LEFT_SHIFT) == glfw.PRESS
-                             or glfw.get_key(window, glfw.KEY_RIGHT_SHIFT) == glfw.PRESS)
-                if right:
-                    action = mujoco.mjtMouse.mjMOUSE_MOVE_H if mod_shift else mujoco.mjtMouse.mjMOUSE_MOVE_V
-                elif left:
-                    action = mujoco.mjtMouse.mjMOUSE_ROTATE_H if mod_shift else mujoco.mjtMouse.mjMOUSE_ROTATE_V
-                else:
-                    action = mujoco.mjtMouse.mjMOUSE_ZOOM
-                mujoco.mjv_moveCamera(model, action, dx / win_h, dy / win_h, scene, cam)
-            if io.mouse_wheel != 0:
-                mujoco.mjv_moveCamera(model, mujoco.mjtMouse.mjMOUSE_ZOOM, 0.0, -0.05 * io.mouse_wheel, scene, cam)
-
-        if not io.want_capture_keyboard:
-            if keys.pressed(window, glfw.KEY_R):
-                _reset_can_random(model, data, rng)
-                mujoco.mj_forward(model, data)
-            if keys.pressed(window, glfw.KEY_G):
-                contact_viz[0] = not contact_viz[0]
-            if keys.pressed(window, glfw.KEY_C):
-                camera_preset[0] = 1 - camera_preset[0]
-                _set_camera_preset(cam, camera_preset[0])
-
-        # --- continuous drive/lift keys (level-triggered, not edge-triggered like R/G/C
-        # above -- driving should keep responding for as long as the key is held) ---
-        # Arrow keys only (no WASD): Up/Down = forward/back, plain Left/Right = yaw,
-        # Shift+Left/Right = strafe -- WASD was dropped since it collides with the
-        # keybindings a MuJoCo user already expects from other tools; Shift-as-modifier
-        # matches the existing mouse-camera convention just above (mod_shift).
+        Arrow keys only (no WASD): Up/Down = forward/back, plain Left/Right = yaw,
+        Shift+Left/Right = strafe -- WASD was dropped since it collides with the
+        keybindings a MuJoCo user already expects from other tools; Shift-as-modifier
+        matches the existing mouse-camera convention (mod_shift).
+        """
         drive_keys = {"w": False, "a": False, "s": False, "d": False, "left": False, "right": False}
         lift_dir = 0.0
         if not io.want_capture_keyboard:
-            shift_held = (glfw.get_key(window, glfw.KEY_LEFT_SHIFT) == glfw.PRESS
-                          or glfw.get_key(window, glfw.KEY_RIGHT_SHIFT) == glfw.PRESS)
-            drive_keys["w"] = glfw.get_key(window, glfw.KEY_UP) == glfw.PRESS
-            drive_keys["s"] = glfw.get_key(window, glfw.KEY_DOWN) == glfw.PRESS
+            shift_held = (glfw.get_key(self.window, glfw.KEY_LEFT_SHIFT) == glfw.PRESS
+                          or glfw.get_key(self.window, glfw.KEY_RIGHT_SHIFT) == glfw.PRESS)
+            drive_keys["w"] = glfw.get_key(self.window, glfw.KEY_UP) == glfw.PRESS
+            drive_keys["s"] = glfw.get_key(self.window, glfw.KEY_DOWN) == glfw.PRESS
             if shift_held:
-                drive_keys["a"] = glfw.get_key(window, glfw.KEY_LEFT) == glfw.PRESS
-                drive_keys["d"] = glfw.get_key(window, glfw.KEY_RIGHT) == glfw.PRESS
+                drive_keys["a"] = glfw.get_key(self.window, glfw.KEY_LEFT) == glfw.PRESS
+                drive_keys["d"] = glfw.get_key(self.window, glfw.KEY_RIGHT) == glfw.PRESS
             else:
-                drive_keys["left"] = glfw.get_key(window, glfw.KEY_LEFT) == glfw.PRESS
-                drive_keys["right"] = glfw.get_key(window, glfw.KEY_RIGHT) == glfw.PRESS
-            if glfw.get_key(window, glfw.KEY_E) == glfw.PRESS:
+                drive_keys["left"] = glfw.get_key(self.window, glfw.KEY_LEFT) == glfw.PRESS
+                drive_keys["right"] = glfw.get_key(self.window, glfw.KEY_RIGHT) == glfw.PRESS
+            if glfw.get_key(self.window, glfw.KEY_E) == glfw.PRESS:
                 lift_dir += 1.0
-            if glfw.get_key(window, glfw.KEY_Q) == glfw.PRESS:
+            if glfw.get_key(self.window, glfw.KEY_Q) == glfw.PRESS:
                 lift_dir -= 1.0
         if lift_dir != 0.0:
-            targets["lift"] = float(np.clip(targets["lift"] + lift_dir * 0.3 * frame_dt,
-                                             LIFT_RANGE[0], LIFT_RANGE[1]))
+            self.targets["lift"] = float(np.clip(
+                self.targets["lift"] + lift_dir * 0.3 * self.frame_dt, LIFT_RANGE[0], LIFT_RANGE[1]))
+        return drive_keys
 
-        # --- UI panel ---
+    def _draw_ui_panel(self):
+        """슬라이더 패널 -- HUD, 양손 EE 포즈, grasp/thumb, 리프트, 관절 모니터.
+        여기서 바뀌는 값은 전부 self.targets로만 들어가고, 물리 반영은
+        _step_physics에서 이뤄진다."""
+        targets = self.targets
+        data, model = self.data, self.model
+
         imgui.set_next_window_pos((10, 10), imgui.Cond_.first_use_ever)
         imgui.set_next_window_size((380, WINDOW_H - 20), imgui.Cond_.first_use_ever)
-        if _begin_expanded("FFW-SH5 Teleop"):
-            imgui.text(f"sim {data.time:6.1f}s  wall {time.perf_counter()-wall_start:6.1f}s  "
-                       f"{freq_ema:4.1f} Hz")
-            imgui.text(f"IK err  L: {ik_err_mm['l']:.2f}mm   R: {ik_err_mm['r']:.2f}mm")
-            imgui.text(f"Base  x={data.qpos[base_x_qadr]:+.2f}m y={data.qpos[base_y_qadr]:+.2f}m "
-                       f"yaw={math.degrees(data.qpos[base_yaw_qadr]):+.1f}deg  "
-                       f"(Up/Down drive, Left/Right yaw, Shift+Left/Right strafe, Q/E lift)")
-            imgui.separator()
+        if not _begin_expanded("FFW-SH5 Teleop"):
+            imgui.end()
+            return
 
-            for side, label in (("r", "Right hand control target"), ("l", "Left hand control target")):
-                if imgui.collapsing_header(label, imgui.TreeNodeFlags_.default_open):
-                    pos = targets[f"pos_{side}"]
-                    rpy = targets[f"rpy_{side}"]
-                    for i, axis in enumerate(("X", "Y", "Z")):
-                        _, pos[i] = imgui.slider_float(f"{axis}##{side}pos", pos[i], -0.2, 1.2, "%.3f m")
-                    imgui.text("Roll/Pitch/Yaw (relative to home pose, hand-local axes)")
-                    for i, axis in enumerate(("Roll", "Pitch", "Yaw")):
-                        _, rpy[i] = imgui.slider_float(f"{axis}##{side}rpy", rpy[i], -90.0, 90.0, "%.1f deg")
-                    if imgui.button(f"Reset orientation##{side}"):
-                        rpy[0], rpy[1], rpy[2] = 0.0, 0.0, 0.0
+        imgui.text(f"sim {data.time:6.1f}s  wall {time.perf_counter()-self.wall_start:6.1f}s  "
+                   f"{self.freq_ema:4.1f} Hz")
+        imgui.text(f"IK err  L: {self.ik_err_mm['l']:.2f}mm   R: {self.ik_err_mm['r']:.2f}mm")
+        imgui.text(f"Base  x={data.qpos[self.base_x_qadr]:+.2f}m y={data.qpos[self.base_y_qadr]:+.2f}m "
+                   f"yaw={math.degrees(data.qpos[self.base_yaw_qadr]):+.1f}deg  "
+                   f"(Up/Down drive, Left/Right yaw, Shift+Left/Right strafe, Q/E lift)")
+        imgui.separator()
 
-            if imgui.collapsing_header("Hand grasp targets", imgui.TreeNodeFlags_.default_open):
-                for side, label in (("r", "Right"), ("l", "Left")):
-                    _, targets[f"grasp_{side}"] = imgui.slider_float(
-                        f"{label} grasp##{side}", targets[f"grasp_{side}"], 0.0, 1.0)
-                    _, targets[f"thumb_{side}"] = imgui.slider_float(
-                        f"{label} thumb##{side}", targets[f"thumb_{side}"], 0.0, 1.0)
+        for side, label in (("r", "Right hand control target"), ("l", "Left hand control target")):
+            if imgui.collapsing_header(label, imgui.TreeNodeFlags_.default_open):
+                pos = targets[f"pos_{side}"]
+                rpy = targets[f"rpy_{side}"]
+                for i, axis in enumerate(("X", "Y", "Z")):
+                    _, pos[i] = imgui.slider_float(f"{axis}##{side}pos", pos[i], -0.2, 1.2, "%.3f m")
+                imgui.text("Roll/Pitch/Yaw (relative to home pose, hand-local axes)")
+                for i, axis in enumerate(("Roll", "Pitch", "Yaw")):
+                    _, rpy[i] = imgui.slider_float(f"{axis}##{side}rpy", rpy[i], -90.0, 90.0, "%.1f deg")
+                if imgui.button(f"Reset orientation##{side}"):
+                    rpy[0], rpy[1], rpy[2] = 0.0, 0.0, 0.0
 
-            if imgui.collapsing_header("Lift / Utils", imgui.TreeNodeFlags_.default_open):
-                _, targets["lift"] = imgui.slider_float("Lift", targets["lift"], LIFT_RANGE[0], LIFT_RANGE[1], "%.3f m")
-                if imgui.button("Reset Can (R)"):
-                    _reset_can_random(model, data, rng)
-                    mujoco.mj_forward(model, data)
-                imgui.same_line()
-                if imgui.button("Toggle Contact Viz (G)"):
-                    contact_viz[0] = not contact_viz[0]
-                imgui.same_line()
-                if imgui.button("Cycle Camera (C)"):
-                    camera_preset[0] = 1 - camera_preset[0]
-                    _set_camera_preset(cam, camera_preset[0])
+        if imgui.collapsing_header("Hand grasp targets", imgui.TreeNodeFlags_.default_open):
+            for side, label in (("r", "Right"), ("l", "Left")):
+                _, targets[f"grasp_{side}"] = imgui.slider_float(
+                    f"{label} grasp##{side}", targets[f"grasp_{side}"], 0.0, 1.0)
+                _, targets[f"thumb_{side}"] = imgui.slider_float(
+                    f"{label} thumb##{side}", targets[f"thumb_{side}"], 0.0, 1.0)
 
-            if imgui.collapsing_header("Joint position monitor"):
-                imgui.begin_child("joint_monitor", (0, 260), True)
-                for name in MONITOR_JOINTS:
-                    val = float(data.qpos[monitor_qposadr[name]])
-                    lo, hi = monitor_ranges[name]
-                    frac = (val - lo) / (hi - lo) if hi > lo else 0.0
-                    frac = min(1.0, max(0.0, frac))
-                    imgui.progress_bar(frac, (200, 0), f"{name} {math.degrees(val):+.1f}deg")
-                imgui.end_child()
+        if imgui.collapsing_header("Lift / Utils", imgui.TreeNodeFlags_.default_open):
+            _, targets["lift"] = imgui.slider_float("Lift", targets["lift"], LIFT_RANGE[0], LIFT_RANGE[1], "%.3f m")
+            if imgui.button("Reset Can (R)"):
+                _reset_can_random(model, data, self.rng)
+                mujoco.mj_forward(model, data)
+            imgui.same_line()
+            if imgui.button("Toggle Contact Viz (G)"):
+                self.contact_viz = not self.contact_viz
+            imgui.same_line()
+            if imgui.button("Cycle Camera (C)"):
+                self.camera_preset = 1 - self.camera_preset
+                _set_camera_preset(self.cam, self.camera_preset)
+
+        if imgui.collapsing_header("Joint position monitor"):
+            imgui.begin_child("joint_monitor", (0, 260), True)
+            for name in MONITOR_JOINTS:
+                val = float(data.qpos[self.monitor_qposadr[name]])
+                lo, hi = self.monitor_ranges[name]
+                frac = (val - lo) / (hi - lo) if hi > lo else 0.0
+                frac = min(1.0, max(0.0, frac))
+                imgui.progress_bar(frac, (200, 0), f"{name} {math.degrees(val):+.1f}deg")
+            imgui.end_child()
         imgui.end()
 
-        # --- physics step ---
+    def _step_physics(self, drive_keys):
+        """(한글) 여기서부터 실제 물리 반영: 슬라이더 목표값을 rate-limit -> 베이스
+        로컬->월드 변환 -> IK로 관절각 계산 -> 토크 제어기/grasp/바퀴 ctrl 기록 ->
+        mj_step. context_qpos는 IK가 담당하지 않는 다른 관절(리프트 등)을 지금
+        상태로 시드하기 위함(ik.py 참고). 여기 말고는 qpos에 손대는 곳이 없다
+        (캔 리셋의 명시적 예외 제외)."""
+        model, data = self.model, self.data
         ctx_qpos = data.qpos.copy()
 
         # Rate-limit the raw slider targets into the smoothed copies IK actually chases (see
-        # "IK target rate limiting" note near their declaration above).
+        # "IK target rate limiting" note near their declaration in _setup_sim).
         for side in ("r", "l"):
-            raw_pos = np.array(targets[f"pos_{side}"])
-            delta = np.clip(raw_pos - smoothed_pos[side], -MAX_POS_STEP_PER_FRAME, MAX_POS_STEP_PER_FRAME)
-            smoothed_pos[side] = smoothed_pos[side] + delta
-            raw_rpy = np.array(targets[f"rpy_{side}"])
-            delta_rpy = np.clip(raw_rpy - smoothed_rpy[side], -MAX_RPY_STEP_PER_FRAME_DEG, MAX_RPY_STEP_PER_FRAME_DEG)
-            smoothed_rpy[side] = smoothed_rpy[side] + delta_rpy
+            raw_pos = np.array(self.targets[f"pos_{side}"])
+            delta = np.clip(raw_pos - self.smoothed_pos[side], -MAX_POS_STEP_PER_FRAME, MAX_POS_STEP_PER_FRAME)
+            self.smoothed_pos[side] = self.smoothed_pos[side] + delta
+            raw_rpy = np.array(self.targets[f"rpy_{side}"])
+            delta_rpy = np.clip(raw_rpy - self.smoothed_rpy[side],
+                                 -MAX_RPY_STEP_PER_FRAME_DEG, MAX_RPY_STEP_PER_FRAME_DEG)
+            self.smoothed_rpy[side] = self.smoothed_rpy[side] + delta_rpy
 
         # EE pose targets are base-local (see module docstring's "Mobile base" note): rotate
         # +translate by the base's CURRENT pose so driving/turning the base carries the
         # target along with it instead of the arm having to chase a world-fixed point.
-        base_x, base_y, base_yaw = (data.qpos[base_x_qadr], data.qpos[base_y_qadr],
-                                     data.qpos[base_yaw_qadr])
+        base_x, base_y, base_yaw = (data.qpos[self.base_x_qadr], data.qpos[self.base_y_qadr],
+                                     data.qpos[self.base_yaw_qadr])
         base_quat = np.array([math.cos(base_yaw / 2), 0.0, 0.0, math.sin(base_yaw / 2)])
         cy, sy = math.cos(base_yaw), math.sin(base_yaw)
 
@@ -459,60 +543,71 @@ def main():
         # base_quat is then applied on the left so the whole hand-relative-to-base target
         # turns together with the base, same reasoning as the position transform above.
         quat_r = np.zeros(4)
-        mujoco.mju_mulQuat(quat_r, home_quat_r, rpy_deg_to_quat(smoothed_rpy["r"]))
+        mujoco.mju_mulQuat(quat_r, self.home_quat_r, rpy_deg_to_quat(self.smoothed_rpy["r"]))
         mujoco.mju_mulQuat(quat_r, base_quat, quat_r)
         quat_l = np.zeros(4)
-        mujoco.mju_mulQuat(quat_l, home_quat_l, rpy_deg_to_quat(smoothed_rpy["l"]))
+        mujoco.mju_mulQuat(quat_l, self.home_quat_l, rpy_deg_to_quat(self.smoothed_rpy["l"]))
         mujoco.mju_mulQuat(quat_l, base_quat, quat_l)
-        pos_r_world = local_to_world_pos(smoothed_pos["r"])
-        pos_l_world = local_to_world_pos(smoothed_pos["l"])
+        pos_r_world = local_to_world_pos(self.smoothed_pos["r"])
+        pos_l_world = local_to_world_pos(self.smoothed_pos["l"])
         # See STUCK_POS_TOL note above -- a hand that's been stuck (unconverged) for several
         # frames in a row gets thrown into a cheap iteration budget instead of repeatedly
         # paying full price to re-discover the same non-improving result.
-        iter_r = STUCK_MAX_ITER if stuck_counter["r"] >= STUCK_FRAMES_THRESHOLD else IK_MAX_ITER
-        iter_l = STUCK_MAX_ITER if stuck_counter["l"] >= STUCK_FRAMES_THRESHOLD else IK_MAX_ITER
-        q_des_r, perr_r, _ = solver_r.solve_pose(q_des_r, pos_r_world, quat_r,
-                                                  max_iter=iter_r, context_qpos=ctx_qpos)
-        q_des_l, perr_l, _ = solver_l.solve_pose(q_des_l, pos_l_world, quat_l,
-                                                  max_iter=iter_l, context_qpos=ctx_qpos)
-        stuck_counter["r"] = stuck_counter["r"] + 1 if perr_r > STUCK_POS_TOL else 0
-        stuck_counter["l"] = stuck_counter["l"] + 1 if perr_l > STUCK_POS_TOL else 0
-        ik_err_mm["r"] = perr_r * 1000.0
-        ik_err_mm["l"] = perr_l * 1000.0
+        iter_r = STUCK_MAX_ITER if self.stuck_counter["r"] >= STUCK_FRAMES_THRESHOLD else IK_MAX_ITER
+        iter_l = STUCK_MAX_ITER if self.stuck_counter["l"] >= STUCK_FRAMES_THRESHOLD else IK_MAX_ITER
+        self.q_des_r, perr_r, _ = self.solver_r.solve_pose(self.q_des_r, pos_r_world, quat_r,
+                                                            max_iter=iter_r, context_qpos=ctx_qpos)
+        self.q_des_l, perr_l, _ = self.solver_l.solve_pose(self.q_des_l, pos_l_world, quat_l,
+                                                            max_iter=iter_l, context_qpos=ctx_qpos)
+        self.stuck_counter["r"] = self.stuck_counter["r"] + 1 if perr_r > STUCK_POS_TOL else 0
+        self.stuck_counter["l"] = self.stuck_counter["l"] + 1 if perr_l > STUCK_POS_TOL else 0
+        self.ik_err_mm["r"] = perr_r * 1000.0
+        self.ik_err_mm["l"] = perr_l * 1000.0
 
-        wheel_cmds = base_drive.update(drive_keys, frame_dt, base_yaw)
+        wheel_cmds = self.base_drive.update(drive_keys, self.frame_dt, base_yaw)
 
-        for _ in range(steps_per_frame):
-            ctrl_r.apply(data, q_des_r)
-            ctrl_l.apply(data, q_des_l)
-            data.ctrl[lift_aid] = targets["lift"]
+        # 렌더 프레임 하나(frame_dt)당 물리 스텝을 여러 번(steps_per_frame) 돌린다 --
+        # 렌더링은 25Hz면 충분하지만 물리는 훨씬 촘촘한 timestep이 필요하기 때문.
+        # IK로 구한 목표 관절각(q_des_r/l)과 grasp/thumb/lift/바퀴 ctrl을 매 서브스텝
+        # 다시 적용한 뒤 mj_step 한 번.
+        for _ in range(self.steps_per_frame):
+            self.ctrl_r.apply(data, self.q_des_r)
+            self.ctrl_l.apply(data, self.q_des_l)
+            data.ctrl[self.lift_aid] = self.targets["lift"]
             for wheel, (steer_angle, drive_angvel) in wheel_cmds.items():
-                data.ctrl[wheel_steer_aids[wheel]] = steer_angle
-                data.ctrl[wheel_drive_aids[wheel]] = drive_angvel
-            grasp.apply_grasp(model, data, grasp=targets["grasp_r"], thumb=targets["thumb_r"], side="r")
-            grasp.apply_grasp(model, data, grasp=targets["grasp_l"], thumb=targets["thumb_l"], side="l")
+                data.ctrl[self.wheel_steer_aids[wheel]] = steer_angle
+                data.ctrl[self.wheel_drive_aids[wheel]] = drive_angvel
+            grasp.apply_grasp(model, data, grasp=self.targets["grasp_r"], thumb=self.targets["thumb_r"], side="r")
+            grasp.apply_grasp(model, data, grasp=self.targets["grasp_l"], thumb=self.targets["thumb_l"], side="l")
             mujoco.mj_step(model, data)
 
-        # --- render 3D scene ---
-        opt.flags[mujoco.mjtVisFlag.mjVIS_CONTACTPOINT] = contact_viz[0]
-        opt.flags[mujoco.mjtVisFlag.mjVIS_CONTACTFORCE] = contact_viz[0]
-        fb_w, fb_h = glfw.get_framebuffer_size(window)
+    def _render_scene(self):
+        """(한글) 갱신된 물리 상태(data)를 MuJoCo 저수준 API로 화면에 그리고,
+        그 위에 ImGui 패널을 합성한다."""
+        self.opt.flags[mujoco.mjtVisFlag.mjVIS_CONTACTPOINT] = self.contact_viz
+        self.opt.flags[mujoco.mjtVisFlag.mjVIS_CONTACTFORCE] = self.contact_viz
+        fb_w, fb_h = glfw.get_framebuffer_size(self.window)
         viewport = mujoco.MjrRect(0, 0, fb_w, fb_h)
-        mujoco.mjv_updateScene(model, data, opt, pert, cam, mujoco.mjtCatBit.mjCAT_ALL, scene)
-        mujoco.mjr_render(viewport, scene, context)
+        mujoco.mjv_updateScene(self.model, self.data, self.opt, self.pert, self.cam,
+                                mujoco.mjtCatBit.mjCAT_ALL, self.scene)
+        mujoco.mjr_render(viewport, self.scene, self.context)
 
         imgui.render()
-        impl.render(imgui.get_draw_data())
-        glfw.swap_buffers(window)
+        self.impl.render(imgui.get_draw_data())
+        glfw.swap_buffers(self.window)
 
+    def _end_frame(self, t0):
+        """(한글) 목표 루프 주기(LOOP_HZ)를 맞추기 위해 남는 시간만큼 잠깐 대기하고,
+        HUD에 표시할 실측 주파수(freq_ema)를 지수이동평균으로 갱신."""
         elapsed = time.perf_counter() - t0
-        freq_ema = 0.9 * freq_ema + 0.1 * (1.0 / max(elapsed, 1e-6))
-        sleep_time = frame_dt - elapsed
+        self.freq_ema = 0.9 * self.freq_ema + 0.1 * (1.0 / max(elapsed, 1e-6))
+        sleep_time = self.frame_dt - elapsed
         if sleep_time > 0:
             time.sleep(sleep_time)
 
-    impl.shutdown()
-    glfw.terminate()
+
+def main():
+    TeleopApp().run()
 
 
 if __name__ == "__main__":

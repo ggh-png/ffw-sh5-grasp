@@ -29,11 +29,22 @@ ORI_TOL = 1e-3
 
 
 class InverseKinematics:
+    """6DOF 역기구학(IK) 솔버 -- 목표 site 위치/자세를 만족하는 관절각을 구한다.
+
+    실시간 시뮬레이션(data)에는 전혀 손대지 않고, 오직 자기 소유의 scratch MjData
+    안에서만 mj_forward를 반복 호출해 기구학을 계산한다(아래 self._scratch). 결과로
+    나온 관절각은 호출부가 액추에이터 목표값(ctrl)으로 넘겨야 하고, qpos를 직접
+    쓰는 일은 없다 -- "kinematic override 금지" 규칙이 IK 안에서도 그대로 지켜진다.
+    """
+
     def __init__(self, model, site_name, joint_names, damping=DEFAULT_DAMPING,
                  max_joint_delta=DEFAULT_MAX_JOINT_DELTA):
         self.model = model
         self.site_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, site_name)
         self.joint_ids = [mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, n) for n in joint_names]
+        # dof_ids: qvel/Jacobian 열 인덱스용. qpos_adrs: qpos 배열 인덱스용 --
+        # 힌지 관절은 둘이 같지만, 자유도(quaternion 등)가 섞인 관절에서는 다를 수 있어
+        # 이 프로젝트에서는 항상 명시적으로 구분해서 쓴다.
         self.dof_ids = [model.jnt_dofadr[j] for j in self.joint_ids]
         self.qpos_adrs = [model.jnt_qposadr[j] for j in self.joint_ids]
         self.joint_ranges = np.array([model.jnt_range[j] for j in self.joint_ids])
@@ -41,19 +52,25 @@ class InverseKinematics:
         self.max_joint_delta = max_joint_delta
         self.n = len(joint_names)
         # Scratch kinematics-only buffer -- never the live simulation's MjData.
+        # (한글) 이 solver 전용 임시 데이터 -- 실시간 시뮬레이션의 data와는 완전히 별개.
         self._scratch = mujoco.MjData(model)
 
     def _read_q(self, scratch):
+        """이 솔버가 담당하는 관절들의 현재 각도만 뽑아 배열로 반환."""
         return np.array([scratch.qpos[a] for a in self.qpos_adrs])
 
     def _write_q(self, scratch, q):
+        """관절각 배열을 scratch의 해당 qpos 슬롯에 써넣는다(역시 scratch에만 씀)."""
         for qadr, val in zip(self.qpos_adrs, q):
             scratch.qpos[qadr] = val
 
     def _clamp_to_limits(self, q):
+        """관절 range를 벗어나지 않도록 클램프 -- 매 반복(iteration)마다 호출된다."""
         return np.clip(q, self.joint_ranges[:, 0], self.joint_ranges[:, 1])
 
     def _jac(self, scratch):
+        """목표 site의 위치 Jacobian(jacp)과 회전 Jacobian(jacr)을 계산하고,
+        이 솔버가 담당하는 관절의 열(column)만 잘라서 반환한다."""
         jacp = np.zeros((3, self.model.nv))
         jacr = np.zeros((3, self.model.nv))
         mujoco.mj_jacSite(self.model, scratch, jacp, jacr, self.site_id)
@@ -61,6 +78,8 @@ class InverseKinematics:
         return jacp[:, cols], jacr[:, cols]
 
     def _dls_step(self, J, err):
+        """damped least squares 한 스텝: dq = J^T (J J^T + lam^2 I)^-1 err.
+        lam(감쇠)이 특이 자세(singularity) 근처에서 역행렬이 폭발하는 걸 막아준다."""
         lam2 = self.damping ** 2
         JJt = J @ J.T + lam2 * np.eye(J.shape[0])
         return J.T @ np.linalg.solve(JJt, err)
@@ -77,6 +96,8 @@ class InverseKinematics:
         """
         scratch = self._scratch
         mujoco.mj_resetData(self.model, scratch)
+        # context_qpos로 전체 qpos를 먼저 시드해야, 이 솔버가 담당하지 않는 상위
+        # 관절(예: full_scene.xml의 lift_joint)이 0으로 리셋되지 않는다.
         if context_qpos is not None:
             scratch.qpos[:] = context_qpos
         q = np.array(q_init, dtype=float)
@@ -84,6 +105,7 @@ class InverseKinematics:
         mujoco.mj_forward(self.model, scratch)
 
         err_norm = np.inf
+        # 위치 오차가 허용치 밑으로 떨어지거나 반복 한도에 도달할 때까지 DLS를 반복.
         for _ in range(max_iter):
             cur_pos = scratch.site_xpos[self.site_id]
             err = target_pos - cur_pos
@@ -98,6 +120,9 @@ class InverseKinematics:
         return q, err_norm
 
     def _pose_error(self, scratch, target_pos, target_quat):
+        """위치 오차(월드 프레임 벡터)와 방향 오차(mju_subQuat, site 로컬 프레임)를
+        각각 계산해서 반환한다. 이 둘의 좌표계가 다르다는 점이 solve_pose에서
+        중요해진다(아래 site_R 회전 참고)."""
         cur_pos = scratch.site_xpos[self.site_id]
         pos_err = target_pos - cur_pos
         cur_quat = np.zeros(4)
@@ -147,17 +172,28 @@ class InverseKinematics:
             if pos_err_norm < pos_tol and ori_err_norm < ori_tol:
                 break
 
+            # ori_err는 site 로컬 프레임, jacr(회전 Jacobian)은 월드 프레임이라
+            # 그대로 곱하면 안 된다 -- site_xmat으로 회전시켜 같은 프레임으로 맞춘다
+            # (Phase 3에서 실제로 겪은 버그: 이 변환을 빼먹으면 오차 gradient가
+            # 엉뚱한 관절로 샌다).
             site_R = scratch.site_xmat[self.site_id].reshape(3, 3)
             ori_err_world = site_R @ ori_err
 
             jacp, jacr = self._jac(scratch)
             JJt_inv = np.linalg.inv(jacp @ jacp.T + lam2 * np.eye(3))
 
+            # 1) 위치 오차를 DLS로 우선 풀고
             dq_pos = jacp.T @ (JJt_inv @ pos_err)
+            # 2) 방향 보정은 위치 Jacobian의 영공간(null space)에 투영 -- 위치에
+            #    영향을 주지 않는 성분만 반영해서, 방향을 맞추려다 위치가 흔들리는
+            #    문제를 없앤다(계층형/task-priority IK).
             g_ori = jacr.T @ ori_err_world
             dq_ori = g_ori - jacp.T @ (JJt_inv @ (jacp @ g_ori))
             dq_full = np.clip(dq_pos + dq_ori, -self.max_joint_delta, self.max_joint_delta)
 
+            # 3) backtracking line search: 전체 스텝을 그대로 쓰지 않고, 실제로
+            #    비용(위치+가중 방향 오차)이 줄어드는지 확인하면서 스텝을 절반씩
+            #    줄여나간다 -- 오차가 클 때 반복할수록 진동/발산하던 문제를 막는다.
             cur_cost = pos_err_norm + ori_weight * ori_err_norm
             best = None
             step = 1.0
@@ -192,6 +228,9 @@ class InverseKinematics:
         ori_err_norm_rad, converged).
         """
         best = None
+        # 첫 시도는 q_init(보통 이전 프레임의 해, 값싸고 대개 좋은 시작점) 그대로,
+        # 이후는 관절 range 안에서 무작위로 뽑은 후보들 -- 국소해/lockup에 빠졌을 때
+        # 다른 자세에서 다시 시도해볼 기회를 준다.
         candidates = [np.array(q_init, dtype=float)]
         candidates += [rng.uniform(self.joint_ranges[:, 0], self.joint_ranges[:, 1]) for _ in range(n_restarts)]
         for q0 in candidates:
@@ -199,6 +238,7 @@ class InverseKinematics:
                                         context_qpos=context_qpos)
             if pe < success_pos_tol and oe < success_ori_tol:
                 return q, pe, oe, True
+            # 전부 실패해도 가장 오차가 작았던 시도는 기억해뒀다가 반환한다.
             if best is None or pe + oe < best[1] + best[2]:
                 best = (q, pe, oe)
         return best[0], best[1], best[2], False

@@ -51,6 +51,8 @@ teleop completeness, not claimed to be as thoroughly tuned.
 import mujoco
 import numpy as np
 
+# 검지/중지 각 손가락의 pip/dip/tip 관절 이름 (좌/우 손 각각). grasp 스칼라 하나가
+# 이 여섯 관절 전부의 목표 각도로 동시에 퍼진다.
 FINGER_CURL_JOINTS = {
     "l": {
         "index": ("finger_l_joint6", "finger_l_joint7", "finger_l_joint8"),
@@ -61,6 +63,7 @@ FINGER_CURL_JOINTS = {
         "middle": ("finger_r_joint10", "finger_r_joint11", "finger_r_joint12"),
     },
 }
+# 엄지 mcp_pitch/ip 관절 (thumb 스칼라가 매핑되는 대상).
 THUMB_CURL_JOINTS = {
     "l": ("finger_l_joint3", "finger_l_joint4"),
     "r": ("finger_r_joint3", "finger_r_joint4"),
@@ -78,13 +81,22 @@ THUMB_CURL_JOINTS = {
 # toward 0 = MORE extended, not more curled) -- a real behavioral bug, not just a rest-pose
 # cosmetic one, though never exercised since the left hand's grasp has no can of its own to
 # test against (see module docstring).
+# 손별 보간 방향 플래그: 오른손은 range의 lo가 "편 상태", 왼손은 range 자체가
+# 부호까지 미러링돼 있어 hi가 "편 상태"다 -- 이걸 안 나누면 왼손 엄지가 항상
+# 반대 방향(펴야 할 때 굽힘)으로 명령을 받는다.
 THUMB_CURL_OPEN_AT_HI = {"l": True, "r": False}
+# 약지/새끼의 pip/dip/tip (mcp는 range=0으로 잠겨 있어 여기 없음) -- 실제 grasp에는
+# 참여하지 않고, grasp 스칼라에 비례해 보기 좋으라고만 살짝 굽힌다(아래 apply_grasp
+# 참고).
 RING_PINKY_CURL_JOINTS = {
     "l": ("finger_l_joint14", "finger_l_joint15", "finger_l_joint16",
           "finger_l_joint18", "finger_l_joint19", "finger_l_joint20"),
     "r": ("finger_r_joint14", "finger_r_joint15", "finger_r_joint16",
           "finger_r_joint18", "finger_r_joint19", "finger_r_joint20"),
 }
+# 엄지의 CMC/MCP-yaw(벌림) 관절은 grasp/thumb 스칼라와 무관하게 항상 이 고정값으로
+# 유지된다 -- Phase 2에서 FK 그리드 서치로 찾은, 검지·중지 수렴 지점을 엄지가
+# 마주보게 하는 각도.
 THUMB_PRESHAPE = {
     "l": {
         "finger_l_joint1": 0.131,   # CMC abduction (symmetric range, same value as right)
@@ -96,10 +108,16 @@ THUMB_PRESHAPE = {
     },
 }
 
+# grasp/thumb=0일 때도 관절 range 전체(lo)까지 펴지 않고 이만큼 남겨둔다 --
+# "접촉 직전" 자세를 만들어 자유낙하하는 캔을 놓치지 않기 위함(모듈 docstring 참고).
 FINGER_OPEN_FRAC = 0.20
 THUMB_OPEN_FRAC = 0.0
+# 약지/새끼 pip/dip/tip이 grasp=1.0일 때 굽는 최대 비율(자기 range의 35%까지만) --
+# pick 성공률을 0.20~0.60으로 스윕해서 찾은 안전한 상한(0.40/0.45 사이가 절벽).
 RING_PINKY_MAX_FRAC = 0.35
 
+# 접촉력 판정(get_finger_can_contacts)에서 "이 body가 어느 손가락 그룹 소속인지"
+# 조회하는 데 쓰는 역방향 매핑의 원본 데이터.
 FINGER_BODY_GROUPS = {
     "l": {
         "thumb": ("finger_l_link1", "finger_l_link2", "finger_l_link3", "finger_l_link4"),
@@ -127,6 +145,15 @@ _JOINT_ACTUATOR_CACHE = {}
 
 
 def _resolve_joint_actuator(model, joint_name):
+    """관절 이름 -> (joint id, actuator id) 조회를 캐싱한다.
+
+    관절 자체는 mj_name2id로 바로 찾지만, "이 관절을 움직이는 actuator가 몇 번인지"는
+    MuJoCo가 직접 안 알려줘서 전체 actuator를 선형 탐색(O(nu))해야 한다 -- 매 물리
+    스텝마다 이 탐색을 반복하면 비용이 커서(실측: mj_step 단독 0.1ms/스텝 vs 캐싱 전
+    1.1ms/스텝) 처음 조회한 결과를 (model, joint_name) 키로 캐싱해둔다.
+    해당 관절에 actuator가 아예 없는 모델(hand_only.xml/arm_hand.xml의 약지·새끼)에서는
+    aid가 None으로 캐싱된다 -- 호출부에서 반드시 None 체크할 것.
+    """
     key = (id(model), joint_name)
     cached = _JOINT_ACTUATOR_CACHE.get(key)
     if cached is not None:
@@ -143,6 +170,14 @@ def _resolve_joint_actuator(model, joint_name):
 
 
 def _set_joint_ctrl(model, data, joint_name, value):
+    """관절 이름으로 바로 목표값(ctrl)을 써주는 편의 함수.
+
+    주의: 여기선 aid가 None인지 확인하지 않는다 -- 이 함수를 호출하는 쪽(엄지/검지/
+    중지 루프)은 항상 actuator가 존재함을 전제하기 때문. actuator가 없을 수도 있는
+    약지/새끼 루프는 apply_grasp 안에서 직접 _resolve_joint_actuator를 불러 None을
+    가드한다(data.ctrl[aid]에 aid=None이 들어가면 numpy가 배열 전체에 broadcast
+    대입해버리는 사고가 나므로 -- 아래 apply_grasp 주석 참고).
+    """
     _jid, aid = _resolve_joint_actuator(model, joint_name)
     data.ctrl[aid] = value
 
@@ -159,9 +194,13 @@ def apply_grasp(model, data, grasp: float, thumb: float, side: str = "r"):
     grasp = float(np.clip(grasp, 0.0, 1.0))
     thumb = float(np.clip(thumb, 0.0, 1.0))
 
+    # 1) 엄지 CMC/MCP-yaw는 항상 고정 pre-shape (grasp/thumb 스칼라와 무관).
     for name, value in THUMB_PRESHAPE[side].items():
         _set_joint_ctrl(model, data, name, value)
 
+    # 2) 엄지 mcp_pitch/ip -- thumb 스칼라를 [THUMB_OPEN_FRAC, 1.0] 구간에 매핑.
+    #    손별로 range의 "편 상태"가 lo/hi 중 어느 쪽인지 다르므로(THUMB_CURL_OPEN_AT_HI)
+    #    보간 방향을 뒤집어준다.
     for joint_name in THUMB_CURL_JOINTS[side]:
         jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, joint_name)
         lo, hi = model.jnt_range[jid]
@@ -172,6 +211,8 @@ def apply_grasp(model, data, grasp: float, thumb: float, side: str = "r"):
             value = lo + frac * (hi - lo)
         _set_joint_ctrl(model, data, joint_name, value)
 
+    # 3) 검지/중지 pip/dip/tip -- grasp 스칼라를 [FINGER_OPEN_FRAC, 1.0] 구간에 매핑.
+    #    실제로 캔을 쥐는 3점 파지(엄지+검지+중지)의 핵심 구동부.
     for finger_joints in FINGER_CURL_JOINTS[side].values():
         for joint_name in finger_joints:
             jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, joint_name)
@@ -179,6 +220,9 @@ def apply_grasp(model, data, grasp: float, thumb: float, side: str = "r"):
             frac = FINGER_OPEN_FRAC + grasp * (1.0 - FINGER_OPEN_FRAC)
             _set_joint_ctrl(model, data, joint_name, lo + frac * (hi - lo))
 
+    # 4) 약지/새끼 pip/dip/tip -- 실제 grasp에는 참여하지 않고, grasp 스칼라에 비례해
+    #    자기 range의 RING_PINKY_MAX_FRAC까지만 코스메틱하게 굽는다(0=rest에서 완전히
+    #    펴짐, grasp=1에서 0.35까지).
     for joint_name in RING_PINKY_CURL_JOINTS[side]:
         # jid can be -1 (hand_only.xml/arm_hand.xml have no left hand at all) and aid can be
         # None even when jid is valid (those two models still hard-lock ring/pinky pip/dip/
@@ -186,6 +230,9 @@ def apply_grasp(model, data, grasp: float, thumb: float, side: str = "r"):
         # 후속 4"). Must check both explicitly: data.ctrl[None] silently broadcasts to the
         # *entire* ctrl array instead of raising (the exact bug Session 2 already hit once,
         # see NOTES.md "Phase 2").
+        # (한글) jid/aid가 없을 수 있는 모델(hand_only/arm_hand)이 있으므로 반드시 둘 다
+        # None/-1 여부를 확인하고 건너뛴다 -- data.ctrl[None]은 에러 없이 배열 전체를
+        # 덮어써버리는 numpy의 함정이라 이 프로젝트에서 세 번이나 반복 재발했던 버그.
         jid, aid = _resolve_joint_actuator(model, joint_name)
         if jid == -1 or aid is None:
             continue
@@ -202,6 +249,7 @@ def get_finger_can_contacts(model, data, side: str = "r"):
     contact point belonging to that finger group this step.
     """
     can_gid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, CAN_GEOM_NAME)
+    # body 이름 -> "thumb"/"index"/"middle" 그룹 이름 역방향 조회 테이블.
     body_to_group = {}
     for group, bodies in FINGER_BODY_GROUPS[side].items():
         for b in bodies:
@@ -209,6 +257,9 @@ def get_finger_can_contacts(model, data, side: str = "r"):
 
     forces = {}
     force_vec = np.zeros(6)
+    # 이번 스텝에 발생한 접촉(data.contact) 전체를 훑어서, 캔과 맞닿은 접촉만 골라
+    # 어느 손가락 그룹인지 확인하고 법선력을 합산한다 -- 위치가 아니라 실제 접촉력을
+    # 근거로 판정하기 위함(이 프로젝트의 핵심 규칙).
     for i in range(data.ncon):
         c = data.contact[i]
         if can_gid not in (c.geom1, c.geom2):
@@ -231,6 +282,9 @@ def is_grasped(model, data, min_fingers=2, min_total_force=0.05, require_thumb=T
     default, matching PLAN.md), and the summed normal force exceeds min_total_force (N).
     """
     forces = get_finger_can_contacts(model, data, side=side)
+    # 엄지가 반드시 포함되고(기본값), 서로 다른 손가락 그룹 2개 이상이 닿아 있으며,
+    # 합산 법선력이 임계값을 넘어야 "쥐었다"고 판정한다 -- 셋 다 접촉력 기반이라
+    # 위치/부착 치팅이 끼어들 여지가 없다.
     if require_thumb and "thumb" not in forces:
         return False
     if len(forces) < min_fingers:
