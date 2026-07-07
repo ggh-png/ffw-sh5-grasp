@@ -1,41 +1,47 @@
-# MuJoCo 튜토리얼 — 무조코에게 로봇 손으로 캔을 쥐는 법을 가르치기까지
+# MuJoCo 튜토리얼 — `src/` 코드가 실제로 하는 일과, 그 파일들이 합쳐지는 방식
 
-이 문서는 **MuJoCo를 한 번도 써본 적 없는 대학생**을 대상으로 쓴 실전 가이드다. ROBOTIS
-FFW-SH5 로봇이 **kinematic 치팅 없이, 오직 접촉력(contact force)만으로** 테이블 위
-캔을 집어 드는 시뮬레이터를 실제로 만든 과정을, 그 프로젝트가 진행된 순서(Phase 0 →
-5) 그대로 따라가면서 **그 단계에서 새로 필요해진 MuJoCo 기능이 정확히 무엇이고 왜 그
-기능을 써야 했는지**를 하나씩 짚는다.
-
-이론을 먼저 늘어놓지 않는다 — 실제로 막혔던 문제, 그걸 풀기 위해 찾아 쓴 MuJoCo API,
-그리고 숫자로 확인한 결과 순서로 읽는다. 코드/XML 스니펫은 전부 실제 레포
+ROBOTIS FFW-SH5 로봇이 **kinematic 치팅 없이, 오직 접촉력(contact force)만으로**
+테이블 위 캔을 집어 드는 시뮬레이터의 `src/` 코드를 파일 단위로 뜯어본다. 각
+페이지는 **그 파일이 무엇을 구현하는지 → 어떻게 구현했는지(실제 코드) → 다른
+파일과 어떻게 연결되는지** 순서로 구성된다. 코드 스니펫은 전부 실제 레포
 (`ffw-sh5-grasp`)에서 그대로 가져온 것이다.
 
 이 프로젝트를 **왜** 이런 구조로 설계했는지(실패했던 이전 두 번의 시도, 설계 판단의
-근거)가 궁금하다면 [프로젝트 개요](../overview.md)를 먼저 보는 것도 좋다. 이 튜토리얼은
-그 반대편 — **어떻게(How)**, 그중에서도 **MuJoCo의 어떤 기능을 어떤 순서로 썼는가**에
-집중한다.
+근거)가 궁금하다면 [프로젝트 개요](../overview.md)를 먼저 보는 것도 좋다. 이
+튜토리얼은 그 반대편 — **어떻게(How)** 구현되고 **어떻게 합쳐지는가**에 집중한다.
 
-<span class="phase-track">
-<span>PHASE 0 · 공식 모델 검증</span>
-<span>PHASE 1 · 손 콜리전 정비</span>
-<span>PHASE 2 · 고정 손 grasp</span>
-<span>PHASE 3 · 팔 + IK</span>
-<span>PHASE 4 · 전체 조립 + 텔레옵</span>
-<span>PHASE 5 · 바퀴 주행</span>
-</span>
+## 파일이 합쳐지는 방식 (한눈에)
+
+```mermaid
+graph LR
+    UI["teleop_ui.py<br/>슬라이더 패널"] -->|app.targets 갱신| APP
+    APP["teleop_app.py<br/>TeleopApp — 메인 루프"] -->|draw_panel self| UI
+    APP -->|"q_init, target_pos/quat"| IK["ik.py<br/>InverseKinematics"]
+    IK -->|q_des| APP
+    APP -->|"q_des"| ARM["arm_control.py<br/>ArmTorqueController"]
+    ARM -->|"data.ctrl 토크"| PHYS[(MuJoCo<br/>mj_step)]
+    APP -->|"grasp, thumb"| GRASP["grasp.py<br/>apply_grasp"]
+    GRASP -->|"data.ctrl 손가락"| PHYS
+    APP -->|"drive_keys, yaw"| BASE["base_teleop.py<br/>SwerveDrive"]
+    BASE -->|"조향각/구동속도"| PHYS
+```
+
+`teleop_app.py`가 유일하게 나머지 다섯 파일 전부를 import하는 "허브"다. 나머지
+파일들은 서로를 알지 못한다 — `ik.py`는 `arm_control.py`가 존재하는지 모르고,
+`grasp.py`는 `base_teleop.py`가 뭘 하는지 모른다. 전부 `teleop_app.py`의 물리
+루프 안에서만 만난다. 자세한 호출 시점/순서는 [teleop_app.py](teleop_app.md)
+페이지에 그대로 나온다.
 
 ## 읽는 순서
 
 1. [MuJoCo 최소 개념 사전](00-basics.md) — model/data, actuator 세 가지, contact
-   파라미터. 처음이라면 여기부터.
-2. [Phase 0 — 공식 모델 검증](phase0.md)
-3. [Phase 1 — 손 콜리전 정비](phase1.md) — mocap+weld, capsule 콜리전, priority
-4. [Phase 2 — 고정 손 grasp](phase2.md) — position actuator + forcerange, contact
-   force로 성공 판정
-5. [Phase 3 — 팔 + IK](phase3.md) — site, Jacobian, DLS IK, motor + PD + 중력
-   feedforward
-6. [Phase 4 — 전체 조립 + 텔레옵](phase4.md) — 렌더링 파이프라인, context_qpos
-7. [Phase 5 — 바퀴 주행](phase5.md) — velocity actuator, `<pair>`, 접촉 강성
+   파라미터. 낯선 용어가 나올 때 참고.
+2. [`src/grasp.py`](grasp.md) — grasp synergy 매핑 + 접촉력 기반 파지 판정
+3. [`src/ik.py`](ik.md) — 6DOF damped least squares IK
+4. [`src/arm_control.py`](arm_control.md) — PD + 중력/코리올리 feedforward 토크 제어
+5. [`src/base_teleop.py`](base_teleop.md) — 조작감 스무딩 + 스워브 드라이브 기구학
+6. [`src/teleop_app.py`](teleop_app.md) — 위 네 파일이 실제로 합쳐지는 메인 루프
+7. [`src/teleop_ui.py`](teleop_ui.md) — ImGui 슬라이더 패널
 8. [흔한 함정 총정리](pitfalls.md) — 이 프로젝트가 반복해서 배운 것들
 9. [API 치트시트](cheatsheet.md) — 실제로 쓴 MuJoCo API/MJCF 요소 전부 + 더 읽어볼 곳
 
