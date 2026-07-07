@@ -71,6 +71,11 @@ buttons in the on-screen panel.
 패널 → 물리 스텝(IK+제어+mj_step) → 렌더링 → 프레임 타이밍. 각 메서드는 딱 그
 단계만 담당하고, 상태는 전부 self.* 속성으로 공유한다 -- 원래 하나의 거대한 main()
 함수 안에서 지역 변수로 얽혀 있던 것을 단계별로 나눈 것뿐, 동작은 전혀 바뀌지 않았다.
+ImGui 슬라이더 패널 자체(위젯 배치)는 물리/렌더링과 무관하게 독립적으로 바뀔 일이
+많아 `src/teleop_ui.py`로 따로 뺐다 -- 슬라이더를 추가/수정할 땐 그 파일만 보면 된다.
+그 밖의(더 안 쪼갠) 부분들은 실제로 나눠봐도 서로 상태를 너무 많이 공유하거나
+(물리 스텝 vs 렌더링), 주석이 바로 옆 코드에 있어야 의미가 있어서(튜닝 상수들)
+파일을 나누는 게 오히려 왔다갔다하며 읽게 만들 것 같아 그대로 뒀다.
 """
 
 import math
@@ -95,6 +100,7 @@ import arm_control  # noqa: E402
 import base_teleop  # noqa: E402
 import grasp  # noqa: E402
 import ik  # noqa: E402
+import teleop_ui  # noqa: E402
 
 # 양팔 관절 이름 목록 (IK solver / 토크 제어기에 그대로 넘겨진다).
 ARM_R = [f"arm_r_joint{i}" for i in range(1, 8)]
@@ -166,15 +172,6 @@ def rpy_deg_to_quat(rpy_deg):
         cr * sp * cy + sr * cp * sy,
         cr * cp * sy - sr * sp * cy,
     ])
-
-
-def _begin_expanded(title, flags=0):
-    """imgui.begin's return type varies (plain bool vs. (expanded, opened) tuple)
-    depending on binding version -- normalize to just the "should I draw contents" bool."""
-    result = imgui.begin(title, None, flags) if flags else imgui.begin(title)
-    if isinstance(result, tuple):
-        return result[0]
-    return result
 
 
 def _set_camera_preset(cam, preset):
@@ -303,6 +300,9 @@ class TeleopApp:
         self.stuck_counter = {"r": 0, "l": 0}
         self.contact_viz = False
         self.camera_preset = 0
+        # teleop_ui.draw_panel reads these two off `app` directly (see that module's
+        # docstring for why it doesn't import teleop_app's constants instead).
+        self.lift_range = LIFT_RANGE
 
     def _setup_render(self):
         """창/렌더링 초기화: GLFW 창 하나 + 그 위에 ImGui, MuJoCo 저수준 렌더 API로
@@ -316,6 +316,7 @@ class TeleopApp:
         glfw.make_context_current(window)
         glfw.swap_interval(0)
         self.window = window
+        self.window_h = WINDOW_H
 
         imgui.create_context()
         self.impl = GlfwRenderer(window)
@@ -340,6 +341,19 @@ class TeleopApp:
         self.last_mouse = list(glfw.get_cursor_pos(self.window))
         self.keys = KeyEdge()
         self.ik_err_mm = {"l": 0.0, "r": 0.0}
+
+    # ------------------------------------------------------------------
+    # R/G/C 세 가지 동작 -- 키보드(_handle_edge_keys)와 패널 버튼
+    # (teleop_ui.draw_panel) 양쪽에서 똑같이 호출하는 공용 메서드.
+    # ------------------------------------------------------------------
+
+    def reset_can(self):
+        _reset_can_random(self.model, self.data, self.rng)
+        mujoco.mj_forward(self.model, self.data)
+
+    def cycle_camera(self):
+        self.camera_preset = 1 - self.camera_preset
+        _set_camera_preset(self.cam, self.camera_preset)
 
     # ------------------------------------------------------------------
     # 메인 루프
@@ -398,13 +412,11 @@ class TeleopApp:
         if io.want_capture_keyboard:
             return
         if self.keys.pressed(self.window, glfw.KEY_R):
-            _reset_can_random(self.model, self.data, self.rng)
-            mujoco.mj_forward(self.model, self.data)
+            self.reset_can()
         if self.keys.pressed(self.window, glfw.KEY_G):
             self.contact_viz = not self.contact_viz
         if self.keys.pressed(self.window, glfw.KEY_C):
-            self.camera_preset = 1 - self.camera_preset
-            _set_camera_preset(self.cam, self.camera_preset)
+            self.cycle_camera()
 
     def _read_drive_and_lift_keys(self, io):
         """continuous drive/lift keys (level-triggered, not edge-triggered like R/G/C
@@ -441,67 +453,10 @@ class TeleopApp:
 
     def _draw_ui_panel(self):
         """슬라이더 패널 -- HUD, 양손 EE 포즈, grasp/thumb, 리프트, 관절 모니터.
+        실제 위젯 배치는 teleop_ui.draw_panel로 옮겼다(그 모듈 docstring 참고) --
         여기서 바뀌는 값은 전부 self.targets로만 들어가고, 물리 반영은
         _step_physics에서 이뤄진다."""
-        targets = self.targets
-        data, model = self.data, self.model
-
-        imgui.set_next_window_pos((10, 10), imgui.Cond_.first_use_ever)
-        imgui.set_next_window_size((380, WINDOW_H - 20), imgui.Cond_.first_use_ever)
-        if not _begin_expanded("FFW-SH5 Teleop"):
-            imgui.end()
-            return
-
-        imgui.text(f"sim {data.time:6.1f}s  wall {time.perf_counter()-self.wall_start:6.1f}s  "
-                   f"{self.freq_ema:4.1f} Hz")
-        imgui.text(f"IK err  L: {self.ik_err_mm['l']:.2f}mm   R: {self.ik_err_mm['r']:.2f}mm")
-        imgui.text(f"Base  x={data.qpos[self.base_x_qadr]:+.2f}m y={data.qpos[self.base_y_qadr]:+.2f}m "
-                   f"yaw={math.degrees(data.qpos[self.base_yaw_qadr]):+.1f}deg  "
-                   f"(Up/Down drive, Left/Right yaw, Shift+Left/Right strafe, Q/E lift)")
-        imgui.separator()
-
-        for side, label in (("r", "Right hand control target"), ("l", "Left hand control target")):
-            if imgui.collapsing_header(label, imgui.TreeNodeFlags_.default_open):
-                pos = targets[f"pos_{side}"]
-                rpy = targets[f"rpy_{side}"]
-                for i, axis in enumerate(("X", "Y", "Z")):
-                    _, pos[i] = imgui.slider_float(f"{axis}##{side}pos", pos[i], -0.2, 1.2, "%.3f m")
-                imgui.text("Roll/Pitch/Yaw (relative to home pose, hand-local axes)")
-                for i, axis in enumerate(("Roll", "Pitch", "Yaw")):
-                    _, rpy[i] = imgui.slider_float(f"{axis}##{side}rpy", rpy[i], -90.0, 90.0, "%.1f deg")
-                if imgui.button(f"Reset orientation##{side}"):
-                    rpy[0], rpy[1], rpy[2] = 0.0, 0.0, 0.0
-
-        if imgui.collapsing_header("Hand grasp targets", imgui.TreeNodeFlags_.default_open):
-            for side, label in (("r", "Right"), ("l", "Left")):
-                _, targets[f"grasp_{side}"] = imgui.slider_float(
-                    f"{label} grasp##{side}", targets[f"grasp_{side}"], 0.0, 1.0)
-                _, targets[f"thumb_{side}"] = imgui.slider_float(
-                    f"{label} thumb##{side}", targets[f"thumb_{side}"], 0.0, 1.0)
-
-        if imgui.collapsing_header("Lift / Utils", imgui.TreeNodeFlags_.default_open):
-            _, targets["lift"] = imgui.slider_float("Lift", targets["lift"], LIFT_RANGE[0], LIFT_RANGE[1], "%.3f m")
-            if imgui.button("Reset Can (R)"):
-                _reset_can_random(model, data, self.rng)
-                mujoco.mj_forward(model, data)
-            imgui.same_line()
-            if imgui.button("Toggle Contact Viz (G)"):
-                self.contact_viz = not self.contact_viz
-            imgui.same_line()
-            if imgui.button("Cycle Camera (C)"):
-                self.camera_preset = 1 - self.camera_preset
-                _set_camera_preset(self.cam, self.camera_preset)
-
-        if imgui.collapsing_header("Joint position monitor"):
-            imgui.begin_child("joint_monitor", (0, 260), True)
-            for name in MONITOR_JOINTS:
-                val = float(data.qpos[self.monitor_qposadr[name]])
-                lo, hi = self.monitor_ranges[name]
-                frac = (val - lo) / (hi - lo) if hi > lo else 0.0
-                frac = min(1.0, max(0.0, frac))
-                imgui.progress_bar(frac, (200, 0), f"{name} {math.degrees(val):+.1f}deg")
-            imgui.end_child()
-        imgui.end()
+        teleop_ui.draw_panel(self)
 
     def _step_physics(self, drive_keys):
         """(한글) 여기서부터 실제 물리 반영: 슬라이더 목표값을 rate-limit -> 베이스
