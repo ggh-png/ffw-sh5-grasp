@@ -174,6 +174,16 @@ def rpy_deg_to_quat(rpy_deg):
     ])
 
 
+def quat_to_rpy_deg(q):
+    """rpy_deg_to_quat의 역변환 -- FK 모드에서 IK 모드로 되돌아갈 때, 현재 실제
+    방향(쿼터니언)을 RPY 슬라이더 값(도)으로 되짚어 오기 위해 필요하다."""
+    w, x, y, z = q
+    roll = math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y))
+    pitch = math.asin(max(-1.0, min(1.0, 2 * (w * y - z * x))))
+    yaw = math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+    return [math.degrees(roll), math.degrees(pitch), math.degrees(yaw)]
+
+
 def _set_camera_preset(cam, preset):
     if preset == 0:  # overview
         cam.lookat[:] = [0.3, 0.0, 1.0]
@@ -247,6 +257,13 @@ class TeleopApp:
         self.solver_l = ik.InverseKinematics(model, "grasp_target_l", ARM_L)
         self.ctrl_r = arm_control.ArmTorqueController(model, ARM_R)
         self.ctrl_l = arm_control.ArmTorqueController(model, ARM_L)
+        # FK(관절각 직접 제어) 모드에서 패널 슬라이더의 최소/최대값으로 쓸, 각 팔
+        # 관절의 range를 도(degree) 단위로 미리 계산해둔다.
+        self.arm_joint_ranges_deg = {
+            side: [tuple(math.degrees(v) for v in model.jnt_range[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, n)])
+                   for n in joints]
+            for side, joints in (("r", ARM_R), ("l", ARM_L))
+        }
         self.lift_aid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, "lift_joint")
         self.base_x_qadr = model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "base_x")]
         self.base_y_qadr = model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "base_y")]
@@ -268,20 +285,20 @@ class TeleopApp:
                                 for n in MONITOR_JOINTS}
         self.rng = np.random.default_rng()
 
-        site_r = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "grasp_target_r")
-        site_l = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "grasp_target_l")
+        self.site_r = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "grasp_target_r")
+        self.site_l = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "grasp_target_l")
         # Reference orientation each hand's RPY sliders are relative to (see module docstring's
         # "RPY control" note): the home-pose site orientation, fixed for the whole session.
         self.home_quat_r = np.zeros(4)
-        mujoco.mju_mat2Quat(self.home_quat_r, data.site_xmat[site_r])
+        mujoco.mju_mat2Quat(self.home_quat_r, data.site_xmat[self.site_r])
         self.home_quat_l = np.zeros(4)
-        mujoco.mju_mat2Quat(self.home_quat_l, data.site_xmat[site_l])
+        mujoco.mju_mat2Quat(self.home_quat_l, data.site_xmat[self.site_l])
 
         # 슬라이더가 직접 쓰는 "목표값" 딕셔너리 -- 물리 루프는 이 값만 읽고, 이 값을
         # 쓰는 건 GUI 슬라이더뿐이다(단방향 데이터 흐름, 모듈 docstring 참고).
         self.targets = {
-            "pos_r": data.site_xpos[site_r].tolist(), "rpy_r": [0.0, 0.0, 0.0],
-            "pos_l": data.site_xpos[site_l].tolist(), "rpy_l": [0.0, 0.0, 0.0],
+            "pos_r": data.site_xpos[self.site_r].tolist(), "rpy_r": [0.0, 0.0, 0.0],
+            "pos_l": data.site_xpos[self.site_l].tolist(), "rpy_l": [0.0, 0.0, 0.0],
             "grasp_r": 0.0, "thumb_r": 0.0, "grasp_l": 0.0, "thumb_l": 0.0,
             "lift": float(data.qpos[model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "lift_joint")]]),
         }
@@ -334,6 +351,15 @@ class TeleopApp:
         """메인 루프에서만 쓰는 상태(IK 웜스타트 값, 타이밍, 입력 헬퍼)."""
         self.q_des_r = HOME_Q_R.copy()
         self.q_des_l = HOME_Q_L.copy()
+        # 손별 제어 모드: "ik"(EE 포즈 슬라이더 -> solve_pose, 기존 동작) 또는
+        # "fk"(관절각 슬라이더를 그대로 토크 제어기 목표로 사용, IK 자체를 건너뜀).
+        # 리프트를 움직이는 동안 IK가 매 프레임에서만 어깨 높이를 다시 읽어들여서
+        # 생기는 출렁임(리프트가 프레임 사이에도 계속 움직이는데 IK는 프레임당
+        # 한 번만 풀림)을 피하고 싶을 때 FK로 전환해 관절각을 고정해두면, 팔 전체가
+        # 리프트에 강체로 붙어 그대로 오르내리기만 해서 흔들림이 아예 없다.
+        self.arm_mode = {"r": "ik", "l": "ik"}
+        self.fk_q_deg = {"r": [math.degrees(v) for v in self.q_des_r],
+                          "l": [math.degrees(v) for v in self.q_des_l]}
         self.frame_dt = 1.0 / LOOP_HZ
         self.steps_per_frame = max(1, round(self.frame_dt / self.model.opt.timestep))
         self.freq_ema = LOOP_HZ
@@ -354,6 +380,60 @@ class TeleopApp:
     def cycle_camera(self):
         self.camera_preset = 1 - self.camera_preset
         _set_camera_preset(self.cam, self.camera_preset)
+
+    def set_arm_mode(self, side, mode):
+        """이 손을 "ik"(EE 포즈 슬라이더) <-> "fk"(관절각 슬라이더)로 전환한다.
+        전환 순간 팔이 튀지 않도록 방향에 따라 다르게 동기화한다:
+
+        - ik -> fk: 지금 토크 제어기가 추종 중이던 관절각(q_des)을 그대로 FK
+          슬라이더 값으로 복사 -- 전환 직후 첫 스텝의 목표 관절각이 전환 직전과
+          정확히 같아서 포즈 점프가 없다.
+        - fk -> ik: 반대로 EE 포즈 슬라이더 쪽이 전환 전 값(어쩌면 한참 전에 마지막
+          으로 IK 모드였을 때의 낡은 목표)을 그대로 들고 있으므로, 그걸 쓰는 대신
+          "지금 실제 site가 있는 월드 포즈"를 베이스-로컬 좌표/RPY로 역산해 targets/
+          smoothed_pos/smoothed_rpy에 다시 채워 넣는다 -- 그래야 IK가 방금 있던
+          자리에서부터 이어서 풀리지, 옛 목표로 갑자기 끌려가지 않는다.
+        """
+        if mode == self.arm_mode[side]:
+            return
+        q_des = self.q_des_r if side == "r" else self.q_des_l
+
+        if mode == "fk":
+            self.fk_q_deg[side] = [math.degrees(v) for v in q_des]
+        else:
+            site_id = self.site_r if side == "r" else self.site_l
+            home_quat = self.home_quat_r if side == "r" else self.home_quat_l
+            base_x = self.data.qpos[self.base_x_qadr]
+            base_y = self.data.qpos[self.base_y_qadr]
+            base_yaw = self.data.qpos[self.base_yaw_qadr]
+            cy, sy = math.cos(base_yaw), math.sin(base_yaw)
+
+            # 월드 위치 -> 베이스-로컬 위치 (local_to_world_pos의 역변환, _step_physics 참고).
+            world_pos = self.data.site_xpos[site_id]
+            dx, dy = world_pos[0] - base_x, world_pos[1] - base_y
+            local_pos = [cy * dx + sy * dy, -sy * dx + cy * dy, float(world_pos[2])]
+
+            # 월드 방향 -> "홈 포즈 기준 로컬 회전" RPY (quat_r = base_quat * home_quat * rpy_delta
+            # 조립의 역산, _step_physics 참고).
+            base_quat = np.array([math.cos(base_yaw / 2), 0.0, 0.0, math.sin(base_yaw / 2)])
+            base_quat_inv, home_quat_inv = np.zeros(4), np.zeros(4)
+            mujoco.mju_negQuat(base_quat_inv, base_quat)
+            mujoco.mju_negQuat(home_quat_inv, home_quat)
+            world_quat = np.zeros(4)
+            mujoco.mju_mat2Quat(world_quat, self.data.site_xmat[site_id])
+            tmp = np.zeros(4)
+            mujoco.mju_mulQuat(tmp, base_quat_inv, world_quat)
+            rpy_delta_quat = np.zeros(4)
+            mujoco.mju_mulQuat(rpy_delta_quat, home_quat_inv, tmp)
+            rpy_deg = quat_to_rpy_deg(rpy_delta_quat)
+
+            self.targets[f"pos_{side}"] = local_pos
+            self.targets[f"rpy_{side}"] = rpy_deg
+            self.smoothed_pos[side] = np.array(local_pos)
+            self.smoothed_rpy[side] = np.array(rpy_deg)
+            self.stuck_counter[side] = 0
+
+        self.arm_mode[side] = mode
 
     # ------------------------------------------------------------------
     # 메인 루프
@@ -497,27 +577,42 @@ class TeleopApp:
         # scrambled axes an absolute-Euler encoding gives once home is far from identity.
         # base_quat is then applied on the left so the whole hand-relative-to-base target
         # turns together with the base, same reasoning as the position transform above.
-        quat_r = np.zeros(4)
-        mujoco.mju_mulQuat(quat_r, self.home_quat_r, rpy_deg_to_quat(self.smoothed_rpy["r"]))
-        mujoco.mju_mulQuat(quat_r, base_quat, quat_r)
-        quat_l = np.zeros(4)
-        mujoco.mju_mulQuat(quat_l, self.home_quat_l, rpy_deg_to_quat(self.smoothed_rpy["l"]))
-        mujoco.mju_mulQuat(quat_l, base_quat, quat_l)
-        pos_r_world = local_to_world_pos(self.smoothed_pos["r"])
-        pos_l_world = local_to_world_pos(self.smoothed_pos["l"])
-        # See STUCK_POS_TOL note above -- a hand that's been stuck (unconverged) for several
-        # frames in a row gets thrown into a cheap iteration budget instead of repeatedly
-        # paying full price to re-discover the same non-improving result.
-        iter_r = STUCK_MAX_ITER if self.stuck_counter["r"] >= STUCK_FRAMES_THRESHOLD else IK_MAX_ITER
-        iter_l = STUCK_MAX_ITER if self.stuck_counter["l"] >= STUCK_FRAMES_THRESHOLD else IK_MAX_ITER
-        self.q_des_r, perr_r, _ = self.solver_r.solve_pose(self.q_des_r, pos_r_world, quat_r,
-                                                            max_iter=iter_r, context_qpos=ctx_qpos)
-        self.q_des_l, perr_l, _ = self.solver_l.solve_pose(self.q_des_l, pos_l_world, quat_l,
-                                                            max_iter=iter_l, context_qpos=ctx_qpos)
-        self.stuck_counter["r"] = self.stuck_counter["r"] + 1 if perr_r > STUCK_POS_TOL else 0
-        self.stuck_counter["l"] = self.stuck_counter["l"] + 1 if perr_l > STUCK_POS_TOL else 0
-        self.ik_err_mm["r"] = perr_r * 1000.0
-        self.ik_err_mm["l"] = perr_l * 1000.0
+        #
+        # (한글) 이 IK 계산은 arm_mode가 "ik"인 손에만 수행한다 -- "fk"인 손은 관절각
+        # 슬라이더 값을 그대로 목표로 쓰고 IK를 아예 건너뛴다. 관절각으로 직접 고정해
+        # 두면 팔이 리프트(어깨 높이)와 강체로 함께 움직일 뿐이라, 리프트가 프레임 중간
+        # 에도 계속 움직이는데 IK는 프레임당 한 번만 그 순간의 어깨 높이를 반영해서
+        # 생기는 출렁임 자체가 원천적으로 없다.
+        if self.arm_mode["r"] == "ik":
+            quat_r = np.zeros(4)
+            mujoco.mju_mulQuat(quat_r, self.home_quat_r, rpy_deg_to_quat(self.smoothed_rpy["r"]))
+            mujoco.mju_mulQuat(quat_r, base_quat, quat_r)
+            pos_r_world = local_to_world_pos(self.smoothed_pos["r"])
+            # See STUCK_POS_TOL note above -- a hand that's been stuck (unconverged) for
+            # several frames in a row gets thrown into a cheap iteration budget instead of
+            # repeatedly paying full price to re-discover the same non-improving result.
+            iter_r = STUCK_MAX_ITER if self.stuck_counter["r"] >= STUCK_FRAMES_THRESHOLD else IK_MAX_ITER
+            self.q_des_r, perr_r, _ = self.solver_r.solve_pose(self.q_des_r, pos_r_world, quat_r,
+                                                                max_iter=iter_r, context_qpos=ctx_qpos)
+            self.stuck_counter["r"] = self.stuck_counter["r"] + 1 if perr_r > STUCK_POS_TOL else 0
+            self.ik_err_mm["r"] = perr_r * 1000.0
+        else:
+            self.q_des_r = np.radians(self.fk_q_deg["r"])
+            self.stuck_counter["r"] = 0
+
+        if self.arm_mode["l"] == "ik":
+            quat_l = np.zeros(4)
+            mujoco.mju_mulQuat(quat_l, self.home_quat_l, rpy_deg_to_quat(self.smoothed_rpy["l"]))
+            mujoco.mju_mulQuat(quat_l, base_quat, quat_l)
+            pos_l_world = local_to_world_pos(self.smoothed_pos["l"])
+            iter_l = STUCK_MAX_ITER if self.stuck_counter["l"] >= STUCK_FRAMES_THRESHOLD else IK_MAX_ITER
+            self.q_des_l, perr_l, _ = self.solver_l.solve_pose(self.q_des_l, pos_l_world, quat_l,
+                                                                max_iter=iter_l, context_qpos=ctx_qpos)
+            self.stuck_counter["l"] = self.stuck_counter["l"] + 1 if perr_l > STUCK_POS_TOL else 0
+            self.ik_err_mm["l"] = perr_l * 1000.0
+        else:
+            self.q_des_l = np.radians(self.fk_q_deg["l"])
+            self.stuck_counter["l"] = 0
 
         wheel_cmds = self.base_drive.update(drive_keys, self.frame_dt, base_yaw)
 

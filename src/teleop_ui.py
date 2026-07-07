@@ -24,6 +24,14 @@ def _begin_expanded(title, flags=0):
     return result
 
 
+def _ik_err_text(app, side):
+    """FK 모드인 손은 IK를 아예 안 풀므로 mm 오차 자체가 의미 없다 -- 지난 IK
+    모드 시절의 값을 그대로 보여주는 대신 "FK"라고 명시한다."""
+    if app.arm_mode[side] == "ik":
+        return f"{app.ik_err_mm[side]:.2f}mm"
+    return "FK"
+
+
 def draw_panel(app):
     """Draw the whole "FFW-SH5 Teleop" panel for this frame and write any slider/button
     interaction straight back into `app`'s state (same one-way-data-flow contract as the
@@ -39,7 +47,7 @@ def draw_panel(app):
 
     imgui.text(f"sim {data.time:6.1f}s  wall {time.perf_counter()-app.wall_start:6.1f}s  "
                f"{app.freq_ema:4.1f} Hz")
-    imgui.text(f"IK err  L: {app.ik_err_mm['l']:.2f}mm   R: {app.ik_err_mm['r']:.2f}mm")
+    imgui.text(f"IK err  L: {_ik_err_text(app, 'l')}   R: {_ik_err_text(app, 'r')}")
     imgui.text(f"Base  x={data.qpos[app.base_x_qadr]:+.2f}m y={data.qpos[app.base_y_qadr]:+.2f}m "
                f"yaw={math.degrees(data.qpos[app.base_yaw_qadr]):+.1f}deg  "
                f"(Up/Down drive, Left/Right yaw, Shift+Left/Right strafe, Q/E lift)")
@@ -47,15 +55,31 @@ def draw_panel(app):
 
     for side, label in (("r", "Right hand control target"), ("l", "Left hand control target")):
         if imgui.collapsing_header(label, imgui.TreeNodeFlags_.default_open):
-            pos = targets[f"pos_{side}"]
-            rpy = targets[f"rpy_{side}"]
-            for i, axis in enumerate(("X", "Y", "Z")):
-                _, pos[i] = imgui.slider_float(f"{axis}##{side}pos", pos[i], -0.2, 1.2, "%.3f m")
-            imgui.text("Roll/Pitch/Yaw (relative to home pose, hand-local axes)")
-            for i, axis in enumerate(("Roll", "Pitch", "Yaw")):
-                _, rpy[i] = imgui.slider_float(f"{axis}##{side}rpy", rpy[i], -90.0, 90.0, "%.1f deg")
-            if imgui.button(f"Reset orientation##{side}"):
-                rpy[0], rpy[1], rpy[2] = 0.0, 0.0, 0.0
+            mode = app.arm_mode[side]
+            imgui.text(f"Mode: {'IK (pose)' if mode == 'ik' else 'FK (joint)'}")
+            imgui.same_line()
+            if imgui.button(f"Switch to {'FK' if mode == 'ik' else 'IK'}##{side}mode"):
+                app.set_arm_mode(side, "fk" if mode == "ik" else "ik")
+
+            if mode == "ik":
+                pos = targets[f"pos_{side}"]
+                rpy = targets[f"rpy_{side}"]
+                for i, axis in enumerate(("X", "Y", "Z")):
+                    _, pos[i] = imgui.slider_float(f"{axis}##{side}pos", pos[i], -0.2, 1.2, "%.3f m")
+                imgui.text("Roll/Pitch/Yaw (relative to home pose, hand-local axes)")
+                for i, axis in enumerate(("Roll", "Pitch", "Yaw")):
+                    _, rpy[i] = imgui.slider_float(f"{axis}##{side}rpy", rpy[i], -90.0, 90.0, "%.1f deg")
+                if imgui.button(f"Reset orientation##{side}"):
+                    rpy[0], rpy[1], rpy[2] = 0.0, 0.0, 0.0
+            else:
+                # FK: IK를 아예 거치지 않고 관절각을 직접 토크 제어기 목표로 쓴다 --
+                # 리프트를 움직이는 동안 이 손을 FK로 두면 팔이 리프트에 강체로
+                # 붙어서 오르내리기만 하므로, 어깨 높이가 프레임 사이에 바뀌어도
+                # IK가 그걸 뒤늦게 쫓아가며 생기는 출렁임 자체가 없다.
+                imgui.text("Joint angles (deg)")
+                fk_deg = app.fk_q_deg[side]
+                for i, (lo, hi) in enumerate(app.arm_joint_ranges_deg[side]):
+                    _, fk_deg[i] = imgui.slider_float(f"J{i+1}##{side}fk", fk_deg[i], lo, hi, "%.1f deg")
 
     if imgui.collapsing_header("Hand grasp targets", imgui.TreeNodeFlags_.default_open):
         for side, label in (("r", "Right"), ("l", "Left")):

@@ -40,12 +40,27 @@ regress Phase 2's fixed-hand grasp (still 10/10, see NOTES.md).
 
 Left-hand thumb pre-shape (Phase 4, models/full_scene.xml): mirrored from the right's
 FK-sweep result, not independently re-swept -- thumb_l_cmc's range is symmetric with
-thumb_r_cmc's so the CMC value carries over unchanged (0.131), but thumb_l_mcp_yaw's range
-is the mirror image of thumb_r_mcp_yaw's ([0, pi] vs [-pi, 0]) so that value is negated
-(+1.309). The left hand has no can of its own in this project (single shared can, right-hand
-regression only, see NOTES.md "Phase 4") so this mirror hasn't been independently validated
-against real contact-force grasp success the way the right hand's has -- it's provided for
-teleop completeness, not claimed to be as thoroughly tuned.
+thumb_r_cmc's so the CMC value carries over unchanged (now -0.131, see below), but
+thumb_l_mcp_yaw's range is the mirror image of thumb_r_mcp_yaw's ([0, pi] vs [-pi, 0]) so
+that value is negated. The left hand has no can of its own in this project (single shared
+can, right-hand regression only, see NOTES.md "Phase 4") so this mirror hasn't been
+independently validated against real contact-force grasp success the way the right hand's
+has -- it's provided for teleop completeness, not claimed to be as thoroughly tuned.
+
+Both thumb pre-shape angles were revisited (this session) after visual inspection showed
+the thumb folding out to the side rather than toward the palm at thumb=1.0: CMC abduction
+negated (0.131 -> -0.131 rad, ~15 deg total swing -- a real but small change, confirmed
+by direct render comparison to barely affect the overall thumb direction, since CMC only
+adjusts spread, not which way the thumb faces). MCP yaw -- the joint that actually sets
+which way the thumb's curl plane faces -- is the one that mattered: moved from -1.309 to
+-1.5708 rad (the midpoint of thumb_r_mcp_yaw's [-pi, 0] range, found by rendering a sweep
+across the full range at grasp=0/thumb=1 -- the exact slider combination that first showed
+the problem -- and picking the point where the curled thumb visibly swings in to meet the
+index/middle convergence zone instead of hooking away from it), then nudged a further
+-15 deg to -1.8326 rad on explicit request once that direction was confirmed to look
+right. Re-verified against tests/test_phase_2.py (10/10, unchanged) and
+tests/test_phase_4.py (9/10, previously 8/10 -- no regression, slightly better) at both
+values before keeping the final one.
 """
 
 import mujoco
@@ -99,12 +114,12 @@ RING_PINKY_CURL_JOINTS = {
 # 마주보게 하는 각도.
 THUMB_PRESHAPE = {
     "l": {
-        "finger_l_joint1": 0.131,   # CMC abduction (symmetric range, same value as right)
-        "finger_l_joint2": 1.309,   # MCP yaw (mirrored range, sign-flipped from right)
+        "finger_l_joint1": -0.131,  # CMC abduction (symmetric range, same value as right)
+        "finger_l_joint2": 2.0326,  # MCP yaw (mirrored range, sign-flipped from right)
     },
     "r": {
-        "finger_r_joint1": 0.131,   # CMC abduction
-        "finger_r_joint2": -1.309,  # MCP yaw
+        "finger_r_joint1": -0.131,  # CMC abduction
+        "finger_r_joint2": -2.0326,  # MCP yaw (-1.5708 nudged another 15deg same direction)
     },
 }
 
