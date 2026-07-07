@@ -5,9 +5,12 @@ so every Phase 1-3 call site (single-hand models, right hand only) is unchanged.
 Two independent scalars, matching the reference video's "Right grasp / Right thumb"
 sliders:
   - `grasp` (0..1): index + middle finger curl (pip/dip/tip).
-  - `thumb` (0..1): thumb curl (mcp_pitch, ip). Thumb CMC/MCP-yaw (abduction) are a fixed
-    pre-shape, not part of either scalar -- found by FK sweep in Phase 2 (see NOTES.md) so
-    the thumb opposes the index/middle convergence zone around the can.
+  - `thumb` (0..1): thumb curl (mcp_pitch, ip) *and* (this session) thumb MCP-yaw, ramped
+    from a safe rest angle to a wider "folds toward the palm" angle -- see
+    THUMB_YAW_REST/THUMB_YAW_CURL below for why yaw is no longer a flat constant. Thumb
+    CMC (abduction) is still a genuinely fixed pre-shape, independent of either scalar --
+    found by FK sweep in Phase 2 (see NOTES.md) so the thumb opposes the index/middle
+    convergence zone around the can.
 
 Ring and pinky mcp (spread) stay locked at range=0 (3-point grasp fallback from PLAN.md's
 own guidance), so this module never actively grasps with them. Their pip/dip/tip *do* get a
@@ -42,25 +45,44 @@ Left-hand thumb pre-shape (Phase 4, models/full_scene.xml): mirrored from the ri
 FK-sweep result, not independently re-swept -- thumb_l_cmc's range is symmetric with
 thumb_r_cmc's so the CMC value carries over unchanged (now -0.131, see below), but
 thumb_l_mcp_yaw's range is the mirror image of thumb_r_mcp_yaw's ([0, pi] vs [-pi, 0]) so
-that value is negated. The left hand has no can of its own in this project (single shared
-can, right-hand regression only, see NOTES.md "Phase 4") so this mirror hasn't been
-independently validated against real contact-force grasp success the way the right hand's
-has -- it's provided for teleop completeness, not claimed to be as thoroughly tuned.
+THUMB_YAW_REST/THUMB_YAW_CURL negate the right hand's values for "l". The left hand has
+no can of its own in this project (single shared can, right-hand regression only, see
+NOTES.md "Phase 4") so this mirror hasn't been independently validated against real
+contact-force grasp success the way the right hand's has -- it's provided for teleop
+completeness, not claimed to be as thoroughly tuned.
 
-Both thumb pre-shape angles were revisited (this session) after visual inspection showed
-the thumb folding out to the side rather than toward the palm at thumb=1.0: CMC abduction
-negated (0.131 -> -0.131 rad, ~15 deg total swing -- a real but small change, confirmed
-by direct render comparison to barely affect the overall thumb direction, since CMC only
-adjusts spread, not which way the thumb faces). MCP yaw -- the joint that actually sets
-which way the thumb's curl plane faces -- is the one that mattered: moved from -1.309 to
--1.5708 rad (the midpoint of thumb_r_mcp_yaw's [-pi, 0] range, found by rendering a sweep
-across the full range at grasp=0/thumb=1 -- the exact slider combination that first showed
-the problem -- and picking the point where the curled thumb visibly swings in to meet the
-index/middle convergence zone instead of hooking away from it), then nudged a further
--15 deg to -1.8326 rad on explicit request once that direction was confirmed to look
-right. Re-verified against tests/test_phase_2.py (10/10, unchanged) and
-tests/test_phase_4.py (9/10, previously 8/10 -- no regression, slightly better) at both
-values before keeping the final one.
+Thumb pre-shape was revisited twice this session after visual inspection showed the thumb
+folding out to the side rather than toward the palm at thumb=1.0. First pass: CMC
+abduction negated (0.131 -> -0.131 rad -- confirmed by direct render comparison to barely
+affect the overall thumb direction, since CMC only adjusts spread, not which way the thumb
+faces) and MCP yaw -- the joint that actually sets which way the thumb's curl plane faces --
+moved from a flat -1.309 rad first to -1.5708 (the midpoint of thumb_r_mcp_yaw's [-pi, 0]
+range, found by rendering a sweep across the full range at grasp=0/thumb=1 and picking the
+point where the curled thumb visibly swings in to meet the index/middle convergence zone),
+then nudged further to -2.0326 rad once that direction was confirmed to look right. That
+landed as a flat constant in THUMB_PRESHAPE, same as CMC -- and every fixed constant in
+THUMB_PRESHAPE is applied on *every* apply_grasp call regardless of `thumb`'s value,
+including during a pregrasp approach where `thumb=0`.
+
+That turned out to be a real bug, not just a style choice: tests/test_phase_4.py's
+integration pick success dropped from ~80-90% to 20% because the wider MCP-yaw angle is
+now wide enough that the thumb physically clips the can while the arm swings from its
+folded home pose to the pregrasp hover position -- confirmed by instrumenting a single
+pick trial (contact registers on the thumb ~47% through that swing, can drifts up to
+85mm by the time the arm arrives at pregrasp; reverting just this one joint back to
+-1.309 for that same swing drops the drift back to a normal ~4.5mm). hand_only.xml's own
+tests never move the arm at all, so they couldn't have caught this.
+
+Fix: MCP yaw is no longer a flat constant. THUMB_YAW_REST is the original, collision-safe
+angle (identical to the value used for years before this session); THUMB_YAW_CURL is the
+wide angle confirmed to look right at thumb=1. apply_grasp ramps linearly between them by
+the `thumb` scalar itself, the same one that already drives the curl joints -- so the
+angle stays safe while `thumb=0` (i.e. while the arm is still approaching, in every call
+site in this codebase), and only swings out to the wide angle once the caller actually
+starts closing the thumb, by which point the arm has already stopped moving next to the
+can. Re-verified tests/test_phase_2.py (10/10, unchanged -- hand_only never moves the arm
+so it was never exposed to begin with) and tests/test_phase_4.py (back to 9/10, matching
+the pre-regression baseline).
 """
 
 import mujoco
@@ -109,19 +131,27 @@ RING_PINKY_CURL_JOINTS = {
     "r": ("finger_r_joint14", "finger_r_joint15", "finger_r_joint16",
           "finger_r_joint18", "finger_r_joint19", "finger_r_joint20"),
 }
-# 엄지의 CMC/MCP-yaw(벌림) 관절은 grasp/thumb 스칼라와 무관하게 항상 이 고정값으로
-# 유지된다 -- Phase 2에서 FK 그리드 서치로 찾은, 검지·중지 수렴 지점을 엄지가
-# 마주보게 하는 각도.
+# 엄지 CMC(벌림) 관절은 grasp/thumb 스칼라와 무관하게 항상 이 고정값으로 유지된다 --
+# Phase 2에서 FK 그리드 서치로 찾은, 검지·중지 수렴 지점을 엄지가 마주보게 하는 각도.
+# CMC만 여기 있다 -- MCP yaw는 더 이상 고정값이 아니라 thumb 스칼라로 램프된다
+# (THUMB_YAW_REST/THUMB_YAW_CURL, 바로 아래 참고).
 THUMB_PRESHAPE = {
-    "l": {
-        "finger_l_joint1": -0.131,  # CMC abduction (symmetric range, same value as right)
-        "finger_l_joint2": 2.0326,  # MCP yaw (mirrored range, sign-flipped from right)
-    },
-    "r": {
-        "finger_r_joint1": -0.131,  # CMC abduction
-        "finger_r_joint2": -2.0326,  # MCP yaw (-1.5708 nudged another 15deg same direction)
-    },
+    "l": {"finger_l_joint1": -0.131},  # CMC abduction (symmetric range, same value as right)
+    "r": {"finger_r_joint1": -0.131},  # CMC abduction
 }
+# MCP yaw(엄지가 어느 방향을 "바라보는지")는 한때 THUMB_PRESHAPE 안에서 완전히
+# 고정값이었다 -- 그런데 그 고정값을 -1.309 -> -2.0326으로 넓혀 thumb=1일 때
+# 손바닥 쪽으로 보기 좋게 접히도록 만들었더니, 이 값이 "고정"이라 grasp/thumb=0인
+# 접근(pregrasp) 단계에서도 그대로 적용돼 팔이 홈 자세에서 캔 쪽으로 스윙하는 동안
+# 엄지가 캔을 미리 쳐서 날려버렸다(실측: full_scene.xml 통합 pick 테스트에서 캔이
+# pregrasp 이동 중 최대 85mm 밀려나 pick 성공률 20%로 급락, hand_only 단독 테스트
+# 에서는 팔이 안 움직이므로 이 문제가 안 드러남). 그래서 MCP yaw는 이제 CMC처럼
+# 완전히 고정이 아니라 thumb 스칼라로 THUMB_YAW_REST(접근 중 안전하게 검증된 각도,
+# 과거의 고정값과 동일) -> THUMB_YAW_CURL(사용자가 보기 좋다고 확인한 넓은 각도)로
+# 램프한다 -- thumb=0(아직 쥐기 전, 팔이 움직이는 동안)에는 안전한 각도를 유지하고,
+# thumb이 실제로 올라갈 때(팔은 이미 멈춰 캔 옆에 있을 때)만 넓은 각도로 돌아간다.
+THUMB_YAW_REST = {"l": 1.309, "r": -1.309}
+THUMB_YAW_CURL = {"l": 2.0326, "r": -2.0326}
 
 # grasp/thumb=0일 때도 관절 range 전체(lo)까지 펴지 않고 이만큼 남겨둔다 --
 # "접촉 직전" 자세를 만들어 자유낙하하는 캔을 놓치지 않기 위함(모듈 docstring 참고).
@@ -209,9 +239,15 @@ def apply_grasp(model, data, grasp: float, thumb: float, side: str = "r"):
     grasp = float(np.clip(grasp, 0.0, 1.0))
     thumb = float(np.clip(thumb, 0.0, 1.0))
 
-    # 1) 엄지 CMC/MCP-yaw는 항상 고정 pre-shape (grasp/thumb 스칼라와 무관).
+    # 1) 엄지 CMC는 항상 고정 pre-shape (grasp/thumb 스칼라와 무관).
     for name, value in THUMB_PRESHAPE[side].items():
         _set_joint_ctrl(model, data, name, value)
+    # MCP yaw는 thumb 스칼라로 REST(안전, 접근 중에도 캔을 안 침)에서
+    # CURL(사용자가 확인한, 손바닥 쪽으로 접힌 모습)까지 램프한다 -- 위 THUMB_YAW_REST/
+    # THUMB_YAW_CURL 주석 참고.
+    yaw_joint = f"finger_{side}_joint2"
+    yaw_value = THUMB_YAW_REST[side] + thumb * (THUMB_YAW_CURL[side] - THUMB_YAW_REST[side])
+    _set_joint_ctrl(model, data, yaw_joint, yaw_value)
 
     # 2) 엄지 mcp_pitch/ip -- thumb 스칼라를 [THUMB_OPEN_FRAC, 1.0] 구간에 매핑.
     #    손별로 range의 "편 상태"가 lo/hi 중 어느 쪽인지 다르므로(THUMB_CURL_OPEN_AT_HI)
