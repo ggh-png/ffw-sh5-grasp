@@ -295,6 +295,14 @@ class TeleopApp:
 
         self.site_r = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "grasp_target_r")
         self.site_l = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "grasp_target_l")
+        self.ik_target_bodies = {
+            "l": mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "ik_target_l"),
+            "r": mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "ik_target_r"),
+        }
+        self.ik_target_body_to_side = {bid: side for side, bid in self.ik_target_bodies.items()}
+        self.ik_target_mocap_ids = {
+            side: model.body_mocapid[bid] for side, bid in self.ik_target_bodies.items()
+        }
         self.can_jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "can_free")
         self.box_jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "box_free")
         self.can_geom_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "can_geom")
@@ -335,6 +343,7 @@ class TeleopApp:
         # teleport-style jump.
         self.smoothed_pos = {"r": np.array(self.targets["pos_r"]), "l": np.array(self.targets["pos_l"])}
         self.smoothed_rpy = {"r": np.array(self.targets["rpy_r"]), "l": np.array(self.targets["rpy_l"])}
+        self._sync_ik_mocaps_from_targets()
         # See STUCK_POS_TOL note above -- counts consecutive frames each hand's solve_pose has
         # failed to converge, so a genuine lockup can be throttled to STUCK_MAX_ITER.
         self.stuck_counter = {"r": 0, "l": 0}
@@ -402,6 +411,8 @@ class TeleopApp:
         self.last_mouse = list(glfw.get_cursor_pos(self.window))
         self.keys = KeyEdge()
         self.ik_err_mm = {"l": 0.0, "r": 0.0}
+        self.ik_dragging_side = None
+        self.ik_selected_side = "r"
 
     # ------------------------------------------------------------------
     # R/G/C 세 가지 동작 -- 키보드(_handle_edge_keys)와 패널 버튼
@@ -538,6 +549,55 @@ class TeleopApp:
 
         self.arm_mode[side] = mode
 
+    def _base_pose(self):
+        base_x = self.data.qpos[self.base_x_qadr]
+        base_y = self.data.qpos[self.base_y_qadr]
+        base_yaw = self.data.qpos[self.base_yaw_qadr]
+        cy, sy = math.cos(base_yaw), math.sin(base_yaw)
+        base_quat = np.array([math.cos(base_yaw / 2), 0.0, 0.0, math.sin(base_yaw / 2)])
+        return base_x, base_y, base_yaw, cy, sy, base_quat
+
+    def _local_to_world_pos(self, p_local):
+        base_x, base_y, _base_yaw, cy, sy, _base_quat = self._base_pose()
+        x, y, z = p_local
+        return np.array([base_x + cy * x - sy * y, base_y + sy * x + cy * y, z])
+
+    def _world_to_base_pos(self, p_world):
+        base_x, base_y, _base_yaw, cy, sy, _base_quat = self._base_pose()
+        dx, dy = p_world[0] - base_x, p_world[1] - base_y
+        return np.array([cy * dx + sy * dy, -sy * dx + cy * dy, p_world[2]])
+
+    def _target_world_quat(self, side):
+        *_unused, base_quat = self._base_pose()
+        home_quat = self.home_quat_r if side == "r" else self.home_quat_l
+        quat = np.zeros(4)
+        mujoco.mju_mulQuat(quat, home_quat, rpy_deg_to_quat(self.targets[f"rpy_{side}"]))
+        mujoco.mju_mulQuat(quat, base_quat, quat)
+        return quat
+
+    def _set_target_from_world_pose(self, side, world_pos, world_quat):
+        home_quat = self.home_quat_r if side == "r" else self.home_quat_l
+        *_unused, base_quat = self._base_pose()
+        base_quat_inv, home_quat_inv = np.zeros(4), np.zeros(4)
+        mujoco.mju_negQuat(base_quat_inv, base_quat)
+        mujoco.mju_negQuat(home_quat_inv, home_quat)
+        tmp = np.zeros(4)
+        mujoco.mju_mulQuat(tmp, base_quat_inv, world_quat)
+        rpy_delta_quat = np.zeros(4)
+        mujoco.mju_mulQuat(rpy_delta_quat, home_quat_inv, tmp)
+        self.targets[f"pos_{side}"] = self._world_to_base_pos(world_pos).tolist()
+        self.targets[f"rpy_{side}"] = quat_to_rpy_deg(rpy_delta_quat)
+        self.smoothed_pos[side] = np.array(self.targets[f"pos_{side}"])
+        self.smoothed_rpy[side] = np.array(self.targets[f"rpy_{side}"])
+        self.stuck_counter[side] = 0
+
+    def _sync_ik_mocaps_from_targets(self):
+        if not hasattr(self, "ik_target_mocap_ids"):
+            return
+        for side, mocap_id in self.ik_target_mocap_ids.items():
+            self.data.mocap_pos[mocap_id] = self._local_to_world_pos(self.targets[f"pos_{side}"])
+            self.data.mocap_quat[mocap_id] = self._target_world_quat(side)
+
     # ------------------------------------------------------------------
     # 메인 루프
     # ------------------------------------------------------------------
@@ -571,6 +631,8 @@ class TeleopApp:
         self.last_mouse = cur_mouse
         if io.want_capture_mouse:
             return
+        if self._handle_ik_target_mouse(dx, dy, cur_mouse):
+            return
         left = glfw.get_mouse_button(self.window, glfw.MOUSE_BUTTON_LEFT) == glfw.PRESS
         right = glfw.get_mouse_button(self.window, glfw.MOUSE_BUTTON_RIGHT) == glfw.PRESS
         middle = glfw.get_mouse_button(self.window, glfw.MOUSE_BUTTON_MIDDLE) == glfw.PRESS
@@ -588,6 +650,70 @@ class TeleopApp:
         if io.mouse_wheel != 0:
             mujoco.mjv_moveCamera(self.model, mujoco.mjtMouse.mjMOUSE_ZOOM, 0.0,
                                    -0.05 * io.mouse_wheel, self.scene, self.cam)
+
+    def _handle_ik_target_mouse(self, dx, dy, cur_mouse):
+        ctrl_held = (glfw.get_key(self.window, glfw.KEY_LEFT_CONTROL) == glfw.PRESS
+                     or glfw.get_key(self.window, glfw.KEY_RIGHT_CONTROL) == glfw.PRESS)
+        left = glfw.get_mouse_button(self.window, glfw.MOUSE_BUTTON_LEFT) == glfw.PRESS
+        right = glfw.get_mouse_button(self.window, glfw.MOUSE_BUTTON_RIGHT) == glfw.PRESS
+        middle = glfw.get_mouse_button(self.window, glfw.MOUSE_BUTTON_MIDDLE) == glfw.PRESS
+        if not ctrl_held:
+            self.ik_dragging_side = None
+            self.pert.active = 0
+            return False
+        if not (left or right or middle):
+            self.ik_dragging_side = None
+            self.pert.select = self.ik_target_bodies[self.ik_selected_side]
+            self.pert.active = (int(mujoco.mjtPertBit.mjPERT_TRANSLATE)
+                                | int(mujoco.mjtPertBit.mjPERT_ROTATE))
+            mujoco.mjv_initPerturb(self.model, self.data, self.scene, self.pert)
+            return True
+
+        if self.ik_dragging_side is None:
+            selected_side = self._select_ik_target(cur_mouse)
+            if selected_side is None:
+                selected_side = self.ik_selected_side
+            self.ik_dragging_side = selected_side
+            self.ik_selected_side = selected_side
+            if self.scenario == "box":
+                self.box_tracking = False
+            self.pert.select = self.ik_target_bodies[selected_side]
+            self.pert.active = int(mujoco.mjtPertBit.mjPERT_TRANSLATE)
+            mujoco.mjv_initPerturb(self.model, self.data, self.scene, self.pert)
+
+        shift_held = (glfw.get_key(self.window, glfw.KEY_LEFT_SHIFT) == glfw.PRESS
+                      or glfw.get_key(self.window, glfw.KEY_RIGHT_SHIFT) == glfw.PRESS)
+        if right:
+            self.pert.active = int(mujoco.mjtPertBit.mjPERT_ROTATE)
+            action = mujoco.mjtMouse.mjMOUSE_ROTATE_V if shift_held else mujoco.mjtMouse.mjMOUSE_ROTATE_H
+        else:
+            self.pert.active = int(mujoco.mjtPertBit.mjPERT_TRANSLATE)
+            action = mujoco.mjtMouse.mjMOUSE_MOVE_V if (middle or shift_held) else mujoco.mjtMouse.mjMOUSE_MOVE_H
+
+        _win_w, win_h = glfw.get_window_size(self.window)
+        mujoco.mjv_movePerturb(self.model, self.data, action, dx / win_h, dy / win_h,
+                               self.scene, self.pert)
+        mocap_id = self.ik_target_mocap_ids[self.ik_dragging_side]
+        self._set_target_from_world_pose(
+            self.ik_dragging_side,
+            self.data.mocap_pos[mocap_id].copy(),
+            self.data.mocap_quat[mocap_id].copy(),
+        )
+        return True
+
+    def _select_ik_target(self, cur_mouse):
+        win_w, win_h = glfw.get_window_size(self.window)
+        if win_w <= 0 or win_h <= 0:
+            return None
+        selpnt = np.zeros(3)
+        geomid = np.array([-1], dtype=np.int32)
+        flexid = np.array([-1], dtype=np.int32)
+        skinid = np.array([-1], dtype=np.int32)
+        body_id = mujoco.mjv_select(
+            self.model, self.data, self.opt, win_w / win_h,
+            cur_mouse[0] / win_w, (win_h - cur_mouse[1]) / win_h,
+            self.scene, selpnt, geomid, flexid, skinid)
+        return self.ik_target_body_to_side.get(body_id)
 
     def _handle_edge_keys(self, io):
         """눌렀다 뗄 때 한 번만 반응하는 키(R=캔 리셋, G=접촉 시각화 토글,
@@ -822,6 +948,8 @@ class TeleopApp:
     def _render_scene(self):
         """(한글) 갱신된 물리 상태(data)를 MuJoCo 저수준 API로 화면에 그리고,
         그 위에 ImGui 패널을 합성한다."""
+        if self.ik_dragging_side is None:
+            self._sync_ik_mocaps_from_targets()
         self.opt.flags[mujoco.mjtVisFlag.mjVIS_CONTACTPOINT] = self.contact_viz
         self.opt.flags[mujoco.mjtVisFlag.mjVIS_CONTACTFORCE] = self.contact_viz
         fb_w, fb_h = glfw.get_framebuffer_size(self.window)

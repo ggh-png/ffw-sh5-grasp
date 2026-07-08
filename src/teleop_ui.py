@@ -52,6 +52,15 @@ def draw_panel(app):
                f"yaw={math.degrees(data.qpos[app.base_yaw_qadr]):+.1f}deg  "
                f"(Up/Down drive, Left/Right yaw, Shift+Left/Right strafe, Q/E lift)")
     imgui.text(f"Scenario: {app.scenario.upper()}  (set at launch with --scenario)")
+    imgui.text("Mouse IK: Ctrl+click target, Ctrl+Left drag move, Ctrl+Right drag rotate")
+    imgui.same_line()
+    if imgui.button("Mouse L"):
+        app.ik_selected_side = "l"
+    imgui.same_line()
+    if imgui.button("Mouse R"):
+        app.ik_selected_side = "r"
+    imgui.same_line()
+    imgui.text(f"active {app.ik_selected_side.upper()}")
     imgui.separator()
 
     for side, label in (("r", "Right hand control target"), ("l", "Left hand control target")):
