@@ -800,7 +800,7 @@
     <!-- Footprint enlarged (Session 8 후속, user request) from 0.08x0.15 -- height/position
          unchanged (table top stays at exactly the same world z the can/grasp geometry was
          validated against), only made to look more like an actual table. -->
-    <geom name="table" type="box" size="0.14 0.25 0.05" pos="0.5055 0.0 0.6816" material="table_mat"/>
+    <geom name="table" type="box" size="0.3325 0.25 0.05" pos="0.6775 0.0 0.6816" material="table_mat"/>
     <body name="can" pos="0.5055 0.0 0.7866">
       <freejoint name="can_free"/>
       <inertial pos="0 0 0" mass="0.35" diaginertia="0.000448 0.000448 0.00019"/>
@@ -814,6 +814,12 @@
       <geom type="mesh" mesh="can_cap_detail" material="can_cap_mat" class="visual"/>
       <geom name="can_geom" type="cylinder" size="0.033 0.055" rgba="0 0 0 0"
         priority="1" condim="6" friction="0.5 0.01 0.003"
+        solimp="0.5 0.99 0.0001" solref="0.005 1"/>
+    </body>
+    <body name="box_body" pos="0.8500 0.0 0.9316">
+      <freejoint name="box_free"/>
+      <geom name="box_geom" type="box" size="0.15 0.15 0.20" mass="0.3"
+        rgba="0.8 0.6 0.3 1" priority="1" condim="6" friction="1.0 0.5 0.01"
         solimp="0.5 0.99 0.0001" solref="0.005 1"/>
     </body>
   </worldbody>
@@ -1055,7 +1061,7 @@
 
   <keyframe>
     <key name="home"
-      qpos="0 0 0 0 0 0 0 0 0 -0.39 0 0 0 0 0 -1.570796 0 0 0 0.131 1.309 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -1.570796 0 0 0 0.131 -1.309 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.5055 0 0.7866 1 0 0 0"
+      qpos="0 0 0 0 0 0 0 0 0 -0.39 0 0 0 0 0 -1.570796 0 0 0 0.131 1.309 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -1.570796 0 0 0 0.131 -1.309 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.5055 0 0.7866 1 0 0 0 0.8500 0 0.9316 1 0 0 0"
       ctrl="0 0 0 0 0 0 -0.39 0 0 0 0 0 0 0 0 0 0.131 1.309 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.131 -1.309 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0"/>
   </keyframe>
 </mujoco>

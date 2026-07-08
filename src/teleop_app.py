@@ -78,6 +78,7 @@ ImGui 슬라이더 패널 자체(위젯 배치)는 물리/렌더링과 무관하
 파일을 나누는 게 오히려 왔다갔다하며 읽게 만들 것 같아 그대로 뒀다.
 """
 
+import argparse
 import math
 import pathlib
 import sys
@@ -98,6 +99,7 @@ MODEL_PATH = REPO_ROOT / "models" / "full_scene.xml"
 
 import arm_control  # noqa: E402
 import base_teleop  # noqa: E402
+import bimanual_constraint  # noqa: E402
 import grasp  # noqa: E402
 import ik  # noqa: E402
 import teleop_ui  # noqa: E402
@@ -111,6 +113,10 @@ ARM_L = [f"arm_l_joint{i}" for i in range(1, 8)]
 HOME_Q_R = np.array([0.0, 0.0, 0.0, -1.5707963267948966, 0.0, 0.0, 0.0])
 HOME_Q_L = np.array([0.0, 0.0, 0.0, -1.5707963267948966, 0.0, 0.0, 0.0])
 LIFT_RANGE = (-0.5, 0.0)
+BOX_HALF_EXTENTS = np.array([0.15, 0.15, 0.20])
+BOX_PREGRASP_GAP = 0.03
+BOX_SQUEEZE_GAP = -0.005
+BOX_GRAB_RAMP_TIME = 1.0
 # 패널의 "Joint position monitor"에 진행률 막대로 표시할 관절 전체 목록.
 MONITOR_JOINTS = (
     [f"arm_r_joint{i}" for i in range(1, 8)] + [f"arm_l_joint{i}" for i in range(1, 8)]
@@ -232,7 +238,8 @@ class TeleopApp:
     순서대로 실행한다: 마우스 카메라 -> 엣지 키(R/G/C) -> 연속 키(주행/리프트) ->
     UI 패널 -> 물리 스텝 -> 렌더링. 상태는 전부 인스턴스 속성(self.*)에 있다."""
 
-    def __init__(self):
+    def __init__(self, initial_scenario="can"):
+        self.initial_scenario = initial_scenario
         self._setup_sim()
         self._setup_render()
         self._setup_loop_state()
@@ -287,6 +294,19 @@ class TeleopApp:
 
         self.site_r = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "grasp_target_r")
         self.site_l = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "grasp_target_l")
+        self.can_jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "can_free")
+        self.box_jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "box_free")
+        self.can_geom_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "can_geom")
+        self.box_geom_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "box_geom")
+        self.object_jids = {"can": self.can_jid, "box": self.box_jid}
+        self.object_geom_ids = {"can": self.can_geom_id, "box": self.box_geom_id}
+        self.object_home_qpos = {
+            name: model.key_qpos[key_id][model.jnt_qposadr[jid]:model.jnt_qposadr[jid] + 7].copy()
+            for name, jid in self.object_jids.items()
+        }
+        self.object_geom_rgba = {
+            name: model.geom_rgba[gid].copy() for name, gid in self.object_geom_ids.items()
+        }
         # Reference orientation each hand's RPY sliders are relative to (see module docstring's
         # "RPY control" note): the home-pose site orientation, fixed for the whole session.
         self.home_quat_r = np.zeros(4)
@@ -300,6 +320,7 @@ class TeleopApp:
             "pos_r": data.site_xpos[self.site_r].tolist(), "rpy_r": [0.0, 0.0, 0.0],
             "pos_l": data.site_xpos[self.site_l].tolist(), "rpy_l": [0.0, 0.0, 0.0],
             "grasp_r": 0.0, "thumb_r": 0.0, "grasp_l": 0.0, "thumb_l": 0.0,
+            "squeeze_gap": BOX_PREGRASP_GAP,
             "lift": float(data.qpos[model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "lift_joint")]]),
         }
         # IK actually chases these smoothed copies, not the raw slider values directly (see
@@ -317,9 +338,21 @@ class TeleopApp:
         self.stuck_counter = {"r": 0, "l": 0}
         self.contact_viz = False
         self.camera_preset = 0
+        self.scenario = None
+        self.grab_state = {"r": None, "l": None}
+        self.box_tracking = True
+        self.box_grab = False
+        self.gap_locked = False
+        self.constraint_active = False
+        self.rigid_relative_pose = None
+        self.box_contact_forces = {"l": 0.0, "r": 0.0}
+        self.box_held = False
+        self.constraint_err_mm = 0.0
+        self.box_squeeze_kp_scale = 0.2
         # teleop_ui.draw_panel reads these two off `app` directly (see that module's
         # docstring for why it doesn't import teleop_app's constants instead).
         self.lift_range = LIFT_RANGE
+        self.switch_scenario(self.initial_scenario, force=True)
 
     def _setup_render(self):
         """창/렌더링 초기화: GLFW 창 하나 + 그 위에 ImGui, MuJoCo 저수준 렌더 API로
@@ -376,6 +409,59 @@ class TeleopApp:
     def reset_can(self):
         _reset_can_random(self.model, self.data, self.rng)
         mujoco.mj_forward(self.model, self.data)
+
+    def reset_box(self):
+        self._reset_object("box")
+        mujoco.mj_forward(self.model, self.data)
+
+    def reset_active_object(self):
+        if self.scenario == "box":
+            self.reset_box()
+        else:
+            self.reset_can()
+
+    def switch_scenario(self, scenario, force=False):
+        if scenario not in ("can", "box"):
+            raise ValueError(f"unknown scenario {scenario!r}")
+        if scenario == self.scenario and not force:
+            return
+
+        active = scenario
+        inactive = "box" if scenario == "can" else "can"
+        self._reset_object(active)
+        self._park_object(inactive)
+        self._set_object_collision(active, True)
+        self._set_object_collision(inactive, False)
+        self.scenario = scenario
+        self.grab_state = {"r": None, "l": None}
+        self.box_grab = False
+        self.gap_locked = False
+        self.constraint_active = False
+        self.rigid_relative_pose = None
+        self.box_tracking = scenario == "box"
+        self.targets["squeeze_gap"] = BOX_PREGRASP_GAP
+        mujoco.mj_forward(self.model, self.data)
+
+    def _reset_object(self, name):
+        jid = self.object_jids[name]
+        qadr = self.model.jnt_qposadr[jid]
+        dof = self.model.jnt_dofadr[jid]
+        self.data.qpos[qadr:qadr + 7] = self.object_home_qpos[name]
+        self.data.qvel[dof:dof + 6] = 0.0
+
+    def _park_object(self, name):
+        jid = self.object_jids[name]
+        qadr = self.model.jnt_qposadr[jid]
+        dof = self.model.jnt_dofadr[jid]
+        self.data.qpos[qadr:qadr + 3] = [2.0, 2.0, 0.1]
+        self.data.qpos[qadr + 3:qadr + 7] = [1.0, 0.0, 0.0, 0.0]
+        self.data.qvel[dof:dof + 6] = 0.0
+
+    def _set_object_collision(self, name, active):
+        gid = self.object_geom_ids[name]
+        self.model.geom_contype[gid] = 1 if active else 0
+        self.model.geom_conaffinity[gid] = 1 if active else 0
+        self.model.geom_rgba[gid][3] = self.object_geom_rgba[name][3] if active else 0.0
 
     def cycle_camera(self):
         self.camera_preset = 1 - self.camera_preset
@@ -492,7 +578,7 @@ class TeleopApp:
         if io.want_capture_keyboard:
             return
         if self.keys.pressed(self.window, glfw.KEY_R):
-            self.reset_can()
+            self.reset_active_object()
         if self.keys.pressed(self.window, glfw.KEY_G):
             self.contact_viz = not self.contact_viz
         if self.keys.pressed(self.window, glfw.KEY_C):
@@ -538,6 +624,48 @@ class TeleopApp:
         _step_physics에서 이뤄진다."""
         teleop_ui.draw_panel(self)
 
+    def _box_qpos_slice(self):
+        qadr = self.model.jnt_qposadr[self.box_jid]
+        return self.data.qpos[qadr:qadr + 7]
+
+    def _update_box_tracking_targets(self, world_to_base_pos):
+        box_qpos = self._box_qpos_slice()
+        box_pos = box_qpos[:3]
+        box_quat = box_qpos[3:7]
+        box_mat = np.zeros(9)
+        mujoco.mju_quat2Mat(box_mat, box_quat)
+        box_R = box_mat.reshape(3, 3)
+        gap = self.targets["squeeze_gap"]
+        offset = BOX_HALF_EXTENTS[1] + gap
+        pos_r = box_pos + box_R @ np.array([0.0, -offset, 0.0])
+        pos_l = box_pos + box_R @ np.array([0.0, offset, 0.0])
+        self.targets["pos_r"] = world_to_base_pos(pos_r).tolist()
+        self.targets["pos_l"] = world_to_base_pos(pos_l).tolist()
+
+    def _update_box_grasp_state(self):
+        self.box_contact_forces = grasp.get_box_hand_contacts(self.model, self.data)
+        self.box_held = (self.box_contact_forces["l"] >= 1.0
+                         and self.box_contact_forces["r"] >= 1.0)
+        if self.scenario != "box":
+            self.constraint_err_mm = 0.0
+            return
+        if not self.box_grab:
+            self.gap_locked = False
+            self.constraint_active = False
+            self.rigid_relative_pose = None
+            self.constraint_err_mm = 0.0
+            return
+        if self.box_held and not self.constraint_active:
+            self.rigid_relative_pose = bimanual_constraint.snapshot_relative_pose(
+                self.data, self.site_r, self.site_l)
+            self.constraint_active = True
+            self.gap_locked = True
+            self.box_tracking = False
+        if self.constraint_active and self.rigid_relative_pose is not None:
+            pos_err, _ = bimanual_constraint.relative_pose_error(
+                self.data, self.site_r, self.site_l, self.rigid_relative_pose)
+            self.constraint_err_mm = float(np.linalg.norm(pos_err) * 1000.0)
+
     def _step_physics(self, drive_keys):
         """(한글) 여기서부터 실제 물리 반영: 슬라이더 목표값을 rate-limit -> 베이스
         로컬->월드 변환 -> IK로 관절각 계산 -> 토크 제어기/grasp/바퀴 ctrl 기록 ->
@@ -546,6 +674,40 @@ class TeleopApp:
         (캔 리셋의 명시적 예외 제외)."""
         model, data = self.model, self.data
         ctx_qpos = data.qpos.copy()
+
+        base_x, base_y, base_yaw = (data.qpos[self.base_x_qadr], data.qpos[self.base_y_qadr],
+                                     data.qpos[self.base_yaw_qadr])
+        base_quat = np.array([math.cos(base_yaw / 2), 0.0, 0.0, math.sin(base_yaw / 2)])
+        cy, sy = math.cos(base_yaw), math.sin(base_yaw)
+
+        def local_to_world_pos(p_local):
+            x, y, z = p_local
+            return np.array([base_x + cy * x - sy * y, base_y + sy * x + cy * y, z])
+
+        def world_to_base_pos(p_world):
+            dx, dy = p_world[0] - base_x, p_world[1] - base_y
+            return np.array([cy * dx + sy * dy, -sy * dx + cy * dy, p_world[2]])
+
+        self._update_box_grasp_state()
+        if self.scenario == "box":
+            if not self.gap_locked:
+                desired_gap = BOX_SQUEEZE_GAP if self.box_grab else BOX_PREGRASP_GAP
+                max_gap_step = ((BOX_PREGRASP_GAP - BOX_SQUEEZE_GAP)
+                                * self.frame_dt / BOX_GRAB_RAMP_TIME)
+                gap_delta = np.clip(desired_gap - self.targets["squeeze_gap"],
+                                    -max_gap_step, max_gap_step)
+                self.targets["squeeze_gap"] += float(gap_delta)
+            if self.box_tracking and not self.constraint_active:
+                self._update_box_tracking_targets(world_to_base_pos)
+        else:
+            for side in ("r", "l"):
+                if self.grab_state[side] is None:
+                    continue
+                desired = 1.0 if self.grab_state[side] else 0.0
+                step = self.frame_dt / BOX_GRAB_RAMP_TIME
+                for name in (f"grasp_{side}", f"thumb_{side}"):
+                    delta = np.clip(desired - self.targets[name], -step, step)
+                    self.targets[name] += float(delta)
 
         # Rate-limit the raw slider targets into the smoothed copies IK actually chases (see
         # "IK target rate limiting" note near their declaration in _setup_sim).
@@ -561,15 +723,6 @@ class TeleopApp:
         # EE pose targets are base-local (see module docstring's "Mobile base" note): rotate
         # +translate by the base's CURRENT pose so driving/turning the base carries the
         # target along with it instead of the arm having to chase a world-fixed point.
-        base_x, base_y, base_yaw = (data.qpos[self.base_x_qadr], data.qpos[self.base_y_qadr],
-                                     data.qpos[self.base_yaw_qadr])
-        base_quat = np.array([math.cos(base_yaw / 2), 0.0, 0.0, math.sin(base_yaw / 2)])
-        cy, sy = math.cos(base_yaw), math.sin(base_yaw)
-
-        def local_to_world_pos(p_local):
-            x, y, z = p_local
-            return np.array([base_x + cy * x - sy * y, base_y + sy * x + cy * y, z])
-
         # RPY sliders are a LOCAL rotation on top of the hand's own home orientation (see
         # module docstring), not raw world-frame Euler angles -- composing quat_mul(home,
         # delta) keeps roll/pitch/yaw = 0 at the natural grasp pose and each axis meaning
@@ -583,6 +736,8 @@ class TeleopApp:
         # 두면 팔이 리프트(어깨 높이)와 강체로 함께 움직일 뿐이라, 리프트가 프레임 중간
         # 에도 계속 움직이는데 IK는 프레임당 한 번만 그 순간의 어깨 높이를 반영해서
         # 생기는 출렁임 자체가 원천적으로 없다.
+        q_des_r_prev = self.q_des_r.copy()
+        q_des_l_prev = self.q_des_l.copy()
         if self.arm_mode["r"] == "ik":
             quat_r = np.zeros(4)
             mujoco.mju_mulQuat(quat_r, self.home_quat_r, rpy_deg_to_quat(self.smoothed_rpy["r"]))
@@ -614,15 +769,26 @@ class TeleopApp:
             self.q_des_l = np.radians(self.fk_q_deg["l"])
             self.stuck_counter["l"] = 0
 
+        if (self.constraint_active and self.rigid_relative_pose is not None
+                and self.arm_mode["r"] == "ik" and self.arm_mode["l"] == "ik"):
+            dq_r = self.q_des_r - q_des_r_prev
+            dq_l = self.q_des_l - q_des_l_prev
+            dq_r, dq_l = bimanual_constraint.project_desired_delta(
+                model, data, self.site_r, self.site_l, self.ctrl_r.dof_ids, self.ctrl_l.dof_ids,
+                dq_r, dq_l, self.frame_dt, reference=self.rigid_relative_pose)
+            self.q_des_r = q_des_r_prev + dq_r
+            self.q_des_l = q_des_l_prev + dq_l
+
         wheel_cmds = self.base_drive.update(drive_keys, self.frame_dt, base_yaw)
+        arm_kp_scale = self.box_squeeze_kp_scale if self.scenario == "box" and self.box_grab else 1.0
 
         # 렌더 프레임 하나(frame_dt)당 물리 스텝을 여러 번(steps_per_frame) 돌린다 --
         # 렌더링은 25Hz면 충분하지만 물리는 훨씬 촘촘한 timestep이 필요하기 때문.
         # IK로 구한 목표 관절각(q_des_r/l)과 grasp/thumb/lift/바퀴 ctrl을 매 서브스텝
         # 다시 적용한 뒤 mj_step 한 번.
         for _ in range(self.steps_per_frame):
-            self.ctrl_r.apply(data, self.q_des_r)
-            self.ctrl_l.apply(data, self.q_des_l)
+            self.ctrl_r.apply(data, self.q_des_r, kp_scale=arm_kp_scale)
+            self.ctrl_l.apply(data, self.q_des_l, kp_scale=arm_kp_scale)
             data.ctrl[self.lift_aid] = self.targets["lift"]
             for wheel, (steer_angle, drive_angvel) in wheel_cmds.items():
                 data.ctrl[self.wheel_steer_aids[wheel]] = steer_angle
@@ -630,6 +796,7 @@ class TeleopApp:
             grasp.apply_grasp(model, data, grasp=self.targets["grasp_r"], thumb=self.targets["thumb_r"], side="r")
             grasp.apply_grasp(model, data, grasp=self.targets["grasp_l"], thumb=self.targets["thumb_l"], side="l")
             mujoco.mj_step(model, data)
+        self._update_box_grasp_state()
 
     def _render_scene(self):
         """(한글) 갱신된 물리 상태(data)를 MuJoCo 저수준 API로 화면에 그리고,
@@ -656,8 +823,19 @@ class TeleopApp:
             time.sleep(sleep_time)
 
 
-def main():
-    TeleopApp().run()
+def _parse_args(argv):
+    parser = argparse.ArgumentParser(description="FFW-SH5 teleop app")
+    parser.add_argument("scenario_pos", nargs="?", choices=("can", "box"),
+                        help="initial scenario: can or box")
+    parser.add_argument("--scenario", choices=("can", "box"),
+                        help="initial scenario: can or box")
+    args = parser.parse_args(argv)
+    return args.scenario if args.scenario is not None else (args.scenario_pos or "can")
+
+
+def main(argv=None):
+    scenario = _parse_args(sys.argv[1:] if argv is None else argv)
+    TeleopApp(initial_scenario=scenario).run()
 
 
 if __name__ == "__main__":

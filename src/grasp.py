@@ -177,6 +177,11 @@ FINGER_BODY_GROUPS = {
 }
 
 CAN_GEOM_NAME = "can_geom"
+BOX_GEOM_NAME = "box_geom"
+BOX_HAND_BODIES = {
+    "l": ("hx5_l_base",) + tuple(f"finger_l_link{i}" for i in range(1, 21)),
+    "r": ("hx5_r_base",) + tuple(f"finger_r_link{i}" for i in range(1, 21)),
+}
 
 # apply_grasp runs once per physics *substep* (thousands of calls per pick trial), and each
 # call used to re-resolve every joint name via mj_name2id plus a linear O(nu) Python scan
@@ -341,3 +346,37 @@ def is_grasped(model, data, min_fingers=2, min_total_force=0.05, require_thumb=T
     if len(forces) < min_fingers:
         return False
     return sum(forces.values()) >= min_total_force
+
+
+def get_box_hand_contacts(model, data):
+    """Return {'l': normal_force, 'r': normal_force} for hand contacts on box_geom."""
+    box_gid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, BOX_GEOM_NAME)
+    if box_gid == -1:
+        return {"l": 0.0, "r": 0.0}
+
+    body_to_side = {}
+    for side, bodies in BOX_HAND_BODIES.items():
+        for name in bodies:
+            bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)
+            if bid != -1:
+                body_to_side[bid] = side
+
+    forces = {"l": 0.0, "r": 0.0}
+    force_vec = np.zeros(6)
+    for i in range(data.ncon):
+        c = data.contact[i]
+        if box_gid not in (c.geom1, c.geom2):
+            continue
+        other = c.geom1 if c.geom2 == box_gid else c.geom2
+        side = body_to_side.get(model.geom_bodyid[other])
+        if side is None:
+            continue
+        mujoco.mj_contactForce(model, data, i, force_vec)
+        forces[side] += abs(force_vec[0])
+    return forces
+
+
+def is_box_held(model, data, min_force_per_hand=1.0):
+    """True when both hands are pressing box_geom above the per-hand force threshold."""
+    forces = get_box_hand_contacts(model, data)
+    return forces["l"] >= min_force_per_hand and forces["r"] >= min_force_per_hand

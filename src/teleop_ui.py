@@ -51,6 +51,7 @@ def draw_panel(app):
     imgui.text(f"Base  x={data.qpos[app.base_x_qadr]:+.2f}m y={data.qpos[app.base_y_qadr]:+.2f}m "
                f"yaw={math.degrees(data.qpos[app.base_yaw_qadr]):+.1f}deg  "
                f"(Up/Down drive, Left/Right yaw, Shift+Left/Right strafe, Q/E lift)")
+    imgui.text(f"Scenario: {app.scenario.upper()}  (set at launch with --scenario)")
     imgui.separator()
 
     for side, label in (("r", "Right hand control target"), ("l", "Left hand control target")):
@@ -81,18 +82,48 @@ def draw_panel(app):
                 for i, (lo, hi) in enumerate(app.arm_joint_ranges_deg[side]):
                     _, fk_deg[i] = imgui.slider_float(f"J{i+1}##{side}fk", fk_deg[i], lo, hi, "%.1f deg")
 
-    if imgui.collapsing_header("Hand grasp targets", imgui.TreeNodeFlags_.default_open):
-        for side, label in (("r", "Right"), ("l", "Left")):
-            _, targets[f"grasp_{side}"] = imgui.slider_float(
-                f"{label} grasp##{side}", targets[f"grasp_{side}"], 0.0, 1.0)
-            _, targets[f"thumb_{side}"] = imgui.slider_float(
-                f"{label} thumb##{side}", targets[f"thumb_{side}"], 0.0, 1.0)
+    if app.scenario == "can":
+        if imgui.collapsing_header("Hand grasp targets", imgui.TreeNodeFlags_.default_open):
+            for side, label in (("r", "Right"), ("l", "Left")):
+                if imgui.button(f"{'Release' if app.grab_state[side] else 'Grab'} {label}##grab{side}"):
+                    app.grab_state[side] = not bool(app.grab_state[side])
+                changed, targets[f"grasp_{side}"] = imgui.slider_float(
+                    f"{label} grasp##{side}", targets[f"grasp_{side}"], 0.0, 1.0)
+                if changed:
+                    app.grab_state[side] = None
+                changed, targets[f"thumb_{side}"] = imgui.slider_float(
+                    f"{label} thumb##{side}", targets[f"thumb_{side}"], 0.0, 1.0)
+                if changed:
+                    app.grab_state[side] = None
+    else:
+        if imgui.collapsing_header("Box squeeze grasp", imgui.TreeNodeFlags_.default_open):
+            forces = app.box_contact_forces
+            held = app.box_held
+            imgui.text(f"Box contact L={forces['l']:.2f}N R={forces['r']:.2f}N "
+                       f"{'HELD' if held else 'not held'}")
+            imgui.text(f"constraint: {'ACTIVE' if app.constraint_active else 'off'}  "
+                       f"relative drift={app.constraint_err_mm:.2f}mm")
+            if imgui.button("Release Box" if app.box_grab else "Grab Box"):
+                app.box_grab = not app.box_grab
+                if not app.box_grab:
+                    app.gap_locked = False
+                    app.constraint_active = False
+                    app.rigid_relative_pose = None
+                    app.box_tracking = True
+            _, app.box_tracking = imgui.checkbox("Box-tracking targets", app.box_tracking)
+            if app.gap_locked:
+                imgui.text(f"Squeeze locked at {targets['squeeze_gap']*1000:.1f}mm")
+            else:
+                _, targets["squeeze_gap"] = imgui.slider_float(
+                    "Squeeze gap", targets["squeeze_gap"], -0.015, 0.05, "%.3f m")
+            _, app.box_squeeze_kp_scale = imgui.slider_float(
+                "Arm kp scale while grabbing", app.box_squeeze_kp_scale, 0.05, 1.0, "%.2f")
 
     if imgui.collapsing_header("Lift / Utils", imgui.TreeNodeFlags_.default_open):
         _, targets["lift"] = imgui.slider_float(
             "Lift", targets["lift"], app.lift_range[0], app.lift_range[1], "%.3f m")
-        if imgui.button("Reset Can (R)"):
-            app.reset_can()
+        if imgui.button(f"Reset {app.scenario.title()} (R)"):
+            app.reset_active_object()
         imgui.same_line()
         if imgui.button("Toggle Contact Viz (G)"):
             app.contact_viz = not app.contact_viz

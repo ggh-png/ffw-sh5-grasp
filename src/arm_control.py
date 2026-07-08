@@ -63,7 +63,7 @@ class ArmTorqueController:
         self.kp = kp
         self.kd = kd
 
-    def apply(self, data, q_des):
+    def apply(self, data, q_des, kp_scale=1.0):
         """Compute and write torques for this step. Reads data.qpos/qvel/qfrc_bias (state
         feedback), writes only data.ctrl -- never data.qpos."""
         # (한글) 매 물리 스텝마다 호출: 현재 관절각/각속도를 읽고, 목표각(q_des)과의
@@ -73,7 +73,7 @@ class ArmTorqueController:
         q = np.array([data.qpos[a] for a in self.qpos_adrs])
         qd = data.qvel[self.dof_ids]
         qfrc_bias = data.qfrc_bias[self.dof_ids]
-        tau = qfrc_bias + self.kp * (np.asarray(q_des) - q) - self.kd * qd
+        tau = qfrc_bias + self.kp * kp_scale * (np.asarray(q_des) - q) - self.kd * qd
         # 액추에이터의 ctrlrange(토크 한계)를 넘지 않도록 클램프 후 기록.
         for aid, t in zip(self.actuator_ids, tau):
             lo, hi = self.model.actuator_ctrlrange[aid]
