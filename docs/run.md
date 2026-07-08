@@ -19,7 +19,7 @@ python3 src/teleop_app.py
 ```
 
 - **마우스**(3D 뷰 위): 좌클릭 드래그 = 궤도 회전, 우클릭 드래그 = 팬, 휠 = 줌.
-- **Up/Down** = 베이스 전진/후진, **Left/Right** = 제자리 yaw 회전, **Shift+Left/Right**
+- **Up/Down** = 베이스 전진/후진, **Left/Right** = 제자리 yaw 회전, **[/]**
   = 좌우 스트레이프 (전부 실제 바퀴-지면 마찰로 구동), **Q/E** = 리프트 하강/상승.
 - **R** = 캔 리스폰(±2cm 랜덤), **G** = contact force/point 시각화 토글, **C** = 카메라
   프리셋 전환.

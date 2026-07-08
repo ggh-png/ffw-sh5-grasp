@@ -59,7 +59,7 @@ keybindings a MuJoCo user already expects from other tools (see NOTES.md "Phase 
 Run: `python3 src/teleop_app.py`.
 Mouse: left-drag orbit, right-drag pan, scroll zoom (standard MuJoCo camera controls).
 Keyboard: Up/Down = base forward/back (robot-local), Left/Right = base yaw,
-Shift+Left/Right = base strafe, Q/E = lift down/up, R = reset can (+-2cm random),
+[ / ] = base strafe left/right, Q/E = lift down/up, R = reset can (+-2cm random),
 G = toggle contact force/point
 visualization, C = cycle camera preset (overview / right-hand close-up). R/G/C also have
 buttons in the on-screen panel.
@@ -733,24 +733,21 @@ class TeleopApp:
         (한글) 주행/리프트 키는 누르고 있는 동안 계속 반응해야 하므로(edge-triggered
         아님) 매 프레임 눌림 상태를 그대로 읽는다.
 
-        Arrow keys only (no WASD): Up/Down = forward/back, plain Left/Right = yaw,
-        Shift+Left/Right = strafe -- WASD was dropped since it collides with the
-        keybindings a MuJoCo user already expects from other tools; Shift-as-modifier
-        matches the existing mouse-camera convention (mod_shift).
+        Arrow keys + brackets (no WASD): Up/Down = forward/back, Left/Right = yaw,
+        [ / ] = strafe left/right -- WASD was dropped since it collides with the
+        keybindings a MuJoCo user already expects from other tools. Strafe moved off
+        Shift+Left/Right (Session 11, per user request) onto its own dedicated keys so it
+        doesn't share the Left/Right yaw keys at all -- no modifier to hold down.
         """
         drive_keys = {"w": False, "a": False, "s": False, "d": False, "left": False, "right": False}
         lift_dir = 0.0
         if not io.want_capture_keyboard:
-            shift_held = (glfw.get_key(self.window, glfw.KEY_LEFT_SHIFT) == glfw.PRESS
-                          or glfw.get_key(self.window, glfw.KEY_RIGHT_SHIFT) == glfw.PRESS)
             drive_keys["w"] = glfw.get_key(self.window, glfw.KEY_UP) == glfw.PRESS
             drive_keys["s"] = glfw.get_key(self.window, glfw.KEY_DOWN) == glfw.PRESS
-            if shift_held:
-                drive_keys["a"] = glfw.get_key(self.window, glfw.KEY_LEFT) == glfw.PRESS
-                drive_keys["d"] = glfw.get_key(self.window, glfw.KEY_RIGHT) == glfw.PRESS
-            else:
-                drive_keys["left"] = glfw.get_key(self.window, glfw.KEY_LEFT) == glfw.PRESS
-                drive_keys["right"] = glfw.get_key(self.window, glfw.KEY_RIGHT) == glfw.PRESS
+            drive_keys["left"] = glfw.get_key(self.window, glfw.KEY_LEFT) == glfw.PRESS
+            drive_keys["right"] = glfw.get_key(self.window, glfw.KEY_RIGHT) == glfw.PRESS
+            drive_keys["a"] = glfw.get_key(self.window, glfw.KEY_LEFT_BRACKET) == glfw.PRESS
+            drive_keys["d"] = glfw.get_key(self.window, glfw.KEY_RIGHT_BRACKET) == glfw.PRESS
             if glfw.get_key(self.window, glfw.KEY_E) == glfw.PRESS:
                 lift_dir += 1.0
             if glfw.get_key(self.window, glfw.KEY_Q) == glfw.PRESS:

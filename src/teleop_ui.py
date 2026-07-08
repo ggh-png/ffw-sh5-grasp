@@ -50,7 +50,7 @@ def draw_panel(app):
     imgui.text(f"IK err  L: {_ik_err_text(app, 'l')}   R: {_ik_err_text(app, 'r')}")
     imgui.text(f"Base  x={data.qpos[app.base_x_qadr]:+.2f}m y={data.qpos[app.base_y_qadr]:+.2f}m "
                f"yaw={math.degrees(data.qpos[app.base_yaw_qadr]):+.1f}deg  "
-               f"(Up/Down drive, Left/Right yaw, Shift+Left/Right strafe, Q/E lift)")
+               f"(Up/Down drive, Left/Right yaw, [/] strafe, Q/E lift)")
     imgui.text(f"Scenario: {app.scenario.upper()}  (set at launch with --scenario)")
     imgui.text("Mouse IK: Ctrl+click target, Ctrl+Left drag move, Ctrl+Right drag rotate")
     imgui.same_line()

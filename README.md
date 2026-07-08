@@ -49,7 +49,7 @@ python3 src/teleop_app.py
 |---|---|
 | `Up` / `Down` | 베이스 전진 / 후진 (실제 바퀴-지면 마찰로 구동) |
 | `Left` / `Right` | 베이스 제자리 yaw 회전 |
-| `Shift` + `Left` / `Right` | 베이스 좌/우 스트레이프 |
+| `[` / `]` | 베이스 좌/우 스트레이프 |
 | `Q` / `E` | 리프트 하강 / 상승 |
 | `R` | 캔 리스폰 (+-2cm 랜덤) |
 | `G` | contact force/point 시각화 토글 |

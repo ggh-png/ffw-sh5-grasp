@@ -18,11 +18,42 @@ import numpy as np
 
 K_SPEED = 0.5    # m/s, commanded local speed while a translate key is held
 K_MAX = 0.55     # m/s, hard cap on the smoothed local speed
-K_ACCEL = 3.0    # 1/s, exponential approach rate toward the target velocity
-K_BRAKE = 6.0    # 1/s, exponential decay rate once keys are released
-K_YAW = 1.2      # rad/s, commanded yaw rate while a turn key is held
-YAW_FOLLOW = 4.0   # 1/s, exponential approach rate toward the target yaw rate
-YAW_DECAY = 10.0   # 1/s, exponential decay rate once turn keys are released
+# K_ACCEL/K_BRAKE/YAW_FOLLOW/YAW_DECAY: originally ported 1:1 from the reference
+# ffw-sh5-teleoperation repo's InputManager constants (K_ACCEL=3.0, K_BRAKE=6.0,
+# YAW_FOLLOW=4.0, YAW_DECAY=10.0), tuned for that project's own actuator model. Retuned to
+# 1.0 across the board (Session 11) after measuring directly (offline, physics substep
+# logging) that at the old values, releasing a drive/turn key made the base's actual
+# velocity/yaw-rate briefly *reverse sign* and overshoot well past zero before settling --
+# e.g. holding "backward" to steady -0.49m/s then releasing produced a measured peak of
+# +0.63m/s the wrong way within ~100ms, not a smooth stop. Root cause: this model's wheel
+# velocity actuators (kv=150 in full_scene.xml, chosen for in-place-yaw torque authority)
+# are far stiffer than the wheel's own rotational inertia can absorb, so any *sufficiently
+# large single-frame step* in the commanded target -- which is exactly what the old fast
+# time constants (0.33s/0.17s/0.25s/0.1s) produced -- overshoots through the high-friction
+# (mu=5.0) wheel-floor contact into the base itself. This isn't a smoothing-resolution bug
+# (confirmed directly: re-deriving the target every physics substep instead of once per
+# frame did not remove the overshoot either) -- it only goes away once the step size itself
+# is small enough, i.e. a slower time constant. 1.0s was chosen as the smallest of {1/6,
+# 1/3, 1/1.5, 1/1.2, 1/1, 1/0.8, 1/0.6} tested that measured zero reversal (peak stays <=0
+# in the direction opposite travel) on both the translate and yaw axes while still fully
+# settling within about a second -- confirmed this doesn't change the steady-state speed/
+# yaw-rate reached (same values as before at the old constants, only the transient changes)
+# via tests/test_phase_5.py plus the same offline harness used to find the bug.
+K_ACCEL = 1.0    # 1/s, exponential approach rate toward the target velocity
+K_BRAKE = 1.0    # 1/s, exponential decay rate once keys are released
+# K_YAW raised 1.2->2.0 (Session 11): in-place yaw is traction-limited to ~23% of whatever
+# K_YAW is commanded (measured directly -- the front wheels' steer actuators can't fully
+# reach their commanded angle under load, a friction-equilibrium effect confirmed
+# independent of steer kp/forcerange and drive kv, i.e. not a simple gain-tuning fix; see
+# NOTES.md "Phase 5 후속" / "Session 11"). That ratio was confirmed to hold roughly flat
+# from K_YAW=1.2 up to 2.0 (measured 22.6% vs 22.9%), so raising the target this far is a
+# safe way to recover more of the achieved rotation speed (15.6->26.2 deg/s) without
+# touching wheel/contact physics; higher multiples were tested and found non-monotonic
+# (worse in both ratio and absolute speed at 3-8x, unpredictable beyond that), so this is
+# deliberately not pushed further without dedicated follow-up.
+K_YAW = 2.0      # rad/s, commanded yaw rate while a turn key is held
+YAW_FOLLOW = 1.0   # 1/s, exponential approach rate toward the target yaw rate
+YAW_DECAY = 1.0   # 1/s, exponential decay rate once turn keys are released
 VEL_ZERO_EPS = 0.001
 
 
@@ -50,11 +81,12 @@ class BaseTeleop:
         if norm > 1e-9:
             target_local = target_local / norm * K_SPEED
         target_w = turn * K_YAW
-
         if turn != 0.0:
-            # In-place rotation: kill translation immediately for a clear pivot, matching
-            # the reference teleop's feel (S1.2 "제자리 회전 시 병진 속도 즉시 0").
-            self.v_local[:] = 0.0
+            # 즉시 0 대신 K_BRAKE와 동일한 감쇠로 줄이기
+            self.v_local *= math.exp(-K_BRAKE * dt)
+            if np.linalg.norm(self.v_local) < VEL_ZERO_EPS:
+                self.v_local[:] = 0.0
+
         elif fwd != 0.0 or left != 0.0:
             # 목표 속도를 향해 지수적으로 접근(가속) -- 순간 가속이 아니라 K_ACCEL로
             # 정해진 시간상수만큼 부드럽게 따라간다.
@@ -139,11 +171,14 @@ class SwerveDrive:
             vwy = vy_body + omega * wx
             speed = math.hypot(vwx, vwy)
 
+            # 두 임계값 통일 또는 STEER_ZERO_SPEED_EPS를 더 낮추기
+            STEER_ZERO_SPEED_EPS = 0.005  # VEL_ZERO_EPS / WHEEL_RADIUS 기준으로 맞추기
+
+            # 그리고 steer를 유지하되 drive ctrl에 약한 braking force를 주는 대신
+            # 완전히 0으로 스냅하기 전에 한 스텝 더 감쇠
             if speed < STEER_ZERO_SPEED_EPS:
-                # 속도가 거의 0이면 atan2가 불안정(잡음)해지므로 방향은 바꾸지 않고
-                # 이전 조향각을 유지, 구동속도만 0으로.
                 angle = self.steer_angle[name]
-                signed_speed = 0.0
+                signed_speed = speed * 0.1 / WHEEL_RADIUS  # 즉시 0 대신 약하게
             else:
                 # 3) 원하는 바퀴 진행 방향(angle)과 그 방향으로 구를 속도(signed_speed).
                 angle = math.atan2(vwy, vwx)
