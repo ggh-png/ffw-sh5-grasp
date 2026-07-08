@@ -114,6 +114,7 @@ HOME_Q_R = np.array([0.0, 0.0, 0.0, -1.5707963267948966, 0.0, 0.0, 0.0])
 HOME_Q_L = np.array([0.0, 0.0, 0.0, -1.5707963267948966, 0.0, 0.0, 0.0])
 LIFT_RANGE = (-0.5, 0.0)
 BOX_HALF_EXTENTS = np.array([0.15, 0.15, 0.20])
+BOX_HOME_QPOS = np.array([0.5055, 0.0, 0.9316, 1.0, 0.0, 0.0, 0.0])
 BOX_PREGRASP_GAP = 0.03
 BOX_SQUEEZE_GAP = -0.005
 BOX_GRAB_RAMP_TIME = 1.0
@@ -304,6 +305,7 @@ class TeleopApp:
             name: model.key_qpos[key_id][model.jnt_qposadr[jid]:model.jnt_qposadr[jid] + 7].copy()
             for name, jid in self.object_jids.items()
         }
+        self.object_home_qpos["box"] = BOX_HOME_QPOS.copy()
         self.object_geom_rgba = {
             name: model.geom_rgba[gid].copy() for name, gid in self.object_geom_ids.items()
         }
@@ -432,6 +434,8 @@ class TeleopApp:
         self._park_object(inactive)
         self._set_object_collision(active, True)
         self._set_object_collision(inactive, False)
+        if scenario == "box":
+            self._open_hands_for_box()
         self.scenario = scenario
         self.grab_state = {"r": None, "l": None}
         self.box_grab = False
@@ -462,6 +466,19 @@ class TeleopApp:
         self.model.geom_contype[gid] = 1 if active else 0
         self.model.geom_conaffinity[gid] = 1 if active else 0
         self.model.geom_rgba[gid][3] = self.object_geom_rgba[name][3] if active else 0.0
+
+    def _open_hands_for_box(self):
+        for side in ("l", "r"):
+            for i in range(1, 21):
+                jid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, f"finger_{side}_joint{i}")
+                if jid == -1:
+                    continue
+                qadr = self.model.jnt_qposadr[jid]
+                dof = self.model.jnt_dofadr[jid]
+                self.data.qpos[qadr] = 0.0
+                self.data.qvel[dof] = 0.0
+            self.targets[f"grasp_{side}"] = 0.0
+            self.targets[f"thumb_{side}"] = 0.0
 
     def cycle_camera(self):
         self.camera_preset = 1 - self.camera_preset
@@ -793,8 +810,12 @@ class TeleopApp:
             for wheel, (steer_angle, drive_angvel) in wheel_cmds.items():
                 data.ctrl[self.wheel_steer_aids[wheel]] = steer_angle
                 data.ctrl[self.wheel_drive_aids[wheel]] = drive_angvel
-            grasp.apply_grasp(model, data, grasp=self.targets["grasp_r"], thumb=self.targets["thumb_r"], side="r")
-            grasp.apply_grasp(model, data, grasp=self.targets["grasp_l"], thumb=self.targets["thumb_l"], side="l")
+            if self.scenario == "box":
+                grasp.apply_open_hand(model, data, side="r")
+                grasp.apply_open_hand(model, data, side="l")
+            else:
+                grasp.apply_grasp(model, data, grasp=self.targets["grasp_r"], thumb=self.targets["thumb_r"], side="r")
+                grasp.apply_grasp(model, data, grasp=self.targets["grasp_l"], thumb=self.targets["thumb_l"], side="l")
             mujoco.mj_step(model, data)
         self._update_box_grasp_state()
 

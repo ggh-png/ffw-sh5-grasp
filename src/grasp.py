@@ -297,6 +297,16 @@ def apply_grasp(model, data, grasp: float, thumb: float, side: str = "r"):
         data.ctrl[aid] = lo + frac * (hi - lo)
 
 
+def apply_open_hand(model, data, side: str = "r"):
+    """Command every actuated finger joint to the fully-open neutral pose."""
+    for i in range(1, 21):
+        joint_name = f"finger_{side}_joint{i}"
+        jid, aid = _resolve_joint_actuator(model, joint_name)
+        if jid == -1 or aid is None:
+            continue
+        data.ctrl[aid] = 0.0
+
+
 def get_finger_can_contacts(model, data, side: str = "r"):
     """Return {finger_group_name: total_normal_force} for fingers currently touching the can.
 

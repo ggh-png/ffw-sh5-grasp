@@ -30,6 +30,7 @@ HOME_Q_L = np.array([0.0, 0.0, 0.0, -1.5707963267948966, 0.0, 0.0, 0.0])
 QACC_LIMIT = 1e5
 BOX_IDLE_DRIFT_LIMIT = 0.002
 BOX_HOME_Z = 0.9316
+BOX_HOME_QPOS = np.array([0.5055, 0.0, BOX_HOME_Z, 1.0, 0.0, 0.0, 0.0])
 
 
 def _reset_home(model, data):
@@ -57,9 +58,27 @@ def _park_freejoint(model, data, joint_name):
 def _box_setup(model, data):
     _reset_home(model, data)
     _park_freejoint(model, data, "can_free")
+    box_jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "box_free")
+    box_qadr = model.jnt_qposadr[box_jid]
+    box_dof = model.jnt_dofadr[box_jid]
+    data.qpos[box_qadr:box_qadr + 7] = BOX_HOME_QPOS
+    data.qvel[box_dof:box_dof + 6] = 0.0
     _set_geom_active(model, "can_geom", False)
     _set_geom_active(model, "box_geom", True)
+    _open_hands(model, data)
     mujoco.mj_forward(model, data)
+
+
+def _open_hands(model, data):
+    for side in ("l", "r"):
+        for i in range(1, 21):
+            jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, f"finger_{side}_joint{i}")
+            if jid == -1:
+                continue
+            qadr = model.jnt_qposadr[jid]
+            dof = model.jnt_dofadr[jid]
+            data.qpos[qadr] = 0.0
+            data.qvel[dof] = 0.0
 
 
 def _make_rig(model):
@@ -77,8 +96,8 @@ def _step_hold(model, data, rig):
     rig["ctrl_r"].apply(data, HOME_Q_R)
     rig["ctrl_l"].apply(data, HOME_Q_L)
     data.ctrl[rig["lift_aid"]] = data.qpos[rig["lift_qadr"]]
-    grasp.apply_grasp(model, data, grasp=0.0, thumb=0.0, side="r")
-    grasp.apply_grasp(model, data, grasp=0.0, thumb=0.0, side="l")
+    grasp.apply_open_hand(model, data, side="r")
+    grasp.apply_open_hand(model, data, side="l")
     mujoco.mj_step(model, data)
     return float(np.max(np.abs(data.qacc)))
 
