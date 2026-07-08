@@ -800,7 +800,7 @@
     <!-- Footprint enlarged (Session 8 후속, user request) from 0.08x0.15 -- height/position
          unchanged (table top stays at exactly the same world z the can/grasp geometry was
          validated against), only made to look more like an actual table. -->
-    <geom name="table" type="box" size="0.16 0.25 0.05" pos="0.5055 0.0 0.6816" material="table_mat"/>
+    <geom name="table" type="box" size="0.26 0.25 0.05" pos="0.4055 0.0 0.6816" material="table_mat"/>
     <body name="can" pos="0.5055 0.0 0.7866">
       <freejoint name="can_free"/>
       <inertial pos="0 0 0" mass="0.35" diaginertia="0.000448 0.000448 0.00019"/>
@@ -816,7 +816,7 @@
         priority="1" condim="6" friction="0.5 0.01 0.003"
         solimp="0.5 0.99 0.0001" solref="0.005 1"/>
     </body>
-    <body name="box_body" pos="0.5055 0.0 0.9316">
+    <body name="box_body" pos="0.3055 0.0 0.9316">
       <freejoint name="box_free"/>
       <geom name="box_geom" type="box" size="0.15 0.15 0.20" mass="0.3"
         rgba="0.8 0.6 0.3 1" priority="1" condim="6" friction="1.0 0.5 0.01"

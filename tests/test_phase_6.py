@@ -30,7 +30,7 @@ HOME_Q_L = np.array([0.0, 0.0, 0.0, -1.5707963267948966, 0.0, 0.0, 0.0])
 QACC_LIMIT = 1e5
 BOX_IDLE_DRIFT_LIMIT = 0.002
 BOX_HOME_Z = 0.9316
-BOX_HOME_QPOS = np.array([0.5055, 0.0, BOX_HOME_Z, 1.0, 0.0, 0.0, 0.0])
+BOX_HOME_QPOS = np.array([0.3055, 0.0, BOX_HOME_Z, 1.0, 0.0, 0.0, 0.0])
 
 
 def _reset_home(model, data):
