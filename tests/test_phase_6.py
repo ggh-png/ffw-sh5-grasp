@@ -132,6 +132,14 @@ def _make_rig(model):
             w: mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, f"{w}_drive")
             for w in ("left_wheel", "right_wheel", "rear_wheel")
         },
+        "wheel_steer_qadrs": {
+            w: model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, f"{w}_steer_joint")]
+            for w in ("left_wheel", "right_wheel", "rear_wheel")
+        },
+        "wheel_drive_dofs": {
+            w: model.jnt_dofadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, f"{w}_drive_joint")]
+            for w in ("left_wheel", "right_wheel", "rear_wheel")
+        },
     }
 
 
@@ -330,8 +338,11 @@ def _frame_hold_pair(model, data, rig, q_r, q_l, duration, reference=None,
     for _ in range(frames):
         wheel_cmds = None
         if drive is not None:
-            wheel_cmds = drive.update(drive_keys or {}, CONTROL_FRAME_DT,
-                                      float(data.qpos[rig["base_yaw_qadr"]]))
+            steering_positions = {w: float(data.qpos[qadr]) for w, qadr in rig["wheel_steer_qadrs"].items()}
+            wheel_velocities = {w: float(data.qvel[dof]) for w, dof in rig["wheel_drive_dofs"].items()}
+            wheel_cmds = drive.update(
+                drive_keys or {}, CONTROL_FRAME_DT, float(data.qpos[rig["base_yaw_qadr"]]),
+                steering_positions, wheel_velocities)
         if reference is not None:
             dq_r, dq_l = bimanual_constraint.project_desired_delta(
                 model, data, rig["site_r"], rig["site_l"],
@@ -508,6 +519,7 @@ def run_cyclo_marker_jog_gate():
         scenario = "box"
         box_tracking = True
         arm_mode = {"l": "ik", "r": "ik"}
+        cyclo_controller = "movel"
         cyclo_grasp_captured = False
         targets = {
             "pos_l": [0.30, 0.10, 0.80],
@@ -541,9 +553,21 @@ def run_cyclo_marker_jog_gate():
         and np.allclose(app.targets["pos_r"], [1.2, 0.890, 1.2])
         and np.allclose(app.targets["rpy_r"], [90.0, 90.0, 90.0])
     )
-    ok = both_ok and fk_skip_and_clamp_ok
+    move_marker_ok = (
+        teleop_ui._active_marker_choices(app) == (("r", "Right goal"), ("l", "Left goal"))
+        and teleop_ui._selected_marker_label(app) == "Right goal"
+    )
+    app.cyclo_controller = "bimanual_movel"
+    app.cyclo_grasp_captured = True
+    app.jog_side = "r"
+    virtual_marker_ok = (
+        teleop_ui._active_marker_choices(app) == (("virtual", "Virtual object"),)
+        and teleop_ui._selected_marker_label(app) == "Virtual object"
+    )
+    ok = both_ok and fk_skip_and_clamp_ok and move_marker_ok and virtual_marker_ok
     print(f"Cyclo marker jog gate: both_updates={both_ok} "
-          f"fk_skip_and_clamp={fk_skip_and_clamp_ok}: {'OK' if ok else 'FAIL'}")
+          f"fk_skip_and_clamp={fk_skip_and_clamp_ok} marker_choices={move_marker_ok and virtual_marker_ok}: "
+          f"{'OK' if ok else 'FAIL'}")
     return ok
 
 
@@ -617,6 +641,38 @@ def run_cyclo_3d_gizmo_pose_gate():
     ok = roundtrip_ok and hand_ok and virtual_ok
     print(f"Cyclo 3D gizmo pose gate: roundtrip={roundtrip_ok} "
           f"hand_target={hand_ok} virtual_target={virtual_ok}: {'OK' if ok else 'FAIL'}")
+    return ok
+
+
+def run_bimanual_marker_visibility_gate():
+    app = _make_sim_only_app("box")
+    geom_id = app.virtual_object_marker_geom_id
+    site_id = app.virtual_object_marker_site_id
+    geom_alpha0 = float(app.model.geom_rgba[geom_id][3])
+    site_alpha0 = float(app.model.site_rgba[site_id][3])
+
+    app.targets["pos_r"] = [0.34, -0.08, 0.88]
+    app.targets["pos_l"] = [0.34, 0.08, 0.88]
+    app.capture_grasp()
+    app._sync_ik_mocaps_from_targets()
+    geom_alpha_capture = float(app.model.geom_rgba[geom_id][3])
+    site_alpha_capture = float(app.model.site_rgba[site_id][3])
+
+    app.release_grasp()
+    app._sync_ik_mocaps_from_targets()
+    geom_alpha_release = float(app.model.geom_rgba[geom_id][3])
+    site_alpha_release = float(app.model.site_rgba[site_id][3])
+
+    hidden_initial = geom_alpha0 == 0.0 and site_alpha0 == 0.0
+    visible_capture = (
+        abs(geom_alpha_capture - app.virtual_object_marker_rgba["geom"][3]) < 1e-12
+        and abs(site_alpha_capture - app.virtual_object_marker_rgba["site"][3]) < 1e-12
+    )
+    hidden_release = geom_alpha_release == 0.0 and site_alpha_release == 0.0
+    ok = hidden_initial and visible_capture and hidden_release
+    print(f"Bimanual marker visibility gate: initial_hidden={hidden_initial} "
+          f"capture_visible={visible_capture} release_hidden={hidden_release}: "
+          f"{'OK' if ok else 'FAIL'}")
     return ok
 
 
@@ -749,6 +805,7 @@ def main():
           and run_cyclo_marker_jog_gate()
           and run_cyclo_bimanual_virtual_object_gate()
           and run_cyclo_3d_gizmo_pose_gate()
+          and run_bimanual_marker_visibility_gate()
           and run_marker_control_removed_gate() and run_numeric_target_marker_sync_gate()
           and run_box_tracking_target_math_gate()
           and run_manual_xyz_rpy_ik_gate(model))

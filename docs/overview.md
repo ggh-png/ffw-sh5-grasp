@@ -107,7 +107,8 @@ Phase의 테스트를 절대 깨지 않는 것을 조건으로 시작한다 — 
 !!! abstract "Locomotion — 가상 액추에이터 대신 진짜 바퀴 마찰"
     처음엔 베이스에 평면 관절 + velocity actuator를 직접 걸었다. 사용자 요청으로
     이를 걷어내고, 바퀴 3개에 실제 조향+구동 관절과 지면 마찰 접촉을 복원해
-    `SwerveDrive` 기구학으로 변환했다.
+    ROBOTIS AI Worker의 `ffw_swerve_drive_controller` 흐름을 따른 `SwerveDrive`
+    컨트롤러로 변환했다.
 
     **왜:** 이 프로젝트의 제1원칙(kinematic 치팅 금지)을 손 파지에만 적용하고
     이동에는 예외를 두는 건 일관성이 없다 — 바퀴도 결국 마찰로 밀어야 한다.
@@ -158,7 +159,7 @@ ffw-sh5-grasp/
 │   ├── ik.py              # 계층형 6DOF DLS IK
 │   ├── arm_control.py     # 토크 + 중력 피드포워드
 │   ├── grasp.py           # synergy 스칼라 → 관절 매핑
-│   ├── base_teleop.py     # SwerveDrive 바퀴 기구학
+│   ├── base_teleop.py     # ROBOTIS식 SwerveDrive 바퀴 제어
 │   └── teleop_app.py      # 단일 네이티브 창 (GLFW+ImGui)
 ├── tests/             # test_phase_0.py … test_phase_6.py
 ├── assets/soda_can/   # 실제 라벨을 두른 캔 STL

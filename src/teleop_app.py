@@ -287,6 +287,14 @@ class TeleopApp:
                                   for w in ("left_wheel", "right_wheel", "rear_wheel")}
         self.wheel_drive_aids = {w: mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, f"{w}_drive")
                                   for w in ("left_wheel", "right_wheel", "rear_wheel")}
+        self.wheel_steer_qadrs = {
+            w: model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, f"{w}_steer_joint")]
+            for w in ("left_wheel", "right_wheel", "rear_wheel")
+        }
+        self.wheel_drive_dofs = {
+            w: model.jnt_dofadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, f"{w}_drive_joint")]
+            for w in ("left_wheel", "right_wheel", "rear_wheel")
+        }
         # 모바일 베이스: SwerveDrive가 키 입력을 바퀴별 조향각+구동속도로 변환.
         self.base_drive = base_teleop.SwerveDrive()
         self.monitor_qposadr = {n: model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, n)]
@@ -303,6 +311,14 @@ class TeleopApp:
         }
         self.virtual_object_mocap_id = model.body_mocapid[
             mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "virtual_object_marker")]
+        self.virtual_object_marker_geom_id = mujoco.mj_name2id(
+            model, mujoco.mjtObj.mjOBJ_GEOM, "virtual_object_marker_geom")
+        self.virtual_object_marker_site_id = mujoco.mj_name2id(
+            model, mujoco.mjtObj.mjOBJ_SITE, "virtual_object_marker_site")
+        self.virtual_object_marker_rgba = {
+            "geom": model.geom_rgba[self.virtual_object_marker_geom_id].copy(),
+            "site": model.site_rgba[self.virtual_object_marker_site_id].copy(),
+        }
         self.can_jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "can_free")
         self.box_jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "box_free")
         self.can_geom_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "can_geom")
@@ -679,6 +695,21 @@ class TeleopApp:
             self.targets[f"pos_{side}"] = self._world_to_base_pos(hand_pos).tolist()
             self.targets[f"rpy_{side}"] = self._world_quat_to_target_rpy(side, hand_quat)
 
+    def _bimanual_marker_visible(self):
+        return (getattr(self, "cyclo_controller", "movel") == "bimanual_movel"
+                and bool(getattr(self, "cyclo_grasp_captured", False)))
+
+    def _sync_marker_visibility(self):
+        if not hasattr(self, "virtual_object_marker_geom_id"):
+            return
+        alpha_scale = 1.0 if self._bimanual_marker_visible() else 0.0
+        geom_rgba = self.virtual_object_marker_rgba["geom"].copy()
+        site_rgba = self.virtual_object_marker_rgba["site"].copy()
+        geom_rgba[3] *= alpha_scale
+        site_rgba[3] *= alpha_scale
+        self.model.geom_rgba[self.virtual_object_marker_geom_id] = geom_rgba
+        self.model.site_rgba[self.virtual_object_marker_site_id] = site_rgba
+
     def _active_gizmo_target(self):
         if self.cyclo_controller == "bimanual_movel" and self.cyclo_grasp_captured:
             return "virtual"
@@ -785,6 +816,7 @@ class TeleopApp:
             pos, quat = self._virtual_object_world_pose()
             self.data.mocap_pos[self.virtual_object_mocap_id] = pos
             self.data.mocap_quat[self.virtual_object_mocap_id] = quat
+        self._sync_marker_visibility()
 
     # ------------------------------------------------------------------
     # 메인 루프
@@ -1050,7 +1082,10 @@ class TeleopApp:
             self.q_des_r = q_des_r_prev + dq_r
             self.q_des_l = q_des_l_prev + dq_l
 
-        wheel_cmds = self.base_drive.update(drive_keys, self.frame_dt, base_yaw)
+        steering_positions = {w: float(data.qpos[qadr]) for w, qadr in self.wheel_steer_qadrs.items()}
+        wheel_velocities = {w: float(data.qvel[dof]) for w, dof in self.wheel_drive_dofs.items()}
+        wheel_cmds = self.base_drive.update(
+            drive_keys, self.frame_dt, base_yaw, steering_positions, wheel_velocities)
         arm_kp_scale = self.box_squeeze_kp_scale if self.scenario == "box" and self.box_grab else 1.0
 
         # 렌더 프레임 하나(frame_dt)당 물리 스텝을 여러 번(steps_per_frame) 돌린다 --

@@ -166,8 +166,9 @@ teleop_app.py
   `get_box_hand_contacts()`/`is_box_held()`가 쓰이고, `can` 모드에서는 기존
   `apply_grasp()`/`is_grasped()` 경로가 쓰인다.
 - **base_teleop.py**는 프레임당 한 번만 호출되고(물리 서브스텝마다는 아님), 그
-  결과(`wheel_cmds`)만 서브스텝 루프 안에서 반복 사용된다 — IK/토크제어보다 훨씬
-  가벼운 계산이라 프레임당 재계산으로 충분하다.
+  결과(`wheel_cmds`)만 서브스텝 루프 안에서 반복 사용된다. 이때 실제 조향 qpos와
+  바퀴 qvel을 같이 넘겨 ROBOTIS식 180도 반전 FSM과 alignment gating이 물리 상태
+  기준으로 동작하게 한다.
 - **teleop_ui.py**는 유일하게 "값을 읽는 쪽"이 아니라 "`self`(=app) 객체 자체를
   받아 그 상태를 직접 읽고 쓰는" 모듈이다 — 자세한 이유는 `teleop_ui.md` 참고.
 - 물리 상태(`data`)에 대한 예외적 직접 쓰기는 `reset_active_object()`와 시나리오 전환의

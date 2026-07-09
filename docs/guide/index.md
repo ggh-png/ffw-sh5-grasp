@@ -39,7 +39,7 @@ graph LR
 2. [`src/grasp.py`](grasp.md) — grasp synergy 매핑 + 접촉력 기반 파지 판정
 3. [`src/ik.py`](ik.md) — 6DOF damped least squares IK
 4. [`src/arm_control.py`](arm_control.md) — PD + 중력/코리올리 feedforward 토크 제어
-5. [`src/base_teleop.py`](base_teleop.md) — 조작감 스무딩 + 스워브 드라이브 기구학
+5. [`src/base_teleop.py`](base_teleop.md) — 조작감 스무딩 + ROBOTIS식 스워브 제어
 6. [`src/teleop_app.py`](teleop_app.md) — 위 네 파일이 실제로 합쳐지는 메인 루프
 7. [`src/teleop_ui.py`](teleop_ui.md) — ImGui 슬라이더 패널
 8. [흔한 함정 총정리](pitfalls.md) — 이 프로젝트가 반복해서 배운 것들

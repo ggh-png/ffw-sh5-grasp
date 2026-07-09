@@ -13,9 +13,9 @@ joints and their real contact with the floor. See src/base_teleop.py's `SwerveDr
 per-wheel steer-angle + drive-speed kinematics (needed because the vendored wheel_steer
 joints only have ~+-90.5deg of range, not a full rotation).
 
-Part 1 (unit, no MuJoCo): BaseTeleop's smoothing math (unchanged) plus SwerveDrive's
-wheel kinematics in isolation (pure forward/turn/strafe cases, checked against the known
-wheel mounting geometry).
+Part 1 (unit, no MuJoCo): BaseTeleop's smoothing math (unchanged) plus ROBOTIS-style
+SwerveDrive behavior in isolation (pure forward/turn/strafe cases, checked against the
+known wheel mounting geometry, plus the 180deg reversal FSM).
 
 Part 2 (integration): drives the real simulated wheels via SwerveDrive's ctrl outputs
 (never qpos) and checks: (a) idle hold with no keys is stable (no creep -- this is the
@@ -103,6 +103,21 @@ def run_unit_tests():
           f"{'OK' if ok_d else 'FAIL'}")
     ok &= ok_d
 
+    sd4 = base_teleop.SwerveDrive()
+    sd4.base.v_local[:] = [0.5, 0.0]
+    sd4.update({}, 0.01, yaw=0.0)
+    sd4.base.v_local[:] = [-0.5, 0.0]
+    reverse_cmd = sd4.update({}, 0.01, yaw=0.0)
+    ok_e = (
+        sd4.reversal_phase["left_wheel"] == base_teleop.ReversalPhase.DECELERATING
+        and sd4.wheel_speed_scale["left_wheel"] < 1.0
+        and reverse_cmd["left_wheel"][1] > 0.0
+    )
+    print(f"  (e) SwerveDrive 180deg reversal: phase={sd4.reversal_phase['left_wheel'].name} "
+          f"scale={sd4.wheel_speed_scale['left_wheel']:.2f} "
+          f"wheel_cmd={reverse_cmd['left_wheel'][1]:.3f}: {'OK' if ok_e else 'FAIL'}")
+    ok &= ok_e
+
     return ok
 
 
@@ -117,19 +132,26 @@ def _make_rig(model):
     ctrl_l = arm_control.ArmTorqueController(model, ARM_L)
     steer_aids = {w: mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, f"{w}_steer") for w in WHEELS}
     drive_aids = {w: mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, f"{w}_drive") for w in WHEELS}
+    steer_qadrs = {
+        w: model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, f"{w}_steer_joint")]
+        for w in WHEELS
+    }
     drive_dofs = {w: model.jnt_dofadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, f"{w}_drive_joint")]
                   for w in WHEELS}
     base_yaw_qadr = model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "base_yaw")]
     base_x_qadr = model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "base_x")]
     base_x_dof = model.jnt_dofadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "base_x")]
     return dict(ctrl_r=ctrl_r, ctrl_l=ctrl_l, steer_aids=steer_aids, drive_aids=drive_aids,
+                steer_qadrs=steer_qadrs,
                 drive_dofs=drive_dofs, base_yaw_qadr=base_yaw_qadr, base_x_qadr=base_x_qadr,
                 base_x_dof=base_x_dof)
 
 
 def _step(model, data, rig, drive, keys, frame_dt):
     yaw = data.qpos[rig["base_yaw_qadr"]]
-    cmds = drive.update(keys, frame_dt, yaw)
+    steering_positions = {w: float(data.qpos[qadr]) for w, qadr in rig["steer_qadrs"].items()}
+    wheel_velocities = {w: float(data.qvel[dof]) for w, dof in rig["drive_dofs"].items()}
+    cmds = drive.update(keys, frame_dt, yaw, steering_positions, wheel_velocities)
     dt = model.opt.timestep
     max_qacc = 0.0
     for _ in range(max(1, round(frame_dt / dt))):
