@@ -23,7 +23,7 @@ mkdocs-material` 먼저), `docs/index.md`부터 읽으면 된다.
 
 **Phase 0-6 완료** -- 전체 로봇(양팔+양손+헤드+리프트) + 모바일 베이스(평면 관절 3개 +
 실제 바퀴 3개의 조향/구동 관절과 지면 마찰) + 단일 네이티브 창 텔레옵(GLFW+ImGui) +
-캔 pick 시나리오와 양손 squeeze 방식의 작은 상자 lift/drive 시나리오.
+캔 pick workflow와 Cyclo Control식 양팔 marker/XYZ/RPY 제어.
 
 ```bash
 for p in 0 1 2 3 4 5 6; do python3 tests/test_phase_$p.py; done
@@ -37,12 +37,10 @@ for p in 0 1 2 3 4 5 6; do python3 tests/test_phase_$p.py; done
 ```bash
 pip install --break-system-packages mujoco numpy trimesh pillow glfw imgui-bundle   # 최초 1회
 python3 src/teleop_app.py
-# 또는
-python3 src/teleop_app.py box
 ```
 
 하나의 네이티브 창에 3D 뷰 + 슬라이더 패널이 같이 뜬다(브라우저 불필요).
-실행 인자 `can`/`box` 또는 `--scenario can|box`로 시작 시나리오를 고른다.
+현재 텔레옵 앱은 can workflow 하나만 사용하며, 별도의 시나리오 인자는 받지 않는다.
 
 **마우스** (3D 뷰 위, 패널 위에서는 비활성): 좌클릭 드래그 = 궤도 회전, 우클릭 드래그 = 팬,
 휠 = 줌.
@@ -55,7 +53,7 @@ python3 src/teleop_app.py box
 | `Left` / `Right` | 베이스 제자리 yaw 회전 |
 | `[` / `]` | 베이스 좌/우 스트레이프 |
 | `Q` / `E` | 리프트 하강 / 상승 |
-| `R` | 현재 시나리오 물체 리셋 (`can`은 +-2cm 랜덤 리스폰, `box`는 홈 위치) |
+| `R` | 캔 리셋 (+-2cm 랜덤 리스폰) |
 | `G` | contact force/point 시각화 토글 |
 | `C` | 카메라 프리셋 전환 (전체 뷰 / 오른손 클로즈업) |
 
@@ -77,7 +75,7 @@ ffw-sh5-grasp/
 ├── models/
 │   ├── hand_only.xml       # Phase 1-2: 오른손 단독(mocap+weld) + 캔
 │   ├── arm_hand.xml        # Phase 3: 오른팔 + 오른손 + 테이블 + 캔
-│   └── full_scene.xml      # Phase 4-6: 전체 FFW-SH5 + 캔/상자 시나리오
+│   └── full_scene.xml      # Phase 4-6: 전체 FFW-SH5 + 캔 workflow
 │                           # 베이스 평면 관절 3개 + 바퀴 3개(조향+구동, 지면 마찰)
 ├── src/
 │   ├── ik.py               # hierarchical 6DOF DLS IK (mj_jacSite 기반)
@@ -94,7 +92,7 @@ ffw-sh5-grasp/
 │   ├── test_phase_3.py      # IK 단위테스트(100개) + 통합 pick(오른팔, 10회)
 │   ├── test_phase_4.py      # 전체 로봇 hold 회귀 + IK 100개 + 통합 pick(10회)
 │   ├── test_phase_5.py      # BaseTeleop/SwerveDrive 단위테스트 + 유휴/주행/충돌 회귀
-│   ├── test_phase_6.py      # 작은 상자 squeeze/lift/drive + Cyclo bimanual MoveL UI 회귀
+│   ├── test_phase_6.py      # Cyclo bimanual MoveL UI + XYZ/RPY marker 제어 회귀
 │   ├── record_demo.py       # 데모 GIF 생성 dev 툴 (docs/assets/demo.gif)
 │   ├── measure_hand_meshes.py  # STL AABB 측정 -> capsule 파라미터 도출용 dev 툴
 │   └── render_snapshot.py   # 오프스크린 렌더 dev 툴

@@ -8,8 +8,8 @@ ROBOTIS FFW-SH5 이동형 양팔 로봇이 **kinematic 치팅 없이, contact fo
 <span class="phase-track">
 <span>Phase 0–6 전체 완료</span>
 <span>test_phase_0…6 PASS</span>
-<span>캔 pick 9/10 · 상자 lift/drive PASS</span>
-<span>can/box 시나리오</span>
+<span>캔 pick · 실제 바퀴 주행 PASS</span>
+<span>Cyclo marker 양팔 제어</span>
 </span>
 
 ---
@@ -145,8 +145,8 @@ Phase의 테스트를 절대 깨지 않는 것을 조건으로 시작한다 — 
 
 ## 05 — 현재 상태
 
-Phase 0–6 기준으로 캔 pick, 실제 바퀴 주행, 작은 상자 양손 squeeze/lift/drive가
-동시에 회귀 테스트를 통과한다.
+Phase 0–6 기준으로 캔 pick, 실제 바퀴 주행, Cyclo Control식 양팔 marker/XYZ/RPY
+제어가 동시에 회귀 테스트를 통과한다.
 
 | PHASE 0 | PHASE 1 | PHASE 2 | PHASE 3 | PHASE 4 | PHASE 5 | PHASE 6 |
 |---|---|---|---|---|---|---|
@@ -169,14 +169,14 @@ ffw-sh5-grasp/
 └── PLAN.md · NOTES.md · README.md
 ```
 
-실행: `python3 src/teleop_app.py can` 또는 `python3 src/teleop_app.py box` — 방향키로
-베이스(실제 바퀴 마찰), Cyclo Control식 `MoveL`/`Bimanual MoveL` UI와 숫자 슬라이더로 양팔 EE pose와
-시나리오별 grasp/squeeze를 조작한다.
+실행: `python3 src/teleop_app.py` — 방향키로 베이스(실제 바퀴 마찰),
+Cyclo Control식 `MoveL`/`Bimanual MoveL` UI와 숫자 슬라이더로 양팔 EE pose와
+can grasp를 조작한다.
 검증: `python3 tests/test_phase_{0,1,2,3,4,5,6}.py`, 전부 독립 실행 가능한 headless
 회귀 테스트. 자세한 실행법은 [직접 실행하기](run.md) 참고.
 
-Phase 6에서는 작은 상자를 별도 시나리오로 두고, 양손이 상자 양옆을 눌러 마찰로 들며
-주행 중에도 bimanual constraint가 두 EE의 상대 pose를 유지하는지 검증한다.
+Phase 6에서는 `switch_scenario`/box workflow를 제거하고, capture된 양팔 target을
+virtual object marker 기준 상대 pose로 유지하는 Cyclo-style bimanual MoveL 흐름을 검증한다.
 
 !!! info "상세 진단 기록"
     각 세션의 상세 진단 기록은 레포의 `NOTES.md`에 남아 있다.

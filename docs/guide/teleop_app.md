@@ -29,7 +29,7 @@ while not glfw.window_should_close(self.window):
     io = teleop_render.begin_frame(self)
 
     teleop_render.handle_camera_mouse(self, io)
-    self._handle_edge_keys(io)             # R(현재 물체 리셋)/G(접촉 시각화)/C(카메라)
+    self._handle_edge_keys(io)             # R(캔 리셋)/G(접촉 시각화)/C(카메라)
     drive_keys = self._read_drive_and_lift_keys(io)
     self._draw_ui_panel()                  # teleop_ui.draw_panel(self) 호출
     self._step_physics(drive_keys)         # ik/arm_control/grasp/base_teleop 전부 호출
@@ -57,18 +57,14 @@ else:
 wheel_cmds = self.base_drive.update(drive_keys, self.frame_dt, base_yaw)
 
 for _ in range(self.steps_per_frame):
-    self.ctrl_r.apply(data, self.q_des_r, kp_scale=arm_kp_scale)     # arm_control.py
-    self.ctrl_l.apply(data, self.q_des_l, kp_scale=arm_kp_scale)
+    self.ctrl_r.apply(data, self.q_des_r)     # arm_control.py
+    self.ctrl_l.apply(data, self.q_des_l)
     data.ctrl[self.lift_aid] = self.targets["lift"]
     for wheel, (steer_angle, drive_angvel) in wheel_cmds.items():
         data.ctrl[self.wheel_steer_aids[wheel]] = steer_angle
         data.ctrl[self.wheel_drive_aids[wheel]] = drive_angvel
-    if self.scenario == "box":
-        grasp.apply_open_hand(model, data, side="r")
-        grasp.apply_open_hand(model, data, side="l")
-    else:
-        grasp.apply_grasp(model, data, grasp=self.targets["grasp_r"], thumb=self.targets["thumb_r"], side="r")
-        grasp.apply_grasp(model, data, grasp=self.targets["grasp_l"], thumb=self.targets["thumb_l"], side="l")
+    grasp.apply_grasp(model, data, grasp=self.targets["grasp_r"], thumb=self.targets["thumb_r"], side="r")
+    grasp.apply_grasp(model, data, grasp=self.targets["grasp_l"], thumb=self.targets["thumb_l"], side="l")
     mujoco.mj_step(model, data)
 ```
 
@@ -78,16 +74,15 @@ IK는 프레임당 한 번만 풀지만, `arm_control.apply`/`grasp.apply_grasp`
 **매 물리 서브스텝마다 다시 적용**된다 — 목표는 프레임당 한 번만 바뀌어도, 그
 목표를 향한 토크 계산 자체는 물리 스텝만큼 촘촘하게 다시 해야 하기 때문이다.
 
-`can`과 `box`는 실행 인자로 시작 시나리오를 고른다(`python3 src/teleop_app.py can|box`).
-두 물체는 같은 모델 안에 함께 있지만, 비활성 물체는 화면 밖으로 파킹되고 충돌/렌더가
-꺼진다. `box` 모드에서는 손가락 synergy를 쓰지 않고 양손을 open hand로 유지한 채,
-`squeeze_gap`으로 상자 양옆 target 간격을 조이고 `is_box_held()`가 성립하면
-`bimanual_constraint.project_desired_delta()`가 두 팔의 목표 관절 델타를 상대 pose 유지
-manifold에 투영한다.
+텔레옵 앱은 can workflow 하나만 사용한다. 이전 box workflow의 XML asset은 남아 있어도
+앱 시작 시 충돌과 렌더를 끄고 화면 밖으로 치워 live control surface에서는 제외한다.
 
-화면의 IK target 마커는 숫자 X/Y/Z + Roll/Pitch/Yaw target을 보여주는 표시용이다.
-마우스 드래그로 pose를 바꾸지 않고, `_sync_ik_mocaps_from_targets()`가 매 렌더 프레임
-마커 mocap pose를 슬라이더 target에 맞춰 따라가게 한다.
+화면의 IK target 마커는 숫자 X/Y/Z + Roll/Pitch/Yaw target과 양방향으로 동기화된다.
+`MoveL`에서는 오른손/왼손 marker를 독립적으로 조작하고, `Bimanual MoveL`에서
+`capture_grasp()`를 누른 뒤에는 `virtual_object_marker`의 pose가 양손 target을 함께
+파생한다. `_sync_ik_mocaps_from_targets()`가 매 렌더 프레임 marker mocap pose를
+target에 맞추고, ImGuizmo drag 결과는 `_set_gizmo_target_world_pose()`에서 다시
+base-local X/Y/Z와 home-relative RPY target으로 변환된다.
 
 ### IK ↔ FK 모드 전환 — `set_arm_mode`
 
@@ -162,9 +157,8 @@ teleop_app.py
   뿐이다. FK 모드에서는 이 짝의 앞쪽(`ik`)이 빠지고 `teleop_ui`의 슬라이더 값이
   그 자리를 대신한다 — `arm_control` 쪽 코드는 이 사실을 전혀 모른다.
 - **grasp.py**는 팔과 완전히 독립된 액추에이터(손가락)를 담당해서, 같은 물리
-  서브스텝 루프 안에서 그냥 나란히 호출된다. `box` 모드에서는 `apply_open_hand()`와
-  `get_box_hand_contacts()`/`is_box_held()`가 쓰이고, `can` 모드에서는 기존
-  `apply_grasp()`/`is_grasped()` 경로가 쓰인다.
+  서브스텝 루프 안에서 그냥 나란히 호출된다. 현재 live teleop에서는 손별
+  `apply_grasp()`/`is_grasped()` 경로를 사용한다.
 - **base_teleop.py**는 프레임당 한 번만 호출되고(물리 서브스텝마다는 아님), 그
   결과(`wheel_cmds`)만 서브스텝 루프 안에서 반복 사용된다. 이때 실제 조향 qpos와
   바퀴 qvel을 같이 넘겨 ROBOTIS식 180도 반전 FSM과 alignment gating이 물리 상태

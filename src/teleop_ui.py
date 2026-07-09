@@ -39,8 +39,7 @@ def _ik_err_text(app, side):
 
 
 def _note_manual_pose_edit(app):
-    if app.scenario == "box" and app.box_tracking:
-        app.box_tracking = False
+    return None
 
 
 def _clamp(value, lo, hi):
@@ -225,17 +224,12 @@ def _draw_cyclo_control_panel(app):
 
 
 def _draw_status_panel(app, data):
-    imgui.text(f"{app.scenario.upper()}  |  {app.cyclo_controller}  |  marker: {_selected_marker_label(app)}")
+    imgui.text(f"CAN  |  {app.cyclo_controller}  |  marker: {_selected_marker_label(app)}")
     imgui.text(f"sim {data.time:6.1f}s  wall {time.perf_counter()-app.wall_start:6.1f}s  "
                f"{app.freq_ema:4.1f} Hz")
     imgui.text(f"IK err  L: {_ik_err_text(app, 'l')}   R: {_ik_err_text(app, 'r')}")
     imgui.text(f"Base x={data.qpos[app.base_x_qadr]:+.2f}m y={data.qpos[app.base_y_qadr]:+.2f}m "
                f"yaw={math.degrees(data.qpos[app.base_yaw_qadr]):+.1f}deg")
-    if app.scenario == "box":
-        forces = app.box_contact_forces
-        imgui.text(f"Box {'HELD' if app.box_held else 'free'}  "
-                   f"L={forces['l']:.2f}N R={forces['r']:.2f}N  "
-                   f"constraint={'on' if app.constraint_active else 'off'}")
     imgui.text("Keys: arrows drive/yaw, [/] strafe, Q/E lift, R reset, G contacts, C camera")
     imgui.separator()
 
@@ -295,37 +289,12 @@ def _draw_can_grasp_panel(app, targets):
             app.grab_state[side] = None
 
 
-def _draw_box_grasp_panel(app, targets):
-    if not _section("Box Grasp"):
-        return
-    forces = app.box_contact_forces
-    imgui.text(f"Contact L={forces['l']:.2f}N R={forces['r']:.2f}N  "
-               f"{'HELD' if app.box_held else 'not held'}")
-    imgui.text(f"Constraint: {'ACTIVE' if app.constraint_active else 'off'}  "
-               f"drift={app.constraint_err_mm:.2f}mm")
-    if imgui.button("Release Box" if app.box_grab else "Grab Box"):
-        app.box_grab = not app.box_grab
-        if not app.box_grab:
-            app.gap_locked = False
-            app.constraint_active = False
-            app.rigid_relative_pose = None
-            app.box_tracking = True
-    _, app.box_tracking = imgui.checkbox("Auto-align hands to box", app.box_tracking)
-    if app.gap_locked:
-        imgui.text(f"Squeeze locked at {targets['squeeze_gap']*1000:.1f}mm")
-    else:
-        _, targets["squeeze_gap"] = _slider_float_clamped(
-            "Squeeze gap", targets["squeeze_gap"], -0.015, 0.05, "%.3f m")
-    _, app.box_squeeze_kp_scale = _slider_float_clamped(
-        "Arm kp scale while grabbing", app.box_squeeze_kp_scale, 0.05, 1.0, "%.2f")
-
-
 def _draw_lift_utils_panel(app, targets):
     if not _section("Lift / Utilities"):
         return
     _, targets["lift"] = _slider_float_clamped(
         "Lift", targets["lift"], app.lift_range[0], app.lift_range[1], "%.3f m")
-    if imgui.button(f"Reset {app.scenario.title()} (R)"):
+    if imgui.button("Reset Can (R)"):
         app.reset_active_object()
     imgui.same_line()
     if imgui.button("Contact Viz (G)"):
@@ -366,11 +335,7 @@ def draw_panel(app):
     _draw_arm_panel(app, targets, "r")
     _draw_arm_panel(app, targets, "l")
 
-    if app.scenario == "can":
-        _draw_can_grasp_panel(app, targets)
-    else:
-        _draw_box_grasp_panel(app, targets)
-
+    _draw_can_grasp_panel(app, targets)
     _draw_lift_utils_panel(app, targets)
     _draw_joint_monitor(app, data)
     imgui.end()

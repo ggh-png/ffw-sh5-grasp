@@ -26,7 +26,7 @@
   IK, 토크 제어, grasp synergy, 렌더링까지 전부 직접 구현한다.
 
 Phase 0–6 전체 완료. `tests/test_phase_{0,1,2,3,4,5,6}.py`는 캔 pick 회귀, 실제
-바퀴 주행, 작은 상자 양손 squeeze/lift/drive, Cyclo Control식 bimanual MoveL UI와 수동 XYZ/RPY IK target 제어를 headless로
+바퀴 주행, Cyclo Control식 bimanual MoveL UI와 수동 XYZ/RPY IK target 제어를 headless로
 검증한다.
 
 - **[프로젝트 개요](overview.md)** — 왜 이런 구조로 만들었는가. 앞서 실패한 두 번의
@@ -45,10 +45,10 @@ Phase 0–6 전체 완료. `tests/test_phase_{0,1,2,3,4,5,6}.py`는 캔 pick 회
 - 바퀴-바닥 접촉 강성 튜닝(로봇 실제 무게의 28배였던 반발력 문제 해결)
 - 팔/손가락 미러링 버그 다수 수정, 캔에 실제 STL 형상 위 라벨 텍스처 적용
 
-### (Session 11+, 2026-07) Phase 6 — 작은 상자 양손 squeeze lift
-- `can`/`box` 실행 시나리오 분리, 작은 상자(20×20×28cm) 추가
-- 양손이 상자 양옆을 눌러 마찰로 들고, bimanual constraint로 상대 pose 유지
-- EE 제어는 Cyclo Control 패널의 `MoveL`/`Bimanual MoveL` marker target과 숫자 X/Y/Z + Roll/Pitch/Yaw 기준
+### (Session 11+, 2026-07) Phase 6 — Cyclo marker 기반 양팔 제어
+- 텔레옵 앱을 can workflow 하나로 정리하고, box 시나리오 전환 기능 제거
+- `MoveL`에서는 오른손/왼손 target marker를 독립 제어
+- `Bimanual MoveL` capture 후에는 virtual object marker의 X/Y/Z 화살표와 Roll/Pitch/Yaw 링으로 양손 target을 함께 제어
 
 ### (Session 6-7) Phase 4 — 전신 조립 + 텔레옵 UI
 - 양팔/양손/헤드/리프트 전체 조립, 단일 네이티브 창(GLFW+ImGui) 텔레옵

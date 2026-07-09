@@ -3,7 +3,7 @@
 ## 이 파일이 하는 일
 
 공개 진입점은 `draw_panel(app)` 하나다. 내부 구현은 상태 요약, Cyclo/marker,
-오른팔/왼팔, 시나리오별 grasp, 리프트/유틸, 관절 모니터 helper로 나뉜다.
+오른팔/왼팔, can grasp, 리프트/유틸, 관절 모니터 helper로 나뉜다.
 `teleop_app.py`의 `TeleopApp` 인스턴스 전체(`app`)를 인자로 받아, 슬라이더/버튼
 조작 결과를 `app`의 상태에 곧바로 되써넣는다.
 
@@ -25,8 +25,8 @@ whatever `app` object `draw_panel` is called with.
 `teleop_app`을 import하지 않고 **duck typing**으로 `app.xxx` 속성에 접근한다 —
 그래서 `teleop_app.py`가 `import teleop_ui`를 해도 순환 임포트가 생기지 않는다.
 
-패널 상단에는 항상 보이는 상태 요약이 있다. 현재 시나리오, Cyclo controller,
-선택된 marker, IK 오차, 베이스 pose, box 접촉/constraint 상태, 주요 키 바인딩을
+패널 상단에는 항상 보이는 상태 요약이 있다. Cyclo controller, 선택된 marker,
+IK 오차, 베이스 pose, 주요 키 바인딩을
 한 곳에 모아 라이브 조작 중 시선을 덜 움직이게 했다.
 
 그 아래에는 `Cyclo / Marker Control`이 있다. ROBOTIS Cyclo Control 문서의 marker 기반
@@ -38,8 +38,7 @@ Release 이후에는 숨긴다.
 선택된 marker에는 3D 화면 위에 transform gizmo가 뜬다. X/Y/Z 화살표를 드래그하면
 위치 target이 바뀌고, Roll/Pitch/Yaw 회전 링을 드래그하면 자세 target이 바뀐다.
 패널의 +/- 버튼은 같은 target을 작은 step으로 미세 조정하는 보조 입력이다.
-FK 모드인 손은 jog 대상에서 제외되고, box 모드에서 marker/gizmo를 쓰면
-`_note_manual_pose_edit()`가 자동 정렬을 꺼서 수동 target이 다음 프레임에 덮이지 않는다.
+FK 모드인 손은 jog 대상에서 제외된다.
 
 ```python title="src/teleop_ui.py — Cyclo marker jog"
 def _apply_cartesian_jog(app, side, pos_delta=(0.0, 0.0, 0.0), rpy_delta=(0.0, 0.0, 0.0)):
@@ -95,15 +94,14 @@ def _draw_vector_sliders(prefix, values, axes, lo, hi, fmt, on_change=None):
 모드 전환 버튼은 직접 `app.arm_mode[side]`를 바꾸지 않고 `app.set_arm_mode(side,
 ...)`를 호출한다 — 전환 순간 포즈가 튀지 않게 하는 동기화 로직(팔 목표 관절각을
 재계산하는 것)은 `teleop_app.py`의 책임이라, UI는 "전환해라"라는 의도만 전달한다.
-"Reset Can/Box"/"Toggle Contact Viz"/"Cycle Camera" 버튼도 같은 패턴이다 —
+"Reset Can"/"Toggle Contact Viz"/"Cycle Camera" 버튼도 같은 패턴이다 —
 `app.reset_active_object()`/`app.contact_viz = not app.contact_viz`/`app.cycle_camera()`처럼
 직접 상태를 바꾸거나 `TeleopApp`의 메서드를 호출할 뿐, 그 메서드 안에서 실제로
 무슨 일이 일어나는지는 이 파일이 몰라도 된다.
 
-`box` 모드에는 별도 squeeze 패널이 있다. `Auto-align XYZ targets to box`가 켜져 있으면
-양손 X/Y/Z target이 상자 양옆으로 자동 배치된다. 사용자가 jog 버튼, X/Y/Z 슬라이더,
-Roll/Pitch/Yaw 슬라이더 중 하나라도 직접 만지는 순간 `_note_manual_pose_edit()`가 이
-자동 정렬을 꺼서, 수동 target 입력이 다음 프레임에 덮어써지지 않게 한다.
+Can grasp 패널은 손별 `grasp`/`thumb` synergy와 grab/release 버튼만 다룬다.
+양팔 동시 pose 제어는 별도 squeeze 패널이 아니라 `Bimanual MoveL` capture 후
+`virtual_object_marker`와 X/Y/Z + Roll/Pitch/Yaw target으로 처리한다.
 
 IK 오차 표시도 모드에 따라 달라진다:
 

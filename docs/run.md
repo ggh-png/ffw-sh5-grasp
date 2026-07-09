@@ -16,15 +16,13 @@ for p in 0 1 2 3 4 5 6; do python3 tests/test_phase_$p.py; done
 
 ```bash
 python3 src/teleop_app.py
-# 또는
-python3 src/teleop_app.py box
 ```
 
 - **마우스**(3D 뷰 위): 좌클릭 드래그 = 궤도 회전, 우클릭 드래그 = 팬, 휠 = 줌.
-- 실행 인자 `can`/`box` 또는 `--scenario can|box`로 시작 시나리오를 고른다.
+- 텔레옵 앱은 can workflow 하나만 사용하며, 별도의 시나리오 인자는 받지 않는다.
 - **Up/Down** = 베이스 전진/후진, **Left/Right** = 제자리 yaw 회전, **[/]**
   = 좌우 스트레이프 (전부 실제 바퀴-지면 마찰로 구동), **Q/E** = 리프트 하강/상승.
-- **R** = 현재 시나리오 물체 리셋, **G** = contact force/point 시각화 토글,
+- **R** = 캔 리셋, **G** = contact force/point 시각화 토글,
   **C** = 카메라 프리셋 전환.
 - 양손 EE 포즈(X/Y/Z + Roll/Pitch/Yaw)는 `Cyclo Control` 패널에서 조작한다.
   `MoveL`에서는 `right_goal_marker`/`left_goal_marker`가 각 손 목표이고,
@@ -34,8 +32,8 @@ python3 src/teleop_app.py box
   링을 드래그하면 자세가 바뀐다. 패널의 +/- 버튼과 숫자 슬라이더는 같은 target을
   보조적으로 미세 조정하는 용도다.
 - RPY는 각 손의 홈 포즈 기준 로컬 회전이라 0,0,0이 자연스러운 기본 자세다.
-- `can` 모드는 손별 grasp/thumb 시너지, `box` 모드는 양손 squeeze gap과 box grab/
-  bimanual constraint HUD를 사용한다.
+- Can grasp는 손별 grasp/thumb 시너지로 조작한다. 양팔 동시 이동은
+  `Bimanual MoveL` capture 후 `virtual_object_marker`를 통해 제어한다.
 
 ## 이 문서 사이트를 로컬에서 미리보기
 
