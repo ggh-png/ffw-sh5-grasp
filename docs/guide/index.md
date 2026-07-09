@@ -16,6 +16,8 @@ ROBOTIS FFW-SH5 로봇이 **kinematic 치팅 없이, 오직 접촉력(contact fo
 graph LR
     UI["teleop_ui.py<br/>슬라이더 패널"] -->|app.targets 갱신| APP
     APP["teleop_app.py<br/>TeleopApp — 메인 루프"] -->|draw_panel self| UI
+    APP -->|"target 변환/capture"| TARGET["teleop_targets.py<br/>pose/Cyclo target"]
+    TARGET -->|"world target_pos/quat"| APP
     APP -->|"q_init, target_pos/quat"| IK["ik.py<br/>InverseKinematics"]
     IK -->|q_des| APP
     APP -->|"q_des"| ARM["arm_control.py<br/>ArmTorqueController"]
@@ -25,6 +27,7 @@ graph LR
     APP -->|"drive_keys, yaw"| BASE["base_teleop.py<br/>SwerveDrive"]
     BASE -->|"조향각/구동속도"| PHYS
     APP -->|"render_scene self"| RENDER["teleop_render.py<br/>렌더링/카메라/gizmo"]
+    RENDER -->|"gizmo world pose"| TARGET
 ```
 
 `teleop_app.py`가 유일하게 나머지 주요 파일 전부를 import하는 "허브"다. 나머지
@@ -42,10 +45,11 @@ graph LR
 4. [`src/arm_control.py`](arm_control.md) — PD + 중력/코리올리 feedforward 토크 제어
 5. [`src/base_teleop.py`](base_teleop.md) — 조작감 스무딩 + ROBOTIS식 스워브 제어
 6. [`src/teleop_app.py`](teleop_app.md) — 제어/렌더/UI 파일이 실제로 합쳐지는 메인 루프
-7. [`src/teleop_ui.py`](teleop_ui.md) — ImGui 슬라이더 패널
-8. [`src/teleop_render.py`](teleop_render.md) — MuJoCo 렌더링 + 카메라 + 3D gizmo
-9. [흔한 함정 총정리](pitfalls.md) — 이 프로젝트가 반복해서 배운 것들
-10. [API 치트시트](cheatsheet.md) — 실제로 쓴 MuJoCo API/MJCF 요소 전부 + 더 읽어볼 곳
+7. [`src/teleop_targets.py`](teleop_targets.md) — 손 목표 pose 변환 + Cyclo-style bimanual target
+8. [`src/teleop_ui.py`](teleop_ui.md) — ImGui 슬라이더 패널
+9. [`src/teleop_render.py`](teleop_render.md) — MuJoCo 렌더링 + 카메라 + 3D gizmo
+10. [흔한 함정 총정리](pitfalls.md) — 이 프로젝트가 반복해서 배운 것들
+11. [API 치트시트](cheatsheet.md) — 실제로 쓴 MuJoCo API/MJCF 요소 전부 + 더 읽어볼 곳
 
 !!! tip "이 문서 전체에서 가장 자주 반복되는 진단 원칙"
     파라미터를 몇 배씩 바꿔도 결과가 거의 그대로면, 그 파라미터는 원인이 아니다.

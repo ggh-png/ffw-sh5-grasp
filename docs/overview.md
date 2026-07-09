@@ -161,6 +161,7 @@ ffw-sh5-grasp/
 │   ├── grasp.py           # synergy 스칼라 → 관절 매핑
 │   ├── base_teleop.py     # ROBOTIS식 SwerveDrive 바퀴 제어
 │   ├── teleop_app.py      # 단일 네이티브 창 메인 루프
+│   ├── teleop_targets.py  # 손 목표 pose 변환 + Cyclo-style bimanual target
 │   ├── teleop_ui.py       # ImGui 슬라이더 패널
 │   └── teleop_render.py   # MuJoCo 렌더링 + 카메라 + ImGuizmo
 ├── tests/             # test_phase_0.py … test_phase_6.py

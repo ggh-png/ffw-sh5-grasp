@@ -5,8 +5,8 @@
 `TeleopApp` 클래스 하나가 이 프로젝트 전체를 하나의 실행 가능한 앱으로 묶는다.
 GLFW 창 하나를 띄우고, 그 위에 MuJoCo의 저수준 렌더 API로 3D 장면을, Dear ImGui로
 슬라이더 패널을 함께 그리면서, 매 프레임 (1) 입력 처리 (2) IK/FK (3) 물리 스텝
-(4) 렌더링을 순서대로 실행한다. 다른 여섯 파일(`ik`, `arm_control`, `grasp`,
-`base_teleop`, `teleop_ui`, `teleop_render`)은 전부 이 파일에서 import되어 조립된다 — **이 파일을
+(4) 렌더링을 순서대로 실행한다. 다른 일곱 파일(`ik`, `arm_control`, `grasp`,
+`base_teleop`, `teleop_targets`, `teleop_ui`, `teleop_render`)은 전부 이 파일에서 import되어 조립된다 — **이 파일을
 읽으면 나머지 파일들이 정확히 언제, 어떤 순서로, 어떤 데이터를 주고받으며
 호출되는지 전부 드러난다.**
 
@@ -87,6 +87,9 @@ IK는 프레임당 한 번만 풀지만, `arm_control.apply`/`grasp.apply_grasp`
 target에 맞추고, ImGuizmo drag 결과는 `_set_gizmo_target_world_pose()`에서 다시
 home-relative XYZ offset과 home-relative RPY target으로 변환된다.
 
+이 좌표계 변환과 `Bimanual MoveL` capture/apply 구현은 `teleop_targets.py`로 분리되어
+있고, `TeleopApp` 안에는 기존 테스트/렌더 호출을 위한 얇은 wrapper만 남아 있다.
+
 ### IK ↔ FK 모드 전환 — `set_arm_mode`
 
 리프트를 움직이는 동안 IK가 매 프레임에만 어깨 높이를 다시 읽어 들이는데 리프트는
@@ -151,6 +154,7 @@ teleop_app.py
 ├── import arm_control   → ArmTorqueController 인스턴스 2개 (손당 하나)
 ├── import grasp         → apply_grasp()를 물리 서브스텝마다 양손 호출
 ├── import base_teleop   → SwerveDrive 인스턴스 1개, 프레임당 한 번 호출
+├── import teleop_targets → home-relative target 변환 + Bimanual MoveL capture/apply
 ├── import teleop_ui     → draw_panel(self)를 프레임당 한 번 호출 (app 자신을 넘김)
 └── import teleop_render → GLFW/ImGui/MuJoCo 렌더링 + ImGuizmo 조작
 ```
@@ -166,10 +170,13 @@ teleop_app.py
   결과(`wheel_cmds`)만 서브스텝 루프 안에서 반복 사용된다. 이때 실제 조향 qpos와
   바퀴 qvel을 같이 넘겨 ROBOTIS식 180도 반전 FSM과 alignment gating이 물리 상태
   기준으로 동작하게 한다.
+- **teleop_targets.py**는 손 target 좌표계 변환과 Cyclo-style `Bimanual MoveL` 상태
+  전이를 담당한다. UI/렌더/테스트 호환을 위해 `TeleopApp`에는 `_target_world_pose()`
+  같은 wrapper가 남아 있지만 실제 계산은 이 모듈에 있다.
 - **teleop_ui.py**는 유일하게 "값을 읽는 쪽"이 아니라 "`self`(=app) 객체 자체를
   받아 그 상태를 직접 읽고 쓰는" 모듈이다 — 자세한 이유는 `teleop_ui.md` 참고.
 - **teleop_render.py**는 창 생성, 카메라 마우스, ImGuizmo, scene render, frame pacing을
   담당한다. 이 파일도 `teleop_app`을 import하지 않고 `app` 객체를 duck typing으로 받는다.
-- 물리 상태(`data`)에 대한 예외적 직접 쓰기는 `reset_active_object()`와 시나리오 전환의
-  물체 초기 배치/파킹뿐이다 — 자유물체의 리셋/초기 배치로, 로봇 관절에 대한 kinematic
-  치팅이 아니다.
+- 물리 상태(`data`)에 대한 예외적 직접 쓰기는 `reset_active_object()`의 캔 리셋과
+  legacy box asset 비활성화뿐이다 — 자유물체의 리셋/초기 배치로, 로봇 관절에 대한
+  kinematic 치팅이 아니다.

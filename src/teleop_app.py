@@ -70,8 +70,9 @@ buttons in the on-screen panel.
 순서대로 구성하고, `run()`의 메인 루프는 매 프레임 아래 단계를 호출한다:
 마우스 카메라 → 엣지 트리거 키(R/G/C) → 연속 입력 키(주행/리프트) → UI 패널 →
 물리 스텝(IK+제어+mj_step) → 렌더링 → 프레임 타이밍. 위젯 배치는
-`src/teleop_ui.py`, GLFW/ImGui/MuJoCo 렌더링과 ImGuizmo 처리는 `src/teleop_render.py`
-로 분리했다. 이 파일은 둘을 호출해서 앱 상태와 물리 루프를 이어주는 허브 역할만 한다.
+`src/teleop_ui.py`, target pose/Cyclo-style bimanual 변환은 `src/teleop_targets.py`,
+GLFW/ImGui/MuJoCo 렌더링과 ImGuizmo 처리는 `src/teleop_render.py`로 분리했다. 이
+파일은 이들을 호출해서 앱 상태와 물리 루프를 이어주는 허브 역할만 한다.
 """
 
 import argparse
@@ -96,6 +97,7 @@ import base_teleop  # noqa: E402
 import grasp  # noqa: E402
 import ik  # noqa: E402
 import teleop_render  # noqa: E402
+import teleop_targets  # noqa: E402
 import teleop_ui  # noqa: E402
 
 # 양팔 관절 이름 목록 (IK solver / 토크 제어기에 그대로 넘겨진다).
@@ -159,26 +161,13 @@ STUCK_MAX_ITER = 4
 
 
 def rpy_deg_to_quat(rpy_deg):
-    r, p, y = (math.radians(v) for v in rpy_deg)
-    cr, sr = math.cos(r / 2), math.sin(r / 2)
-    cp, sp = math.cos(p / 2), math.sin(p / 2)
-    cy, sy = math.cos(y / 2), math.sin(y / 2)
-    return np.array([
-        cr * cp * cy + sr * sp * sy,
-        sr * cp * cy - cr * sp * sy,
-        cr * sp * cy + sr * cp * sy,
-        cr * cp * sy - sr * sp * cy,
-    ])
+    return teleop_targets.rpy_deg_to_quat(rpy_deg)
 
 
 def quat_to_rpy_deg(q):
     """rpy_deg_to_quat의 역변환 -- FK 모드에서 IK 모드로 되돌아갈 때, 현재 실제
     방향(쿼터니언)을 RPY 슬라이더 값(도)으로 되짚어 오기 위해 필요하다."""
-    w, x, y, z = q
-    roll = math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y))
-    pitch = math.asin(max(-1.0, min(1.0, 2 * (w * y - z * x))))
-    yaw = math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
-    return [math.degrees(roll), math.degrees(pitch), math.degrees(yaw)]
+    return teleop_targets.quat_to_rpy_deg(q)
 
 
 def _reset_can_random(model, data, rng):
@@ -296,16 +285,8 @@ class TeleopApp:
         self.can_jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "can_free")
         self.can_geom_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "can_geom")
         self._disable_legacy_box_asset()
-        # Reference orientation each hand's RPY sliders are relative to (see module docstring's
-        # "RPY control" note): the home-pose site orientation, fixed for the whole session.
-        self.home_quat_r = np.zeros(4)
-        mujoco.mju_mat2Quat(self.home_quat_r, data.site_xmat[self.site_r])
-        self.home_quat_l = np.zeros(4)
-        mujoco.mju_mat2Quat(self.home_quat_l, data.site_xmat[self.site_l])
-        self.home_pos_local = {
-            "r": self._world_to_base_pos(data.site_xpos[self.site_r]),
-            "l": self._world_to_base_pos(data.site_xpos[self.site_l]),
-        }
+        # Reference pose each hand's XYZ/RPY sliders are relative to (see module docstring).
+        teleop_targets.set_home_references(self)
 
         # 슬라이더가 직접 쓰는 "목표값" 딕셔너리 -- 물리 루프는 이 값만 읽고, 이 값을
         # 쓰는 건 GUI 슬라이더뿐이다(단방향 데이터 흐름, 모듈 docstring 참고).
@@ -463,156 +444,74 @@ class TeleopApp:
         self.arm_mode[side] = mode
 
     def _base_pose(self):
-        base_x = self.data.qpos[self.base_x_qadr]
-        base_y = self.data.qpos[self.base_y_qadr]
-        base_yaw = self.data.qpos[self.base_yaw_qadr]
-        cy, sy = math.cos(base_yaw), math.sin(base_yaw)
-        base_quat = np.array([math.cos(base_yaw / 2), 0.0, 0.0, math.sin(base_yaw / 2)])
-        return base_x, base_y, base_yaw, cy, sy, base_quat
+        return teleop_targets.base_pose(self)
 
     def _local_to_world_pos(self, p_local):
-        base_x, base_y, _base_yaw, cy, sy, _base_quat = self._base_pose()
-        x, y, z = p_local
-        return np.array([base_x + cy * x - sy * y, base_y + sy * x + cy * y, z])
+        return teleop_targets.local_to_world_pos(self, p_local)
 
     def _world_to_base_pos(self, p_world):
-        base_x, base_y, _base_yaw, cy, sy, _base_quat = self._base_pose()
-        dx, dy = p_world[0] - base_x, p_world[1] - base_y
-        return np.array([cy * dx + sy * dy, -sy * dx + cy * dy, p_world[2]])
+        return teleop_targets.world_to_base_pos(self, p_world)
 
     def _target_pos_to_base_pos(self, side, pos_target):
-        return self.home_pos_local[side] + np.array(pos_target)
+        return teleop_targets.target_pos_to_base_pos(self, side, pos_target)
 
     def _target_pos_to_world_pos(self, side, pos_target):
-        return self._local_to_world_pos(self._target_pos_to_base_pos(side, pos_target))
+        return teleop_targets.target_pos_to_world_pos(self, side, pos_target)
 
     def _world_to_target_pos(self, side, world_pos):
-        return (self._world_to_base_pos(world_pos) - self.home_pos_local[side]).tolist()
+        return teleop_targets.world_to_target_pos(self, side, world_pos)
 
     def _target_world_quat(self, side):
-        *_unused, base_quat = self._base_pose()
-        home_quat = self.home_quat_r if side == "r" else self.home_quat_l
-        quat = np.zeros(4)
-        mujoco.mju_mulQuat(quat, home_quat, rpy_deg_to_quat(self.targets[f"rpy_{side}"]))
-        mujoco.mju_mulQuat(quat, base_quat, quat)
-        return quat
+        return teleop_targets.target_world_quat(self, side)
 
     def _world_quat_to_target_rpy(self, side, world_quat):
-        home_quat = self.home_quat_r if side == "r" else self.home_quat_l
-        *_unused, base_quat = self._base_pose()
-        base_quat_inv, home_quat_inv = np.zeros(4), np.zeros(4)
-        mujoco.mju_negQuat(base_quat_inv, base_quat)
-        mujoco.mju_negQuat(home_quat_inv, home_quat)
-        tmp = np.zeros(4)
-        mujoco.mju_mulQuat(tmp, base_quat_inv, world_quat)
-        rpy_delta_quat = np.zeros(4)
-        mujoco.mju_mulQuat(rpy_delta_quat, home_quat_inv, tmp)
-        return quat_to_rpy_deg(rpy_delta_quat)
+        return teleop_targets.world_quat_to_target_rpy(self, side, world_quat)
 
     def _world_quat_to_virtual_rpy(self, world_quat):
-        *_unused, base_quat = self._base_pose()
-        base_quat_inv = np.zeros(4)
-        mujoco.mju_negQuat(base_quat_inv, base_quat)
-        rpy_delta_quat = np.zeros(4)
-        mujoco.mju_mulQuat(rpy_delta_quat, base_quat_inv, world_quat)
-        return quat_to_rpy_deg(rpy_delta_quat)
+        return teleop_targets.world_quat_to_virtual_rpy(self, world_quat)
 
     def _quat_to_mat(self, quat):
-        mat = np.zeros(9)
-        mujoco.mju_quat2Mat(mat, quat)
-        return mat.reshape(3, 3)
+        return teleop_targets.quat_to_mat(quat)
 
     def _mat_to_quat(self, mat):
-        quat = np.zeros(4)
-        mujoco.mju_mat2Quat(quat, mat.reshape(9))
-        return quat
+        return teleop_targets.mat_to_quat(mat)
 
     def _target_world_pose(self, side):
-        return self._target_pos_to_world_pos(side, self.targets[f"pos_{side}"]), self._target_world_quat(side)
+        return teleop_targets.target_world_pose(self, side)
 
     def _virtual_object_world_pose(self):
-        pos = self._local_to_world_pos(self.targets["virtual_object_pos"])
-        *_unused, base_quat = self._base_pose()
-        quat = np.zeros(4)
-        mujoco.mju_mulQuat(quat, base_quat, rpy_deg_to_quat(self.targets["virtual_object_rpy"]))
-        return pos, quat
+        return teleop_targets.virtual_object_world_pose(self)
 
     def sync_virtual_object_to_hand_targets(self):
-        pos_r, _quat_r = self._target_world_pose("r")
-        pos_l, _quat_l = self._target_world_pose("l")
-        self.targets["virtual_object_pos"] = self._world_to_base_pos(0.5 * (pos_r + pos_l)).tolist()
-        self.targets["virtual_object_rpy"] = [0.0, 0.0, 0.0]
+        teleop_targets.sync_virtual_object_to_hand_targets(self)
 
     def capture_grasp(self):
         """Cyclo-style `/capture_grasp true`: record both hand target poses relative to
         the virtual object marker. After this, `virtual_object_pos/rpy` becomes the command
         source and the two hand MoveL targets are derived from the captured offsets."""
-        self.sync_virtual_object_to_hand_targets()
-        obj_pos, obj_quat = self._virtual_object_world_pose()
-        obj_R = self._quat_to_mat(obj_quat)
-        offsets = {}
-        for side in ("r", "l"):
-            hand_pos, hand_quat = self._target_world_pose(side)
-            offsets[side] = {
-                "pos": obj_R.T @ (hand_pos - obj_pos),
-                "mat": obj_R.T @ self._quat_to_mat(hand_quat),
-            }
-        self.cyclo_capture_offsets = offsets
-        self.cyclo_grasp_captured = True
-        self.cyclo_controller = "bimanual_movel"
-        self.cyclo_status = "captured virtual object"
+        teleop_targets.capture_grasp(self)
 
     def release_grasp(self):
         """Cyclo-style `/capture_grasp false`: return to independent hand MoveL targets."""
-        self.cyclo_grasp_captured = False
-        self.cyclo_capture_offsets = None
-        self.cyclo_status = "released"
+        teleop_targets.release_grasp(self)
 
     def apply_virtual_object_target(self):
-        if not self.cyclo_grasp_captured or self.cyclo_capture_offsets is None:
-            return
-        obj_pos, obj_quat = self._virtual_object_world_pose()
-        obj_R = self._quat_to_mat(obj_quat)
-        for side, offset in self.cyclo_capture_offsets.items():
-            hand_pos = obj_pos + obj_R @ offset["pos"]
-            hand_quat = self._mat_to_quat(obj_R @ offset["mat"])
-            self.targets[f"pos_{side}"] = self._world_to_target_pos(side, hand_pos)
-            self.targets[f"rpy_{side}"] = self._world_quat_to_target_rpy(side, hand_quat)
+        teleop_targets.apply_virtual_object_target(self)
 
     def _bimanual_marker_visible(self):
-        return (getattr(self, "cyclo_controller", "movel") == "bimanual_movel"
-                and bool(getattr(self, "cyclo_grasp_captured", False)))
+        return teleop_targets.bimanual_marker_visible(self)
 
     def _sync_marker_visibility(self):
-        if not hasattr(self, "virtual_object_marker_geom_id"):
-            return
-        alpha_scale = 1.0 if self._bimanual_marker_visible() else 0.0
-        geom_rgba = self.virtual_object_marker_rgba["geom"].copy()
-        site_rgba = self.virtual_object_marker_rgba["site"].copy()
-        geom_rgba[3] *= alpha_scale
-        site_rgba[3] *= alpha_scale
-        self.model.geom_rgba[self.virtual_object_marker_geom_id] = geom_rgba
-        self.model.site_rgba[self.virtual_object_marker_site_id] = site_rgba
+        teleop_targets.sync_marker_visibility(self)
 
     def _active_gizmo_target(self):
-        if self.cyclo_controller == "bimanual_movel" and self.cyclo_grasp_captured:
-            return "virtual"
-        side = getattr(self, "jog_side", "r")
-        return side if side in ("l", "r") else "r"
+        return teleop_targets.active_gizmo_target(self)
 
     def _gizmo_target_world_pose(self, target):
-        if target == "virtual":
-            return self._virtual_object_world_pose()
-        return self._target_world_pose(target)
+        return teleop_targets.gizmo_target_world_pose(self, target)
 
     def _set_gizmo_target_world_pose(self, target, world_pos, world_quat):
-        if target == "virtual":
-            self.targets["virtual_object_pos"] = self._world_to_base_pos(world_pos).tolist()
-            self.targets["virtual_object_rpy"] = self._world_quat_to_virtual_rpy(world_quat)
-            self.apply_virtual_object_target()
-        else:
-            self.targets[f"pos_{target}"] = self._world_to_target_pos(target, world_pos)
-            self.targets[f"rpy_{target}"] = self._world_quat_to_target_rpy(target, world_quat)
+        teleop_targets.set_gizmo_target_world_pose(self, target, world_pos, world_quat)
 
     def _pose_to_imguizmo_matrix(self, world_pos, world_quat):
         return teleop_render.pose_to_imguizmo_matrix(self, world_pos, world_quat)
@@ -621,17 +520,7 @@ class TeleopApp:
         return teleop_render.imguizmo_matrix_to_pose(self, matrix)
 
     def _sync_ik_mocaps_from_targets(self):
-        if not hasattr(self, "ik_target_mocap_ids"):
-            return
-        for side, mocap_id in self.ik_target_mocap_ids.items():
-            pos, quat = self._target_world_pose(side)
-            self.data.mocap_pos[mocap_id] = pos
-            self.data.mocap_quat[mocap_id] = quat
-        if hasattr(self, "virtual_object_mocap_id"):
-            pos, quat = self._virtual_object_world_pose()
-            self.data.mocap_pos[self.virtual_object_mocap_id] = pos
-            self.data.mocap_quat[self.virtual_object_mocap_id] = quat
-        self._sync_marker_visibility()
+        teleop_targets.sync_ik_mocaps_from_targets(self)
 
     # ------------------------------------------------------------------
     # 메인 루프

@@ -62,8 +62,8 @@ def _apply_cartesian_jog(app, side, pos_delta=(0.0, 0.0, 0.0), rpy_delta=(0.0, 0
 
 3D 화살표/회전 링은 `teleop_render.py`의 `draw_transform_gizmo()`가 ImGuizmo를 이용해
 MuJoCo 렌더 위 foreground draw list에 그린다. ImGuizmo가 돌려준 pose matrix는
-`_set_gizmo_target_world_pose()`에서 다시 home-relative XYZ offset과 home-relative RPY
-target으로 변환된다.
+`TeleopApp._set_gizmo_target_world_pose()` wrapper를 거쳐 `teleop_targets.py`에서 다시
+home-relative XYZ offset과 home-relative RPY target으로 변환된다.
 
 손별 패널은 `Right Arm`/`Left Arm`으로 정리되어 있고, IK/FK 모드에 따라 다른
 슬라이더 집합을 그린다:

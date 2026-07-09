@@ -85,6 +85,7 @@ ffw-sh5-grasp/
 │   ├── arm_control.py       # 팔 토크 제어 (중력/코리올리 feedforward + PD)
 │   ├── base_teleop.py       # 베이스 조작감 + ROBOTIS식 SwerveDrive(반전/정렬/속도제한)
 │   ├── teleop_app.py        # 단일 네이티브 창 물리 루프 + 키보드 텔레옵 허브
+│   ├── teleop_targets.py    # 손 목표 pose 변환 + Cyclo-style bimanual target
 │   ├── teleop_ui.py         # ImGui 슬라이더 패널
 │   └── teleop_render.py     # MuJoCo 렌더링 + 카메라 + ImGuizmo
 ├── tests/

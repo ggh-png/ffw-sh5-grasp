@@ -76,7 +76,9 @@ target pose 반영을 직접 검증하기 때문이다.
 
 - **teleop_app.py**가 유일한 사용자다. `_setup_render()`와 `run()`에서 이 모듈의
   함수들을 호출한다.
-- **teleop_ui.py**는 위젯을 그리고 target 값을 바꾼다. `teleop_render.py`는 그 target을
-  화면의 mocap marker/gizmo로 보여준다.
+- **teleop_ui.py**는 위젯을 그리고 target 값을 바꾼다. `teleop_targets.py`는 그 값을
+  world pose로 변환하거나 gizmo 결과를 다시 target 값으로 환산한다.
+- **teleop_render.py**는 변환된 target을 화면의 mocap marker/gizmo로 보여주고, gizmo
+  drag 결과를 `app._set_gizmo_target_world_pose()` wrapper로 되돌려준다.
 - 물리 계산은 하지 않는다. `mj_step`은 여전히 `teleop_app.py`의 `_step_physics()`에만
   있다.

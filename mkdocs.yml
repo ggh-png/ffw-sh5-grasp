@@ -86,6 +86,7 @@ nav:
         - src/arm_control.py: guide/arm_control.md
         - src/base_teleop.py: guide/base_teleop.md
         - src/teleop_app.py: guide/teleop_app.md
+        - src/teleop_targets.py: guide/teleop_targets.md
         - src/teleop_ui.py: guide/teleop_ui.md
         - src/teleop_render.py: guide/teleop_render.md
         - 흔한 함정 총정리: guide/pitfalls.md
