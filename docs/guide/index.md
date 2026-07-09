@@ -24,9 +24,10 @@ graph LR
     GRASP -->|"data.ctrl 손가락"| PHYS
     APP -->|"drive_keys, yaw"| BASE["base_teleop.py<br/>SwerveDrive"]
     BASE -->|"조향각/구동속도"| PHYS
+    APP -->|"render_scene self"| RENDER["teleop_render.py<br/>렌더링/카메라/gizmo"]
 ```
 
-`teleop_app.py`가 유일하게 나머지 다섯 파일 전부를 import하는 "허브"다. 나머지
+`teleop_app.py`가 유일하게 나머지 주요 파일 전부를 import하는 "허브"다. 나머지
 파일들은 서로를 알지 못한다 — `ik.py`는 `arm_control.py`가 존재하는지 모르고,
 `grasp.py`는 `base_teleop.py`가 뭘 하는지 모른다. 전부 `teleop_app.py`의 물리
 루프 안에서만 만난다. 자세한 호출 시점/순서는 [teleop_app.py](teleop_app.md)
@@ -40,10 +41,11 @@ graph LR
 3. [`src/ik.py`](ik.md) — 6DOF damped least squares IK
 4. [`src/arm_control.py`](arm_control.md) — PD + 중력/코리올리 feedforward 토크 제어
 5. [`src/base_teleop.py`](base_teleop.md) — 조작감 스무딩 + ROBOTIS식 스워브 제어
-6. [`src/teleop_app.py`](teleop_app.md) — 위 네 파일이 실제로 합쳐지는 메인 루프
+6. [`src/teleop_app.py`](teleop_app.md) — 제어/렌더/UI 파일이 실제로 합쳐지는 메인 루프
 7. [`src/teleop_ui.py`](teleop_ui.md) — ImGui 슬라이더 패널
-8. [흔한 함정 총정리](pitfalls.md) — 이 프로젝트가 반복해서 배운 것들
-9. [API 치트시트](cheatsheet.md) — 실제로 쓴 MuJoCo API/MJCF 요소 전부 + 더 읽어볼 곳
+8. [`src/teleop_render.py`](teleop_render.md) — MuJoCo 렌더링 + 카메라 + 3D gizmo
+9. [흔한 함정 총정리](pitfalls.md) — 이 프로젝트가 반복해서 배운 것들
+10. [API 치트시트](cheatsheet.md) — 실제로 쓴 MuJoCo API/MJCF 요소 전부 + 더 읽어볼 곳
 
 !!! tip "이 문서 전체에서 가장 자주 반복되는 진단 원칙"
     파라미터를 몇 배씩 바꿔도 결과가 거의 그대로면, 그 파라미터는 원인이 아니다.

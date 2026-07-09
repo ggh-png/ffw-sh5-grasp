@@ -64,18 +64,13 @@ G = toggle contact force/point
 visualization, C = cycle camera preset (overview / right-hand close-up). R/G/C also have
 buttons in the on-screen panel.
 
-**코드 구조 (가독성 정리)**: 이 파일의 실행 로직은 전부 `TeleopApp` 클래스 하나에
-모여 있다. `__init__`이 (1) 모델/솔버/제어기 (2) 창/렌더링 (3) 루프 타이밍 상태를
-순서대로 구성하고, `run()`의 메인 루프는 매 프레임 아래 메서드들을 정확히 이 순서로
-호출한다: 마우스 카메라 → 엣지 트리거 키(R/G/C) → 연속 입력 키(주행/리프트) → UI
-패널 → 물리 스텝(IK+제어+mj_step) → 렌더링 → 프레임 타이밍. 각 메서드는 딱 그
-단계만 담당하고, 상태는 전부 self.* 속성으로 공유한다 -- 원래 하나의 거대한 main()
-함수 안에서 지역 변수로 얽혀 있던 것을 단계별로 나눈 것뿐, 동작은 전혀 바뀌지 않았다.
-ImGui 슬라이더 패널 자체(위젯 배치)는 물리/렌더링과 무관하게 독립적으로 바뀔 일이
-많아 `src/teleop_ui.py`로 따로 뺐다 -- 슬라이더를 추가/수정할 땐 그 파일만 보면 된다.
-그 밖의(더 안 쪼갠) 부분들은 실제로 나눠봐도 서로 상태를 너무 많이 공유하거나
-(물리 스텝 vs 렌더링), 주석이 바로 옆 코드에 있어야 의미가 있어서(튜닝 상수들)
-파일을 나누는 게 오히려 왔다갔다하며 읽게 만들 것 같아 그대로 뒀다.
+**코드 구조 (가독성 정리)**: 이 파일의 핵심 실행 로직은 `TeleopApp` 클래스 하나에
+모여 있다. `__init__`이 (1) 모델/솔버/제어기 (2) 렌더 컨텍스트 (3) 루프 타이밍 상태를
+순서대로 구성하고, `run()`의 메인 루프는 매 프레임 아래 단계를 호출한다:
+마우스 카메라 → 엣지 트리거 키(R/G/C) → 연속 입력 키(주행/리프트) → UI 패널 →
+물리 스텝(IK+제어+mj_step) → 렌더링 → 프레임 타이밍. 위젯 배치는
+`src/teleop_ui.py`, GLFW/ImGui/MuJoCo 렌더링과 ImGuizmo 처리는 `src/teleop_render.py`
+로 분리했다. 이 파일은 둘을 호출해서 앱 상태와 물리 루프를 이어주는 허브 역할만 한다.
 """
 
 import argparse
@@ -88,9 +83,6 @@ import glfw
 # Must precede glfw.init() -- see module docstring.
 glfw.init_hint(glfw.PLATFORM, glfw.PLATFORM_X11)
 
-from imgui_bundle import imgui
-from imgui_bundle import imguizmo
-from imgui_bundle.python_backends.glfw_backend import GlfwRenderer
 import mujoco
 import numpy as np
 
@@ -103,6 +95,7 @@ import base_teleop  # noqa: E402
 import bimanual_constraint  # noqa: E402
 import grasp  # noqa: E402
 import ik  # noqa: E402
+import teleop_render  # noqa: E402
 import teleop_ui  # noqa: E402
 
 # 양팔 관절 이름 목록 (IK solver / 토크 제어기에 그대로 넘겨진다).
@@ -191,19 +184,6 @@ def quat_to_rpy_deg(q):
     pitch = math.asin(max(-1.0, min(1.0, 2 * (w * y - z * x))))
     yaw = math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
     return [math.degrees(roll), math.degrees(pitch), math.degrees(yaw)]
-
-
-def _set_camera_preset(cam, preset):
-    if preset == 0:  # overview
-        cam.lookat[:] = [0.3, 0.0, 1.0]
-        cam.distance = 2.2
-        cam.azimuth = 120
-        cam.elevation = -20
-    else:  # right-hand close-up
-        cam.lookat[:] = [0.5055, 0.0, 0.85]
-        cam.distance = 0.5
-        cam.azimuth = 90
-        cam.elevation = -15
 
 
 def _reset_can_random(model, data, rng):
@@ -391,28 +371,7 @@ class TeleopApp:
     def _setup_render(self):
         """창/렌더링 초기화: GLFW 창 하나 + 그 위에 ImGui, MuJoCo 저수준 렌더 API로
         3D 장면을 직접 그린다(모듈 docstring의 "Rendering note" 참고)."""
-        if not glfw.init():
-            raise RuntimeError("glfw.init() failed")
-        window = glfw.create_window(WINDOW_W, WINDOW_H, "FFW-SH5 Teleop", None, None)
-        if not window:
-            glfw.terminate()
-            raise RuntimeError("glfw.create_window() failed")
-        glfw.make_context_current(window)
-        glfw.swap_interval(0)
-        self.window = window
-        self.window_h = WINDOW_H
-
-        imgui.create_context()
-        self.impl = GlfwRenderer(window)
-
-        self.scene = mujoco.MjvScene(self.model, maxgeom=10000)
-        self.cam = mujoco.MjvCamera()
-        mujoco.mjv_defaultCamera(self.cam)
-        _set_camera_preset(self.cam, 0)
-        self.opt = mujoco.MjvOption()
-        mujoco.mjv_defaultOption(self.opt)
-        self.pert = mujoco.MjvPerturb()
-        self.context = mujoco.MjrContext(self.model, mujoco.mjtFontScale.mjFONTSCALE_150)
+        teleop_render.setup_render(self, WINDOW_W, WINDOW_H)
 
     def _setup_loop_state(self):
         """메인 루프에서만 쓰는 상태(IK 웜스타트 값, 타이밍, 입력 헬퍼)."""
@@ -522,7 +481,7 @@ class TeleopApp:
 
     def cycle_camera(self):
         self.camera_preset = 1 - self.camera_preset
-        _set_camera_preset(self.cam, self.camera_preset)
+        teleop_render.set_camera_preset(self.cam, self.camera_preset)
 
     def set_arm_mode(self, side, mode):
         """이 손을 "ik"(EE 포즈 슬라이더) <-> "fk"(관절각 슬라이더)로 전환한다.
@@ -733,78 +692,10 @@ class TeleopApp:
             self.box_tracking = False
 
     def _pose_to_imguizmo_matrix(self, world_pos, world_quat):
-        mat = np.eye(4)
-        mat[:3, :3] = self._quat_to_mat(world_quat)
-        mat[:3, 3] = world_pos
-        return imguizmo.im_guizmo.Matrix16(mat.astype(float).reshape(16, order="F"))
+        return teleop_render.pose_to_imguizmo_matrix(self, world_pos, world_quat)
 
     def _imguizmo_matrix_to_pose(self, matrix):
-        mat = np.array(matrix.values, dtype=float).reshape((4, 4), order="F")
-        world_pos = mat[:3, 3].copy()
-        world_quat = self._mat_to_quat(mat[:3, :3])
-        return world_pos, world_quat
-
-    def _imguizmo_camera_matrices(self, viewport):
-        glcam = self.scene.camera[0]
-        forward = np.array(glcam.forward, dtype=float)
-        forward /= max(np.linalg.norm(forward), 1e-9)
-        up = np.array(glcam.up, dtype=float)
-        up /= max(np.linalg.norm(up), 1e-9)
-        right = np.cross(forward, up)
-        right /= max(np.linalg.norm(right), 1e-9)
-        up = np.cross(right, forward)
-        pos = np.array(glcam.pos, dtype=float)
-
-        view = np.eye(4)
-        view[0, :3] = right
-        view[1, :3] = up
-        view[2, :3] = -forward
-        view[0, 3] = -np.dot(right, pos)
-        view[1, 3] = -np.dot(up, pos)
-        view[2, 3] = np.dot(forward, pos)
-
-        near = float(glcam.frustum_near)
-        far = float(glcam.frustum_far)
-        top = float(glcam.frustum_top)
-        bottom = float(glcam.frustum_bottom)
-        aspect = viewport.width / max(1.0, float(viewport.height))
-        right_f = top * aspect
-        left_f = bottom * aspect
-        proj = np.zeros((4, 4))
-        proj[0, 0] = 2.0 * near / (right_f - left_f)
-        proj[0, 2] = (right_f + left_f) / (right_f - left_f)
-        proj[1, 1] = 2.0 * near / (top - bottom)
-        proj[1, 2] = (top + bottom) / (top - bottom)
-        proj[2, 2] = -(far + near) / (far - near)
-        proj[2, 3] = -(2.0 * far * near) / (far - near)
-        proj[3, 2] = -1.0
-
-        return (imguizmo.im_guizmo.Matrix16(view.reshape(16, order="F")),
-                imguizmo.im_guizmo.Matrix16(proj.reshape(16, order="F")))
-
-    def _draw_transform_gizmo(self, viewport):
-        target = self._active_gizmo_target()
-        world_pos, world_quat = self._gizmo_target_world_pose(target)
-        object_matrix = self._pose_to_imguizmo_matrix(world_pos, world_quat)
-        view_matrix, proj_matrix = self._imguizmo_camera_matrices(viewport)
-
-        gizmo = imguizmo.im_guizmo
-        gizmo.begin_frame()
-        gizmo.set_drawlist(imgui.get_foreground_draw_list())
-        gizmo.set_rect(float(viewport.left), float(viewport.bottom),
-                       float(viewport.width), float(viewport.height))
-        gizmo.set_orthographic(False)
-        gizmo.set_gizmo_size_clip_space(0.18)
-        changed_translate = gizmo.manipulate(
-            view_matrix, proj_matrix, gizmo.OPERATION.translate, gizmo.MODE.world,
-            object_matrix)
-        changed_rotate = gizmo.manipulate(
-            view_matrix, proj_matrix, gizmo.OPERATION.rotate, gizmo.MODE.local,
-            object_matrix)
-        self.gizmo_mouse_active = bool(gizmo.is_using_any() or gizmo.is_over())
-        if changed_translate or changed_rotate:
-            new_pos, new_quat = self._imguizmo_matrix_to_pose(object_matrix)
-            self._set_gizmo_target_world_pose(target, new_pos, new_quat)
+        return teleop_render.imguizmo_matrix_to_pose(self, matrix)
 
     def _sync_ik_mocaps_from_targets(self):
         if not hasattr(self, "ik_target_mocap_ids"):
@@ -827,50 +718,17 @@ class TeleopApp:
         # 스레드/한 루프 안에서 순서대로 실행한다.
         while not glfw.window_should_close(self.window):
             t0 = time.perf_counter()
-            glfw.poll_events()
-            self.impl.process_inputs()
-            imgui.new_frame()
-            io = imgui.get_io()
+            io = teleop_render.begin_frame(self)
 
-            self._handle_camera_mouse(io)
+            teleop_render.handle_camera_mouse(self, io)
             self._handle_edge_keys(io)
             drive_keys = self._read_drive_and_lift_keys(io)
             self._draw_ui_panel()
             self._step_physics(drive_keys)
-            self._render_scene()
-            self._end_frame(t0)
+            teleop_render.render_scene(self)
+            teleop_render.end_frame(self, t0)
 
-        self.impl.shutdown()
-        glfw.terminate()
-
-    def _handle_camera_mouse(self, io):
-        """마우스 카메라 조작 -- 슬라이더를 드래그하는 중이면(want_capture_mouse)
-        카메라가 같이 돌지 않도록 건너뛴다."""
-        cur_mouse = list(glfw.get_cursor_pos(self.window))
-        dx, dy = cur_mouse[0] - self.last_mouse[0], cur_mouse[1] - self.last_mouse[1]
-        self.last_mouse = cur_mouse
-        if io.want_capture_mouse or self.gizmo_mouse_active:
-            return
-        # The visible IK target markers are output indicators synced from the numeric
-        # X/Y/Z + Roll/Pitch/Yaw targets. Pose control itself lives in those sliders; mouse
-        # drags stay reserved for the normal MuJoCo camera controls.
-        left = glfw.get_mouse_button(self.window, glfw.MOUSE_BUTTON_LEFT) == glfw.PRESS
-        right = glfw.get_mouse_button(self.window, glfw.MOUSE_BUTTON_RIGHT) == glfw.PRESS
-        middle = glfw.get_mouse_button(self.window, glfw.MOUSE_BUTTON_MIDDLE) == glfw.PRESS
-        if left or right or middle:
-            _, win_h = glfw.get_window_size(self.window)
-            mod_shift = (glfw.get_key(self.window, glfw.KEY_LEFT_SHIFT) == glfw.PRESS
-                         or glfw.get_key(self.window, glfw.KEY_RIGHT_SHIFT) == glfw.PRESS)
-            if right:
-                action = mujoco.mjtMouse.mjMOUSE_MOVE_H if mod_shift else mujoco.mjtMouse.mjMOUSE_MOVE_V
-            elif left:
-                action = mujoco.mjtMouse.mjMOUSE_ROTATE_H if mod_shift else mujoco.mjtMouse.mjMOUSE_ROTATE_V
-            else:
-                action = mujoco.mjtMouse.mjMOUSE_ZOOM
-            mujoco.mjv_moveCamera(self.model, action, dx / win_h, dy / win_h, self.scene, self.cam)
-        if io.mouse_wheel != 0:
-            mujoco.mjv_moveCamera(self.model, mujoco.mjtMouse.mjMOUSE_ZOOM, 0.0,
-                                   -0.05 * io.mouse_wheel, self.scene, self.cam)
+        teleop_render.shutdown(self)
 
     def _handle_edge_keys(self, io):
         """눌렀다 뗄 때 한 번만 반응하는 키(R=캔 리셋, G=접촉 시각화 토글,
@@ -1107,33 +965,6 @@ class TeleopApp:
                 grasp.apply_grasp(model, data, grasp=self.targets["grasp_l"], thumb=self.targets["thumb_l"], side="l")
             mujoco.mj_step(model, data)
         self._update_box_grasp_state()
-
-    def _render_scene(self):
-        """(한글) 갱신된 물리 상태(data)를 MuJoCo 저수준 API로 화면에 그리고,
-        그 위에 ImGui 패널을 합성한다."""
-        self._sync_ik_mocaps_from_targets()
-        self.opt.flags[mujoco.mjtVisFlag.mjVIS_CONTACTPOINT] = self.contact_viz
-        self.opt.flags[mujoco.mjtVisFlag.mjVIS_CONTACTFORCE] = self.contact_viz
-        fb_w, fb_h = glfw.get_framebuffer_size(self.window)
-        viewport = mujoco.MjrRect(0, 0, fb_w, fb_h)
-        mujoco.mjv_updateScene(self.model, self.data, self.opt, self.pert, self.cam,
-                                mujoco.mjtCatBit.mjCAT_ALL, self.scene)
-        mujoco.mjr_render(viewport, self.scene, self.context)
-        self._draw_transform_gizmo(viewport)
-
-        imgui.render()
-        self.impl.render(imgui.get_draw_data())
-        glfw.swap_buffers(self.window)
-
-    def _end_frame(self, t0):
-        """(한글) 목표 루프 주기(LOOP_HZ)를 맞추기 위해 남는 시간만큼 잠깐 대기하고,
-        HUD에 표시할 실측 주파수(freq_ema)를 지수이동평균으로 갱신."""
-        elapsed = time.perf_counter() - t0
-        self.freq_ema = 0.9 * self.freq_ema + 0.1 * (1.0 / max(elapsed, 1e-6))
-        sleep_time = self.frame_dt - elapsed
-        if sleep_time > 0:
-            time.sleep(sleep_time)
-
 
 def _parse_args(argv):
     parser = argparse.ArgumentParser(description="FFW-SH5 teleop app")

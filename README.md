@@ -84,7 +84,9 @@ ffw-sh5-grasp/
 │   ├── grasp.py             # grasp synergy 매핑 + contact 기반 파지 검증 (양손, side=l/r)
 │   ├── arm_control.py       # 팔 토크 제어 (중력/코리올리 feedforward + PD)
 │   ├── base_teleop.py       # 베이스 조작감 + ROBOTIS식 SwerveDrive(반전/정렬/속도제한)
-│   └── teleop_app.py        # 단일 네이티브 창(GLFW+ImGui) 물리 루프 + 슬라이더/키보드 텔레옵
+│   ├── teleop_app.py        # 단일 네이티브 창 물리 루프 + 키보드 텔레옵 허브
+│   ├── teleop_ui.py         # ImGui 슬라이더 패널
+│   └── teleop_render.py     # MuJoCo 렌더링 + 카메라 + ImGuizmo
 ├── tests/
 │   ├── test_phase_0.py      # 모델 구조 리포트 + 5s 발산 테스트
 │   ├── test_phase_1.py      # 손가락-캔 관통 깊이 (20회 반복)

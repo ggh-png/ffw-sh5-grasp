@@ -160,7 +160,9 @@ ffw-sh5-grasp/
 │   ├── arm_control.py     # 토크 + 중력 피드포워드
 │   ├── grasp.py           # synergy 스칼라 → 관절 매핑
 │   ├── base_teleop.py     # ROBOTIS식 SwerveDrive 바퀴 제어
-│   └── teleop_app.py      # 단일 네이티브 창 (GLFW+ImGui)
+│   ├── teleop_app.py      # 단일 네이티브 창 메인 루프
+│   ├── teleop_ui.py       # ImGui 슬라이더 패널
+│   └── teleop_render.py   # MuJoCo 렌더링 + 카메라 + ImGuizmo
 ├── tests/             # test_phase_0.py … test_phase_6.py
 ├── assets/soda_can/   # 실제 라벨을 두른 캔 STL
 ├── docs/              # 이 mkdocs 문서 사이트
