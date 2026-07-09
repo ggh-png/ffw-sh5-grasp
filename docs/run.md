@@ -31,7 +31,8 @@ python3 src/teleop_app.py
 - 3D 화면에 표시되는 X/Y/Z 화살표를 드래그하면 위치가 바뀌고, Roll/Pitch/Yaw 회전
   링을 드래그하면 자세가 바뀐다. 패널의 +/- 버튼과 숫자 슬라이더는 같은 target을
   보조적으로 미세 조정하는 용도다.
-- RPY는 각 손의 홈 포즈 기준 로컬 회전이라 0,0,0이 자연스러운 기본 자세다.
+- 손별 XYZ는 시작 손 위치 기준 offset이라 0,0,0이 현재 손 위치이고, RPY도 각 손의
+  홈 포즈 기준 로컬 회전이라 0,0,0이 자연스러운 기본 자세다.
 - Can grasp는 손별 grasp/thumb 시너지로 조작한다. 양팔 동시 이동은
   `Bimanual MoveL` capture 후 `virtual_object_marker`를 통해 제어한다.
 

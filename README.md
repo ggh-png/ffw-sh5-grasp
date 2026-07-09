@@ -62,7 +62,9 @@ python3 src/teleop_app.py
 `right_goal_marker`/`left_goal_marker`를 선택하고, 3D 화면의 X/Y/Z 화살표와
 Roll/Pitch/Yaw 회전 링을 드래그해 목표 pose를 조작한다. capture 후에는
 `virtual_object_marker`를 같은 방식으로 움직이면 양손 목표가 함께 파생된다. 아래 숫자
-슬라이더는 현재 target 값을 확인하고 정밀하게 직접 수정하는 용도다.
+슬라이더는 현재 target 값을 확인하고 정밀하게 직접 수정하는 용도다. 손별 XYZ 값은
+시작 손 위치 기준 offset이라 초기값이 `0, 0, 0`이고, RPY도 홈 자세 기준 `0, 0, 0`에서
+시작한다.
 
 ## Directory layout
 

@@ -1,7 +1,7 @@
 """Phase 4 -- slider teleop app for models/full_scene.xml, single native window.
 
 Reproduces the reference video's interface directly in the same window as the 3D view:
-EE pose target sliders (X/Y/Z/Roll/Pitch/Yaw) per hand driving the Phase 3 IK
+EE pose target sliders (home-relative X/Y/Z/Roll/Pitch/Yaw) per hand driving the Phase 3 IK
 (src/ik.py) + Phase 3 arm torque control (src/arm_control.py), grasp/thumb sliders per
 hand driving the Phase 2 synergy (src/grasp.py), a joint position monitor, and an HUD
 (ik_err, sim/wall time, loop freq).
@@ -43,10 +43,11 @@ mathematically cannot, for any 3-parameter Euler triple) remove *all* axis coupl
 two sliders far from zero simultaneously and some residual coupling reappears -- but it fixes
 the coupling that was previously present even at the resting/default slider position.
 
-**Mobile base (Phase 5, src/base_teleop.py)**: EE pose sliders are base-local, not world-
-fixed -- every frame the current pos_r/pos_l/rpy_r/rpy_l target is rotated+translated by the
-base's live `(base_x, base_y, base_yaw)` qpos before being handed to IK, so the arm doesn't
-have to fight the base moving/turning under it (ffw-sh5-mobile-and-box-plan.md S3.3).
+**Mobile base (Phase 5, src/base_teleop.py)**: EE pose sliders are home-relative offsets in
+the base frame, not world-fixed -- every frame the current pos_r/pos_l offset is added to
+that hand's startup base-local home position and then rotated+translated by the base's live
+`(base_x, base_y, base_yaw)` qpos before being handed to IK, so the arm doesn't have to
+fight the base moving/turning under it (ffw-sh5-mobile-and-box-plan.md S3.3).
 Driving itself never touches qpos -- arrow keys go through `base_teleop.SwerveDrive`
 (accel/brake smoothing ported from the sibling ffw-sh5-teleoperation repo's reference feel,
 then converted to per-wheel steer angle + drive speed) into the three wheels' real steer/
@@ -301,12 +302,16 @@ class TeleopApp:
         mujoco.mju_mat2Quat(self.home_quat_r, data.site_xmat[self.site_r])
         self.home_quat_l = np.zeros(4)
         mujoco.mju_mat2Quat(self.home_quat_l, data.site_xmat[self.site_l])
+        self.home_pos_local = {
+            "r": self._world_to_base_pos(data.site_xpos[self.site_r]),
+            "l": self._world_to_base_pos(data.site_xpos[self.site_l]),
+        }
 
         # 슬라이더가 직접 쓰는 "목표값" 딕셔너리 -- 물리 루프는 이 값만 읽고, 이 값을
         # 쓰는 건 GUI 슬라이더뿐이다(단방향 데이터 흐름, 모듈 docstring 참고).
         self.targets = {
-            "pos_r": data.site_xpos[self.site_r].tolist(), "rpy_r": [0.0, 0.0, 0.0],
-            "pos_l": data.site_xpos[self.site_l].tolist(), "rpy_l": [0.0, 0.0, 0.0],
+            "pos_r": [0.0, 0.0, 0.0], "rpy_r": [0.0, 0.0, 0.0],
+            "pos_l": [0.0, 0.0, 0.0], "rpy_l": [0.0, 0.0, 0.0],
             "grasp_r": 0.0, "thumb_r": 0.0, "grasp_l": 0.0, "thumb_l": 0.0,
             "virtual_object_pos": VIRTUAL_OBJECT_HOME_POS.tolist(),
             "virtual_object_rpy": [0.0, 0.0, 0.0],
@@ -411,7 +416,7 @@ class TeleopApp:
           정확히 같아서 포즈 점프가 없다.
         - fk -> ik: 반대로 EE 포즈 슬라이더 쪽이 전환 전 값(어쩌면 한참 전에 마지막
           으로 IK 모드였을 때의 낡은 목표)을 그대로 들고 있으므로, 그걸 쓰는 대신
-          "지금 실제 site가 있는 월드 포즈"를 베이스-로컬 좌표/RPY로 역산해 targets/
+          "지금 실제 site가 있는 월드 포즈"를 홈 기준 XYZ offset/RPY로 역산해 targets/
           smoothed_pos/smoothed_rpy에 다시 채워 넣는다 -- 그래야 IK가 방금 있던
           자리에서부터 이어서 풀리지, 옛 목표로 갑자기 끌려가지 않는다.
         """
@@ -429,10 +434,11 @@ class TeleopApp:
             base_yaw = self.data.qpos[self.base_yaw_qadr]
             cy, sy = math.cos(base_yaw), math.sin(base_yaw)
 
-            # 월드 위치 -> 베이스-로컬 위치 (local_to_world_pos의 역변환, _step_physics 참고).
+            # 월드 위치 -> 손별 홈 기준 offset (target_pos_to_world_pos의 역변환).
             world_pos = self.data.site_xpos[site_id]
             dx, dy = world_pos[0] - base_x, world_pos[1] - base_y
-            local_pos = [cy * dx + sy * dy, -sy * dx + cy * dy, float(world_pos[2])]
+            local_pos = np.array([cy * dx + sy * dy, -sy * dx + cy * dy, float(world_pos[2])])
+            target_pos = (local_pos - self.home_pos_local[side]).tolist()
 
             # 월드 방향 -> "홈 포즈 기준 로컬 회전" RPY (quat_r = base_quat * home_quat * rpy_delta
             # 조립의 역산, _step_physics 참고).
@@ -448,9 +454,9 @@ class TeleopApp:
             mujoco.mju_mulQuat(rpy_delta_quat, home_quat_inv, tmp)
             rpy_deg = quat_to_rpy_deg(rpy_delta_quat)
 
-            self.targets[f"pos_{side}"] = local_pos
+            self.targets[f"pos_{side}"] = target_pos
             self.targets[f"rpy_{side}"] = rpy_deg
-            self.smoothed_pos[side] = np.array(local_pos)
+            self.smoothed_pos[side] = np.array(target_pos)
             self.smoothed_rpy[side] = np.array(rpy_deg)
             self.stuck_counter[side] = 0
 
@@ -473,6 +479,15 @@ class TeleopApp:
         base_x, base_y, _base_yaw, cy, sy, _base_quat = self._base_pose()
         dx, dy = p_world[0] - base_x, p_world[1] - base_y
         return np.array([cy * dx + sy * dy, -sy * dx + cy * dy, p_world[2]])
+
+    def _target_pos_to_base_pos(self, side, pos_target):
+        return self.home_pos_local[side] + np.array(pos_target)
+
+    def _target_pos_to_world_pos(self, side, pos_target):
+        return self._local_to_world_pos(self._target_pos_to_base_pos(side, pos_target))
+
+    def _world_to_target_pos(self, side, world_pos):
+        return (self._world_to_base_pos(world_pos) - self.home_pos_local[side]).tolist()
 
     def _target_world_quat(self, side):
         *_unused, base_quat = self._base_pose()
@@ -513,7 +528,7 @@ class TeleopApp:
         return quat
 
     def _target_world_pose(self, side):
-        return self._local_to_world_pos(self.targets[f"pos_{side}"]), self._target_world_quat(side)
+        return self._target_pos_to_world_pos(side, self.targets[f"pos_{side}"]), self._target_world_quat(side)
 
     def _virtual_object_world_pose(self):
         pos = self._local_to_world_pos(self.targets["virtual_object_pos"])
@@ -561,7 +576,7 @@ class TeleopApp:
         for side, offset in self.cyclo_capture_offsets.items():
             hand_pos = obj_pos + obj_R @ offset["pos"]
             hand_quat = self._mat_to_quat(obj_R @ offset["mat"])
-            self.targets[f"pos_{side}"] = self._world_to_base_pos(hand_pos).tolist()
+            self.targets[f"pos_{side}"] = self._world_to_target_pos(side, hand_pos)
             self.targets[f"rpy_{side}"] = self._world_quat_to_target_rpy(side, hand_quat)
 
     def _bimanual_marker_visible(self):
@@ -596,7 +611,7 @@ class TeleopApp:
             self.targets["virtual_object_rpy"] = self._world_quat_to_virtual_rpy(world_quat)
             self.apply_virtual_object_target()
         else:
-            self.targets[f"pos_{target}"] = self._world_to_base_pos(world_pos).tolist()
+            self.targets[f"pos_{target}"] = self._world_to_target_pos(target, world_pos)
             self.targets[f"rpy_{target}"] = self._world_quat_to_target_rpy(target, world_quat)
 
     def _pose_to_imguizmo_matrix(self, world_pos, world_quat):
@@ -609,8 +624,9 @@ class TeleopApp:
         if not hasattr(self, "ik_target_mocap_ids"):
             return
         for side, mocap_id in self.ik_target_mocap_ids.items():
-            self.data.mocap_pos[mocap_id] = self._local_to_world_pos(self.targets[f"pos_{side}"])
-            self.data.mocap_quat[mocap_id] = self._target_world_quat(side)
+            pos, quat = self._target_world_pose(side)
+            self.data.mocap_pos[mocap_id] = pos
+            self.data.mocap_quat[mocap_id] = quat
         if hasattr(self, "virtual_object_mocap_id"):
             pos, quat = self._virtual_object_world_pose()
             self.data.mocap_pos[self.virtual_object_mocap_id] = pos
@@ -727,9 +743,11 @@ class TeleopApp:
                                  -MAX_RPY_STEP_PER_FRAME_DEG, MAX_RPY_STEP_PER_FRAME_DEG)
             self.smoothed_rpy[side] = self.smoothed_rpy[side] + delta_rpy
 
-        # EE pose targets are base-local (see module docstring's "Mobile base" note): rotate
-        # +translate by the base's CURRENT pose so driving/turning the base carries the
-        # target along with it instead of the arm having to chase a world-fixed point.
+        # EE position targets are home-relative offsets in the base frame (see module
+        # docstring's "Mobile base" note): first add the offset to each hand's startup
+        # base-local home position, then rotate+translate by the base's CURRENT pose so
+        # driving/turning the base carries the target along with it instead of the arm having
+        # to chase a world-fixed point.
         # RPY sliders are a LOCAL rotation on top of the hand's own home orientation (see
         # module docstring), not raw world-frame Euler angles -- composing quat_mul(home,
         # delta) keeps roll/pitch/yaw = 0 at the natural grasp pose and each axis meaning
@@ -747,7 +765,7 @@ class TeleopApp:
             quat_r = np.zeros(4)
             mujoco.mju_mulQuat(quat_r, self.home_quat_r, rpy_deg_to_quat(self.smoothed_rpy["r"]))
             mujoco.mju_mulQuat(quat_r, base_quat, quat_r)
-            pos_r_world = local_to_world_pos(self.smoothed_pos["r"])
+            pos_r_world = local_to_world_pos(self._target_pos_to_base_pos("r", self.smoothed_pos["r"]))
             # See STUCK_POS_TOL note above -- a hand that's been stuck (unconverged) for
             # several frames in a row gets thrown into a cheap iteration budget instead of
             # repeatedly paying full price to re-discover the same non-improving result.
@@ -764,7 +782,7 @@ class TeleopApp:
             quat_l = np.zeros(4)
             mujoco.mju_mulQuat(quat_l, self.home_quat_l, rpy_deg_to_quat(self.smoothed_rpy["l"]))
             mujoco.mju_mulQuat(quat_l, base_quat, quat_l)
-            pos_l_world = local_to_world_pos(self.smoothed_pos["l"])
+            pos_l_world = local_to_world_pos(self._target_pos_to_base_pos("l", self.smoothed_pos["l"]))
             iter_l = STUCK_MAX_ITER if self.stuck_counter["l"] >= STUCK_FRAMES_THRESHOLD else IK_MAX_ITER
             self.q_des_l, perr_l, _ = self.solver_l.solve_pose(self.q_des_l, pos_l_world, quat_l,
                                                                 max_iter=iter_l, context_qpos=ctx_qpos)

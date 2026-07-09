@@ -46,7 +46,7 @@ while not glfw.window_should_close(self.window):
 ```python title="src/teleop_app.py — _step_physics 핵심 (오른손 IK/FK 분기)"
 if self.arm_mode["r"] == "ik":
     quat_r = ...  # home_quat_r ⊗ rpy_delta, base_quat 적용
-    pos_r_world = local_to_world_pos(self.smoothed_pos["r"])
+    pos_r_world = local_to_world_pos(self.home_pos_local["r"] + self.smoothed_pos["r"])
     iter_r = STUCK_MAX_ITER if self.stuck_counter["r"] >= STUCK_FRAMES_THRESHOLD else IK_MAX_ITER
     self.q_des_r, perr_r, _ = self.solver_r.solve_pose(self.q_des_r, pos_r_world, quat_r,
                                                         max_iter=iter_r, context_qpos=ctx_qpos)
@@ -78,11 +78,14 @@ IK는 프레임당 한 번만 풀지만, `arm_control.apply`/`grasp.apply_grasp`
 앱 시작 시 충돌과 렌더를 끄고 화면 밖으로 치워 live control surface에서는 제외한다.
 
 화면의 IK target 마커는 숫자 X/Y/Z + Roll/Pitch/Yaw target과 양방향으로 동기화된다.
+손별 X/Y/Z target은 베이스 절대 좌표가 아니라 시작 손 위치 기준 offset이라, 앱을
+켜면 오른손/왼손 모두 `0, 0, 0`에서 시작한다. 실제 IK에 넘길 때는 이 offset을
+`home_pos_local[side]`에 더한 뒤 베이스의 현재 pose로 월드 좌표화한다.
 `MoveL`에서는 오른손/왼손 marker를 독립적으로 조작하고, `Bimanual MoveL`에서
 `capture_grasp()`를 누른 뒤에는 `virtual_object_marker`의 pose가 양손 target을 함께
 파생한다. `_sync_ik_mocaps_from_targets()`가 매 렌더 프레임 marker mocap pose를
 target에 맞추고, ImGuizmo drag 결과는 `_set_gizmo_target_world_pose()`에서 다시
-base-local X/Y/Z와 home-relative RPY target으로 변환된다.
+home-relative XYZ offset과 home-relative RPY target으로 변환된다.
 
 ### IK ↔ FK 모드 전환 — `set_arm_mode`
 
@@ -97,7 +100,7 @@ if mode == "fk":
     # -- 전환 직후 첫 스텝의 목표 관절각이 전환 직전과 정확히 같아 점프가 없다.
     self.fk_q_deg[side] = [math.degrees(v) for v in q_des]
 else:
-    # fk -> ik: "지금 실제 site가 있는 월드 포즈"를 베이스-로컬 좌표/RPY로 역산해
+    # fk -> ik: "지금 실제 site가 있는 월드 포즈"를 홈 기준 XYZ offset/RPY로 역산해
     # targets/smoothed_pos/smoothed_rpy에 채워 넣는다 -- 낡은 목표로 갑자기
     # 끌려가지 않고, 방금 있던 자리에서부터 IK가 이어서 풀린다.
     ...
@@ -109,8 +112,8 @@ else:
 ```
 
 fk→ik 방향은 순전히 기하 변환이다: 실제 site의 월드 위치/자세를,
-`_step_physics`가 쓰는 것과 정확히 같은 base-local + home-relative-RPY 변환의
-**역변환**으로 되짚는다. 이 역변환이 정확한지는 render 비교와 `solve_pose`가
+`_step_physics`가 쓰는 것과 정확히 같은 home-relative XYZ offset +
+home-relative RPY 변환의 **역변환**으로 되짚는다. 이 역변환이 정확한지는 render 비교와 `solve_pose`가
 그 결과에서 즉시(0 iteration에 가깝게) 수렴하는지로 직접 검증했다.
 
 ### 렌더링 — `teleop_render.py`로 분리

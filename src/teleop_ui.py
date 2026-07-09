@@ -16,6 +16,7 @@ from imgui_bundle import imgui
 
 JOG_POS_STEP_DEFAULT = 0.005
 JOG_RPY_STEP_DEFAULT = 2.0
+HAND_POS_OFFSET_RANGE = (-0.35, 0.35)
 POS_AXES = ("X", "Y", "Z")
 RPY_AXES = ("Roll", "Pitch", "Yaw")
 SIDE_LABELS = {"r": "Right", "l": "Left", "virtual": "Virtual object"}
@@ -82,7 +83,7 @@ def _clamp_pose_targets(targets, side):
     pos = targets[f"pos_{side}"]
     rpy = targets[f"rpy_{side}"]
     for i in range(3):
-        pos[i] = _clamp(pos[i], -0.2, 1.2)
+        pos[i] = _clamp(pos[i], HAND_POS_OFFSET_RANGE[0], HAND_POS_OFFSET_RANGE[1])
         rpy[i] = _clamp(rpy[i], -90.0, 90.0)
 
 
@@ -237,8 +238,9 @@ def _draw_status_panel(app, data):
 def _draw_ik_pose_controls(app, targets, side):
     pos = targets[f"pos_{side}"]
     rpy = targets[f"rpy_{side}"]
-    imgui.text("Position (base frame)")
-    _draw_vector_sliders(f"{side}_pos", pos, POS_AXES, -0.2, 1.2, "%.3f m",
+    imgui.text("Position offset from home (base frame)")
+    _draw_vector_sliders(f"{side}_pos", pos, POS_AXES,
+                         HAND_POS_OFFSET_RANGE[0], HAND_POS_OFFSET_RANGE[1], "%.3f m",
                          lambda: _note_manual_pose_edit(app))
     imgui.text("Orientation RPY (home-relative)")
     _draw_vector_sliders(f"{side}_rpy", rpy, RPY_AXES, -90.0, 90.0, "%.1f deg",

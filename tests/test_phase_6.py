@@ -46,6 +46,10 @@ def _make_sim_only_app():
     return app
 
 
+def _set_hand_base_target(app, side, base_pos):
+    app.targets[f"pos_{side}"] = (np.array(base_pos) - app.home_pos_local[side]).tolist()
+
+
 def run_model_gate(model):
     can_jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "can_free")
     virtual_body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "virtual_object_marker")
@@ -61,8 +65,8 @@ def run_cyclo_marker_jog_gate():
         cyclo_controller = "movel"
         cyclo_grasp_captured = False
         targets = {
-            "pos_l": [0.30, 0.10, 0.80],
-            "pos_r": [0.30, -0.10, 0.80],
+            "pos_l": [0.0, 0.0, 0.0],
+            "pos_r": [0.0, 0.0, 0.0],
             "rpy_l": [0.0, 0.0, 0.0],
             "rpy_r": [0.0, 0.0, 0.0],
             "virtual_object_pos": [0.30, 0.0, 0.85],
@@ -76,8 +80,8 @@ def run_cyclo_marker_jog_gate():
     teleop_ui._apply_cartesian_jog(
         app, "both", pos_delta=(0.005, -0.010, 0.015), rpy_delta=(1.0, -2.0, 3.0))
     both_ok = (
-        np.allclose(app.targets["pos_l"], [0.305, 0.090, 0.815])
-        and np.allclose(app.targets["pos_r"], [0.305, -0.110, 0.815])
+        np.allclose(app.targets["pos_l"], [0.005, -0.010, 0.015])
+        and np.allclose(app.targets["pos_r"], [0.005, -0.010, 0.015])
         and np.allclose(app.targets["rpy_l"], [1.0, -2.0, 3.0])
         and np.allclose(app.targets["rpy_r"], [1.0, -2.0, 3.0])
     )
@@ -86,9 +90,9 @@ def run_cyclo_marker_jog_gate():
     teleop_ui._apply_cartesian_jog(app, "both", pos_delta=(1.0, 1.0, 1.0),
                                    rpy_delta=(100.0, 100.0, 100.0))
     fk_skip_and_clamp_ok = (
-        np.allclose(app.targets["pos_l"], [0.305, 0.090, 0.815])
+        np.allclose(app.targets["pos_l"], [0.005, -0.010, 0.015])
         and np.allclose(app.targets["rpy_l"], [1.0, -2.0, 3.0])
-        and np.allclose(app.targets["pos_r"], [1.2, 0.890, 1.2])
+        and np.allclose(app.targets["pos_r"], [0.35, 0.35, 0.35])
         and np.allclose(app.targets["rpy_r"], [90.0, 90.0, 90.0])
     )
     move_marker_ok = (
@@ -109,14 +113,37 @@ def run_cyclo_marker_jog_gate():
     return ok
 
 
+def run_initial_ik_target_origin_gate():
+    app = _make_sim_only_app()
+    offsets_zero = (
+        np.allclose(app.targets["pos_r"], [0.0, 0.0, 0.0])
+        and np.allclose(app.targets["pos_l"], [0.0, 0.0, 0.0])
+    )
+    pose_matches = True
+    reports = []
+    for side, site_id in (("r", app.site_r), ("l", app.site_l)):
+        pos, quat = app._target_world_pose(side)
+        site_quat = np.zeros(4)
+        mujoco.mju_mat2Quat(site_quat, app.data.site_xmat[site_id])
+        pos_err = float(np.linalg.norm(pos - app.data.site_xpos[site_id]))
+        quat_dot = abs(float(np.dot(quat, site_quat)))
+        case_ok = pos_err < 1e-12 and (1.0 - quat_dot) < 1e-12
+        pose_matches = pose_matches and case_ok
+        reports.append(f"{side}: pos_err={pos_err*1000:.6f}mm quat_dot={quat_dot:.12f}")
+    ok = offsets_zero and pose_matches
+    print(f"Initial IK target origin gate: offsets_zero={offsets_zero} "
+          f"{'; '.join(reports)}: {'OK' if ok else 'FAIL'}")
+    return ok
+
+
 def run_cyclo_bimanual_virtual_object_gate():
     app = _make_sim_only_app()
-    app.targets["pos_r"] = [0.34, -0.08, 0.88]
-    app.targets["pos_l"] = [0.34, 0.08, 0.88]
+    _set_hand_base_target(app, "r", [0.34, -0.08, 0.88])
+    _set_hand_base_target(app, "l", [0.34, 0.08, 0.88])
     app.targets["rpy_r"] = [0.0, 0.0, 0.0]
     app.targets["rpy_l"] = [0.0, 0.0, 0.0]
-    r0 = app._local_to_world_pos(app.targets["pos_r"])
-    l0 = app._local_to_world_pos(app.targets["pos_l"])
+    r0 = app._target_world_pose("r")[0]
+    l0 = app._target_world_pose("l")[0]
 
     app.capture_grasp()
     capture_ok = app.cyclo_grasp_captured and app.cyclo_controller == "bimanual_movel"
@@ -125,8 +152,8 @@ def run_cyclo_bimanual_virtual_object_gate():
     app.targets["virtual_object_pos"][2] += 0.060
     app.targets["virtual_object_rpy"][2] += 12.0
     app.apply_virtual_object_target()
-    r1 = app._local_to_world_pos(app.targets["pos_r"])
-    l1 = app._local_to_world_pos(app.targets["pos_l"])
+    r1 = app._target_world_pose("r")[0]
+    l1 = app._target_world_pose("l")[0]
     rel1 = l1 - r1
     rel_len_ok = abs(np.linalg.norm(rel1) - np.linalg.norm(rel0)) < 1e-9
     moved_ok = np.linalg.norm(0.5 * (r1 + l1) - 0.5 * (r0 + l0)) > 0.05
@@ -156,7 +183,7 @@ def run_cyclo_3d_gizmo_pose_gate():
     )
 
     app._set_gizmo_target_world_pose("r", world_pos, world_quat)
-    hand_pos = app._local_to_world_pos(app.targets["pos_r"])
+    hand_pos = app._target_world_pose("r")[0]
     hand_quat = app._target_world_quat("r")
     hand_ok = (
         np.linalg.norm(hand_pos - world_pos) < 1e-9
@@ -186,8 +213,8 @@ def run_bimanual_marker_visibility_gate():
     geom_alpha0 = float(app.model.geom_rgba[geom_id][3])
     site_alpha0 = float(app.model.site_rgba[site_id][3])
 
-    app.targets["pos_r"] = [0.34, -0.08, 0.88]
-    app.targets["pos_l"] = [0.34, 0.08, 0.88]
+    _set_hand_base_target(app, "r", [0.34, -0.08, 0.88])
+    _set_hand_base_target(app, "l", [0.34, 0.08, 0.88])
     app.capture_grasp()
     app._sync_ik_mocaps_from_targets()
     geom_alpha_capture = float(app.model.geom_rgba[geom_id][3])
@@ -218,9 +245,9 @@ def run_numeric_target_marker_sync_gate():
     app.data.qpos[app.base_yaw_qadr] = np.radians(17.0)
     mujoco.mj_forward(app.model, app.data)
 
-    app.targets["pos_r"] = [0.34, -0.13, 0.92]
+    app.targets["pos_r"] = [0.04, -0.03, 0.05]
     app.targets["rpy_r"] = [11.0, -7.0, 5.0]
-    app.targets["pos_l"] = [0.31, 0.14, 0.91]
+    app.targets["pos_l"] = [-0.02, 0.04, 0.06]
     app.targets["rpy_l"] = [-9.0, -6.0, -4.0]
 
     for side, mocap_id in app.ik_target_mocap_ids.items():
@@ -232,7 +259,7 @@ def run_numeric_target_marker_sync_gate():
     ok = True
     reports = []
     for side, mocap_id in app.ik_target_mocap_ids.items():
-        expected_pos = app._local_to_world_pos(app.targets[f"pos_{side}"])
+        expected_pos = app._target_world_pose(side)[0]
         expected_quat = app._target_world_quat(side)
         pos_err = float(np.linalg.norm(app.data.mocap_pos[mocap_id] - expected_pos))
         quat_dot = abs(float(np.dot(app.data.mocap_quat[mocap_id], expected_quat)))
@@ -288,6 +315,7 @@ def run_manual_xyz_rpy_ik_gate(model):
 def main():
     model = mujoco.MjModel.from_xml_path(str(MODEL_PATH))
     ok = (run_model_gate(model)
+          and run_initial_ik_target_origin_gate()
           and run_cyclo_marker_jog_gate()
           and run_cyclo_bimanual_virtual_object_gate()
           and run_cyclo_3d_gizmo_pose_gate()

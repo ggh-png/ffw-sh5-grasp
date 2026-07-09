@@ -39,6 +39,9 @@ Release 이후에는 숨긴다.
 위치 target이 바뀌고, Roll/Pitch/Yaw 회전 링을 드래그하면 자세 target이 바뀐다.
 패널의 +/- 버튼은 같은 target을 작은 step으로 미세 조정하는 보조 입력이다.
 FK 모드인 손은 jog 대상에서 제외된다.
+손별 X/Y/Z 숫자 target은 베이스 절대 좌표가 아니라 시작 손 위치 기준 offset이다.
+그래서 앱을 켰을 때 오른손/왼손 XYZ와 RPY가 모두 `0, 0, 0`에서 출발하고, marker를
+움직이면 그 world pose가 다시 손별 home-relative offset으로 환산된다.
 
 ```python title="src/teleop_ui.py — Cyclo marker jog"
 def _apply_cartesian_jog(app, side, pos_delta=(0.0, 0.0, 0.0), rpy_delta=(0.0, 0.0, 0.0)):
@@ -59,8 +62,8 @@ def _apply_cartesian_jog(app, side, pos_delta=(0.0, 0.0, 0.0), rpy_delta=(0.0, 0
 
 3D 화살표/회전 링은 `teleop_render.py`의 `draw_transform_gizmo()`가 ImGuizmo를 이용해
 MuJoCo 렌더 위 foreground draw list에 그린다. ImGuizmo가 돌려준 pose matrix는
-`_set_gizmo_target_world_pose()`에서 다시 base-local X/Y/Z와 home-relative RPY target으로
-변환된다.
+`_set_gizmo_target_world_pose()`에서 다시 home-relative XYZ offset과 home-relative RPY
+target으로 변환된다.
 
 손별 패널은 `Right Arm`/`Left Arm`으로 정리되어 있고, IK/FK 모드에 따라 다른
 슬라이더 집합을 그린다:
