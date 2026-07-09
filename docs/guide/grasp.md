@@ -33,6 +33,29 @@
 | `get_box_hand_contacts(model, data)` | legacy box 접촉 force 측정 |
 | `is_box_held(model, data, min_force_per_hand=1.0)` | legacy box 양손 hold 판정 |
 
+## 함수 흐름
+
+```mermaid
+flowchart TD
+    A["teleop_app._step_physics"] --> B["apply_grasp(side, grasp, thumb)"]
+    B --> C["thumb pre-shape / yaw ramp"]
+    B --> D["thumb curl joints"]
+    B --> E["index/middle curl joints"]
+    B --> F["ring/pinky cosmetic curl"]
+    C --> G["_set_joint_ctrl()"]
+    D --> G
+    E --> G
+    F --> H["_resolve_joint_actuator()"]
+    H --> I["data.ctrl[finger actuator]"]
+    G --> I
+
+    J["tests / grasp check"] --> K["is_grasped()"]
+    K --> L["get_finger_can_contacts()"]
+    L --> M["mj_contactForce()"]
+    M --> N["finger group force sum"]
+    N --> O["grasp true/false"]
+```
+
 ## 사용 위치
 
 `teleop_app.py`의 물리 substep에서 양손에 대해 호출된다.

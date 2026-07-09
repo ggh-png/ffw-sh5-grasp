@@ -39,6 +39,29 @@ ImGui 기반 텔레옵 패널을 그린다.
 | `_draw_joint_monitor(app, data)` | 관절 위치 monitor |
 | `draw_panel(app)` | 전체 UI 패널 entry point |
 
+## 함수 흐름
+
+```mermaid
+flowchart TD
+    A["teleop_app._draw_ui_panel"] --> B["draw_panel(app)"]
+    B --> C["_draw_status_panel()"]
+    B --> D["_draw_cyclo_control_panel()"]
+    B --> E["_draw_arm_panel(r/l)"]
+    B --> F["_draw_can_grasp_panel()"]
+    B --> G["_draw_lift_utils_panel()"]
+    B --> H["_draw_joint_monitor()"]
+
+    D --> I["_apply_cartesian_jog()"]
+    I --> J["app.targets update"]
+    D --> K["capture_grasp() / release_grasp()"]
+    E --> L["_draw_ik_pose_controls()"]
+    E --> M["_draw_fk_joint_controls()"]
+    L --> J
+    M --> N["app.fk_q_deg update"]
+    F --> O["grasp/thumb target update"]
+    G --> P["lift/reset/contact/camera state update"]
+```
+
 ## 패널 구조
 
 ```text

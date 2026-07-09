@@ -28,6 +28,29 @@ GLFW 창, MuJoCo scene render, 카메라, 3D gizmo를 담당한다.
 | `render_scene(app)` | marker sync, MuJoCo render, gizmo, ImGui draw, swap buffers |
 | `end_frame(app, t0)` | frame frequency update와 sleep |
 
+## 함수 흐름
+
+```mermaid
+flowchart TD
+    A["teleop_app.run"] --> B["begin_frame()"]
+    B --> C["glfw.poll_events()"]
+    C --> D["imgui.new_frame()"]
+    A --> E["handle_camera_mouse()"]
+    E --> F["mjv_moveCamera()"]
+    A --> G["render_scene()"]
+    G --> H["app._sync_ik_mocaps_from_targets()"]
+    H --> I["mjv_updateScene()"]
+    I --> J["mjr_render()"]
+    J --> K["draw_transform_gizmo()"]
+    K --> L["pose_to_imguizmo_matrix()"]
+    K --> M["imguizmo.manipulate()"]
+    M --> N["imguizmo_matrix_to_pose()"]
+    N --> O["app._set_gizmo_target_world_pose()"]
+    K --> P["imgui.render()"]
+    P --> Q["swap_buffers()"]
+    A --> R["end_frame()"]
+```
+
 ## Frame 순서
 
 ```text

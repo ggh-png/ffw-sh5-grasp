@@ -42,6 +42,31 @@ UI target, 3D marker/gizmo pose, IK world pose 사이의 변환을 담당한다.
 | `set_gizmo_target_world_pose(app, target, world_pos, world_quat)` | gizmo 결과를 target 값으로 반영 |
 | `sync_ik_mocaps_from_targets(app)` | 손/virtual marker mocap pose를 target과 동기화 |
 
+## 함수 흐름
+
+```mermaid
+flowchart TD
+    A["UI sliders / marker jog"] --> B["app.targets"]
+    C["ImGuizmo drag world pose"] --> D["set_gizmo_target_world_pose()"]
+    D --> B
+    B --> E["target_world_pose(side)"]
+    E --> F["target_pos_to_world_pos()"]
+    E --> G["target_world_quat()"]
+    F --> H["IK target world pose"]
+    G --> H
+    H --> I["teleop_app -> ik.solve_pose()"]
+
+    J["Capture Grasp"] --> K["capture_grasp()"]
+    K --> L["sync_virtual_object_to_hand_targets()"]
+    L --> M["store hand offsets from virtual object"]
+    N["Move virtual object"] --> O["apply_virtual_object_target()"]
+    O --> P["world_to_target_pos()"]
+    O --> Q["world_quat_to_target_rpy()"]
+    P --> B
+    Q --> B
+    B --> R["sync_ik_mocaps_from_targets()"]
+```
+
 ## Bimanual MoveL 상태 흐름
 
 ```text

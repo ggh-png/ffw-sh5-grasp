@@ -64,6 +64,35 @@ while not glfw.window_should_close(self.window):
 | `_step_physics(drive_keys)` | target smoothing, IK, base/grasp/lift/arm command, `mj_step` |
 | `run()` | 전체 frame loop 실행 |
 
+## 함수 흐름
+
+```mermaid
+flowchart TD
+    A["main()"] --> B["TeleopApp()"]
+    B --> C["_setup_sim()"]
+    B --> D["_setup_render()"]
+    B --> E["_setup_loop_state()"]
+    B --> F["run()"]
+    F --> G["teleop_render.begin_frame()"]
+    G --> H["teleop_render.handle_camera_mouse()"]
+    H --> I["_handle_edge_keys()"]
+    I --> J["_read_drive_and_lift_keys()"]
+    J --> K["_draw_ui_panel()"]
+    K --> L["teleop_ui.draw_panel()"]
+    L --> M["_step_physics()"]
+    M --> N["teleop_targets.apply_virtual_object_target()"]
+    M --> O["ik.solve_pose()"]
+    M --> P["base_teleop.SwerveDrive.update()"]
+    M --> Q["arm_control.apply()"]
+    M --> R["grasp.apply_grasp()"]
+    Q --> S["mujoco.mj_step()"]
+    R --> S
+    P --> S
+    S --> T["teleop_render.render_scene()"]
+    T --> U["teleop_render.end_frame()"]
+    U --> F
+```
+
 ### `teleop_targets.py` wrapper
 
 기존 렌더/테스트 호출 계약을 유지하기 위해 아래 이름은 `TeleopApp`에 남아 있다.

@@ -25,6 +25,24 @@
 | `_shortest_angular_distance(start, target)` | 최단 각도 차 계산 |
 | `_clamp(value, lo, hi)` | 값 clamp |
 
+## 함수 흐름
+
+```mermaid
+flowchart TD
+    A["teleop_app._read_drive_and_lift_keys"] --> B["drive_keys"]
+    B --> C["SwerveDrive.update(keys, dt, yaw, steering, wheel_vel)"]
+    C --> D["BaseTeleop.update()"]
+    D --> E["smoothed vx/vy/wz"]
+    E --> F["per-wheel swerve inverse kinematics"]
+    F --> G["180 deg steering optimization"]
+    G --> H["_update_reversal_phase()"]
+    H --> I["_limit_steering_rate()"]
+    I --> J["alignment gating"]
+    J --> K["wheel speed clamp"]
+    K --> L["{wheel: steer_angle, drive_angvel}"]
+    L --> M["teleop_app writes data.ctrl"]
+```
+
 ## 출력 형식
 
 ```python
