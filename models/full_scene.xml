@@ -816,9 +816,9 @@
         priority="1" condim="6" friction="0.5 0.01 0.003"
         solimp="0.5 0.99 0.0001" solref="0.005 1"/>
     </body>
-    <body name="box_body" pos="0.3055 0.0 0.9316">
+    <body name="box_body" pos="0.4055 0.0 0.8716">
       <freejoint name="box_free"/>
-      <geom name="box_geom" type="box" size="0.15 0.15 0.20" mass="0.3"
+      <geom name="box_geom" type="box" size="0.10 0.10 0.14" mass="0.2"
         rgba="0.8 0.6 0.3 1" priority="1" condim="6" friction="1.0 0.5 0.01"
         solimp="0.5 0.99 0.0001" solref="0.005 1"/>
     </body>
@@ -829,8 +829,13 @@
     </body>
     <body name="ik_target_r" mocap="true" pos="0.45 -0.25 0.95">
       <geom name="ik_target_r_geom" type="sphere" size="0.025" rgba="1.0 0.1 0.1 0.35"
-        contype="0" conaffinity="0"/>
+            contype="0" conaffinity="0"/>
       <site name="ik_target_r_site" size="0.012" rgba="1.0 0.1 0.1 1"/>
+    </body>
+    <body name="virtual_object_marker" mocap="true" pos="0.4055 0 0.95">
+      <geom name="virtual_object_marker_geom" type="box" size="0.035 0.035 0.035"
+            rgba="0.2 0.45 1.0 0.30" contype="0" conaffinity="0"/>
+      <site name="virtual_object_marker_site" size="0.018" rgba="0.2 0.45 1.0 1"/>
     </body>
   </worldbody>
 

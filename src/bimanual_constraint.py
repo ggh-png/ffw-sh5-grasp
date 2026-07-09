@@ -52,7 +52,7 @@ def relative_pose_error(data, right_site_id, left_site_id, reference):
 
 def project_desired_delta(model, data, right_site_id, left_site_id, right_dof_ids,
                           left_dof_ids, dq_r, dq_l, dt, reference=None,
-                          drift_gain=0.8, damping=1e-8):
+                          drift_gain=0.2, damping=1e-8):
     """Project desired arm deltas so the two grasp sites keep a rigid relative pose.
 
     The input and return convention is `(dq_r, dq_l)`, each 7 elements. Jacobians are built

@@ -6,10 +6,10 @@ ROBOTIS FFW-SH5 이동형 양팔 로봇이 **kinematic 치팅 없이, contact fo
 썼는가 — 는 [MuJoCo 튜토리얼](guide/index.md) 쪽을 보면 된다.)
 
 <span class="phase-track">
-<span>Phase 0–5 전체 완료</span>
-<span>test_phase_0…5 PASS</span>
-<span>pick 8/10 · 기준 7/10</span>
-<span>버전 v0.1.0</span>
+<span>Phase 0–6 전체 완료</span>
+<span>test_phase_0…6 PASS</span>
+<span>캔 pick 9/10 · 상자 lift/drive PASS</span>
+<span>can/box 시나리오</span>
 </span>
 
 ---
@@ -142,14 +142,14 @@ Phase의 테스트를 절대 깨지 않는 것을 조건으로 시작한다 — 
 
 ---
 
-## 05 — 현재 상태: v0.1.0
+## 05 — 현재 상태
 
-Phase 0–5가 하나의 커밋 지점에서 동시에 안정화된 첫 순간. 이전 체크포인트(0.0.1 /
-0.0.2)보다 한 단계 위 버전으로 구분했다.
+Phase 0–6 기준으로 캔 pick, 실제 바퀴 주행, 작은 상자 양손 squeeze/lift/drive가
+동시에 회귀 테스트를 통과한다.
 
-| PHASE 0 | PHASE 1 | PHASE 2 | PHASE 3 | PHASE 4 | PHASE 5 |
-|---|---|---|---|---|---|
-| PASS | PASS | PASS | PASS | PASS | PASS |
+| PHASE 0 | PHASE 1 | PHASE 2 | PHASE 3 | PHASE 4 | PHASE 5 | PHASE 6 |
+|---|---|---|---|---|---|---|
+| PASS | PASS | PASS | PASS | PASS | PASS | PASS |
 
 ```text
 ffw-sh5-grasp/
@@ -160,18 +160,20 @@ ffw-sh5-grasp/
 │   ├── grasp.py           # synergy 스칼라 → 관절 매핑
 │   ├── base_teleop.py     # SwerveDrive 바퀴 기구학
 │   └── teleop_app.py      # 단일 네이티브 창 (GLFW+ImGui)
-├── tests/             # test_phase_0.py … test_phase_5.py
+├── tests/             # test_phase_0.py … test_phase_6.py
 ├── assets/soda_can/   # 실제 라벨을 두른 캔 STL
 ├── docs/              # 이 mkdocs 문서 사이트
 └── PLAN.md · NOTES.md · README.md
 ```
 
-실행: `python3 src/teleop_app.py` — 방향키로 베이스(실제 바퀴 마찰), 슬라이더로 양팔
-EE pose/grasp. 검증: `python3 tests/test_phase_{0,1,2,3,4,5}.py`, 전부 독립 실행
-가능한 headless 회귀 테스트. 자세한 실행법은 [직접 실행하기](run.md) 참고.
+실행: `python3 src/teleop_app.py can` 또는 `python3 src/teleop_app.py box` — 방향키로
+베이스(실제 바퀴 마찰), Cyclo Control식 `MoveL`/`Bimanual MoveL` UI와 숫자 슬라이더로 양팔 EE pose와
+시나리오별 grasp/squeeze를 조작한다.
+검증: `python3 tests/test_phase_{0,1,2,3,4,5,6}.py`, 전부 독립 실행 가능한 headless
+회귀 테스트. 자세한 실행법은 [직접 실행하기](run.md) 참고.
 
-박스 형태 물체 파지로의 확장(`ffw-sh5-mobile-and-box-plan.md`)은 사용자 선택에 따라
-보류 중 — 이번 버전의 스코프는 "주행 기능까지"로 확정했다.
+Phase 6에서는 작은 상자를 별도 시나리오로 두고, 양손이 상자 양옆을 눌러 마찰로 들며
+주행 중에도 bimanual constraint가 두 EE의 상대 pose를 유지하는지 검증한다.
 
 !!! info "상세 진단 기록"
     각 세션의 상세 진단 기록은 레포의 `NOTES.md`에 남아 있다.

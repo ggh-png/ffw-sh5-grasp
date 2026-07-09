@@ -89,6 +89,7 @@ import glfw
 glfw.init_hint(glfw.PLATFORM, glfw.PLATFORM_X11)
 
 from imgui_bundle import imgui
+from imgui_bundle import imguizmo
 from imgui_bundle.python_backends.glfw_backend import GlfwRenderer
 import mujoco
 import numpy as np
@@ -113,10 +114,11 @@ ARM_L = [f"arm_l_joint{i}" for i in range(1, 8)]
 HOME_Q_R = np.array([0.0, 0.0, 0.0, -1.5707963267948966, 0.0, 0.0, 0.0])
 HOME_Q_L = np.array([0.0, 0.0, 0.0, -1.5707963267948966, 0.0, 0.0, 0.0])
 LIFT_RANGE = (-0.5, 0.0)
-BOX_HALF_EXTENTS = np.array([0.15, 0.15, 0.20])
-BOX_HOME_QPOS = np.array([0.3055, 0.0, 0.9316, 1.0, 0.0, 0.0, 0.0])
+BOX_HALF_EXTENTS = np.array([0.10, 0.10, 0.14])
+BOX_HOME_QPOS = np.array([0.4055, 0.0, 0.8716, 1.0, 0.0, 0.0, 0.0])
 BOX_PREGRASP_GAP = 0.03
 BOX_SQUEEZE_GAP = -0.005
+BOX_TARGET_SITE_TO_PALM_MARGIN = 0.060
 BOX_GRAB_RAMP_TIME = 1.0
 # 패널의 "Joint position monitor"에 진행률 막대로 표시할 관절 전체 목록.
 MONITOR_JOINTS = (
@@ -295,14 +297,12 @@ class TeleopApp:
 
         self.site_r = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "grasp_target_r")
         self.site_l = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "grasp_target_l")
-        self.ik_target_bodies = {
-            "l": mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "ik_target_l"),
-            "r": mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "ik_target_r"),
-        }
-        self.ik_target_body_to_side = {bid: side for side, bid in self.ik_target_bodies.items()}
         self.ik_target_mocap_ids = {
-            side: model.body_mocapid[bid] for side, bid in self.ik_target_bodies.items()
+            side: model.body_mocapid[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, f"ik_target_{side}")]
+            for side in ("l", "r")
         }
+        self.virtual_object_mocap_id = model.body_mocapid[
+            mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "virtual_object_marker")]
         self.can_jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "can_free")
         self.box_jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "box_free")
         self.can_geom_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "can_geom")
@@ -331,6 +331,8 @@ class TeleopApp:
             "pos_l": data.site_xpos[self.site_l].tolist(), "rpy_l": [0.0, 0.0, 0.0],
             "grasp_r": 0.0, "thumb_r": 0.0, "grasp_l": 0.0, "thumb_l": 0.0,
             "squeeze_gap": BOX_PREGRASP_GAP,
+            "virtual_object_pos": [BOX_HOME_QPOS[0], BOX_HOME_QPOS[1], BOX_HOME_QPOS[2] + 0.10],
+            "virtual_object_rpy": [0.0, 0.0, 0.0],
             "lift": float(data.qpos[model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "lift_joint")]]),
         }
         # IK actually chases these smoothed copies, not the raw slider values directly (see
@@ -359,7 +361,12 @@ class TeleopApp:
         self.box_contact_forces = {"l": 0.0, "r": 0.0}
         self.box_held = False
         self.constraint_err_mm = 0.0
-        self.box_squeeze_kp_scale = 0.2
+        self.box_squeeze_kp_scale = 0.08
+        self.cyclo_controller = "bimanual_movel" if self.initial_scenario == "box" else "movel"
+        self.cyclo_move_time = 2.0
+        self.cyclo_grasp_captured = False
+        self.cyclo_capture_offsets = None
+        self.cyclo_status = "ready"
         # teleop_ui.draw_panel reads these two off `app` directly (see that module's
         # docstring for why it doesn't import teleop_app's constants instead).
         self.lift_range = LIFT_RANGE
@@ -411,8 +418,7 @@ class TeleopApp:
         self.last_mouse = list(glfw.get_cursor_pos(self.window))
         self.keys = KeyEdge()
         self.ik_err_mm = {"l": 0.0, "r": 0.0}
-        self.ik_dragging_side = None
-        self.ik_selected_side = "r"
+        self.gizmo_mouse_active = False
 
     # ------------------------------------------------------------------
     # R/G/C 세 가지 동작 -- 키보드(_handle_edge_keys)와 패널 버튼
@@ -453,8 +459,15 @@ class TeleopApp:
         self.gap_locked = False
         self.constraint_active = False
         self.rigid_relative_pose = None
+        self.cyclo_grasp_captured = False
+        self.cyclo_capture_offsets = None
+        self.cyclo_controller = "bimanual_movel" if scenario == "box" else "movel"
+        self.cyclo_status = "ready"
         self.box_tracking = scenario == "box"
         self.targets["squeeze_gap"] = BOX_PREGRASP_GAP
+        if scenario == "box":
+            self.targets["virtual_object_pos"] = [BOX_HOME_QPOS[0], BOX_HOME_QPOS[1], BOX_HOME_QPOS[2] + 0.10]
+            self.targets["virtual_object_rpy"] = [0.0, 0.0, 0.0]
         mujoco.mj_forward(self.model, self.data)
 
     def _reset_object(self, name):
@@ -575,7 +588,7 @@ class TeleopApp:
         mujoco.mju_mulQuat(quat, base_quat, quat)
         return quat
 
-    def _set_target_from_world_pose(self, side, world_pos, world_quat):
+    def _world_quat_to_target_rpy(self, side, world_quat):
         home_quat = self.home_quat_r if side == "r" else self.home_quat_l
         *_unused, base_quat = self._base_pose()
         base_quat_inv, home_quat_inv = np.zeros(4), np.zeros(4)
@@ -585,11 +598,182 @@ class TeleopApp:
         mujoco.mju_mulQuat(tmp, base_quat_inv, world_quat)
         rpy_delta_quat = np.zeros(4)
         mujoco.mju_mulQuat(rpy_delta_quat, home_quat_inv, tmp)
-        self.targets[f"pos_{side}"] = self._world_to_base_pos(world_pos).tolist()
-        self.targets[f"rpy_{side}"] = quat_to_rpy_deg(rpy_delta_quat)
-        self.smoothed_pos[side] = np.array(self.targets[f"pos_{side}"])
-        self.smoothed_rpy[side] = np.array(self.targets[f"rpy_{side}"])
-        self.stuck_counter[side] = 0
+        return quat_to_rpy_deg(rpy_delta_quat)
+
+    def _world_quat_to_virtual_rpy(self, world_quat):
+        *_unused, base_quat = self._base_pose()
+        base_quat_inv = np.zeros(4)
+        mujoco.mju_negQuat(base_quat_inv, base_quat)
+        rpy_delta_quat = np.zeros(4)
+        mujoco.mju_mulQuat(rpy_delta_quat, base_quat_inv, world_quat)
+        return quat_to_rpy_deg(rpy_delta_quat)
+
+    def _quat_to_mat(self, quat):
+        mat = np.zeros(9)
+        mujoco.mju_quat2Mat(mat, quat)
+        return mat.reshape(3, 3)
+
+    def _mat_to_quat(self, mat):
+        quat = np.zeros(4)
+        mujoco.mju_mat2Quat(quat, mat.reshape(9))
+        return quat
+
+    def _target_world_pose(self, side):
+        return self._local_to_world_pos(self.targets[f"pos_{side}"]), self._target_world_quat(side)
+
+    def _virtual_object_world_pose(self):
+        pos = self._local_to_world_pos(self.targets["virtual_object_pos"])
+        *_unused, base_quat = self._base_pose()
+        quat = np.zeros(4)
+        mujoco.mju_mulQuat(quat, base_quat, rpy_deg_to_quat(self.targets["virtual_object_rpy"]))
+        return pos, quat
+
+    def sync_virtual_object_to_hand_targets(self):
+        pos_r, _quat_r = self._target_world_pose("r")
+        pos_l, _quat_l = self._target_world_pose("l")
+        self.targets["virtual_object_pos"] = self._world_to_base_pos(0.5 * (pos_r + pos_l)).tolist()
+        self.targets["virtual_object_rpy"] = [0.0, 0.0, 0.0]
+
+    def capture_grasp(self):
+        """Cyclo-style `/capture_grasp true`: record both hand target poses relative to
+        the virtual object marker. After this, `virtual_object_pos/rpy` becomes the command
+        source and the two hand MoveL targets are derived from the captured offsets."""
+        self.sync_virtual_object_to_hand_targets()
+        obj_pos, obj_quat = self._virtual_object_world_pose()
+        obj_R = self._quat_to_mat(obj_quat)
+        offsets = {}
+        for side in ("r", "l"):
+            hand_pos, hand_quat = self._target_world_pose(side)
+            offsets[side] = {
+                "pos": obj_R.T @ (hand_pos - obj_pos),
+                "mat": obj_R.T @ self._quat_to_mat(hand_quat),
+            }
+        self.cyclo_capture_offsets = offsets
+        self.cyclo_grasp_captured = True
+        self.cyclo_controller = "bimanual_movel"
+        self.cyclo_status = "captured virtual object"
+        self.box_tracking = False
+        if self.scenario == "box":
+            self.box_grab = True
+
+    def release_grasp(self):
+        """Cyclo-style `/capture_grasp false`: return to independent hand MoveL targets."""
+        self.cyclo_grasp_captured = False
+        self.cyclo_capture_offsets = None
+        self.constraint_active = False
+        self.rigid_relative_pose = None
+        self.gap_locked = False
+        self.cyclo_status = "released"
+        if self.scenario == "box":
+            self.box_grab = False
+            self.box_tracking = True
+
+    def apply_virtual_object_target(self):
+        if not self.cyclo_grasp_captured or self.cyclo_capture_offsets is None:
+            return
+        obj_pos, obj_quat = self._virtual_object_world_pose()
+        obj_R = self._quat_to_mat(obj_quat)
+        for side, offset in self.cyclo_capture_offsets.items():
+            hand_pos = obj_pos + obj_R @ offset["pos"]
+            hand_quat = self._mat_to_quat(obj_R @ offset["mat"])
+            self.targets[f"pos_{side}"] = self._world_to_base_pos(hand_pos).tolist()
+            self.targets[f"rpy_{side}"] = self._world_quat_to_target_rpy(side, hand_quat)
+
+    def _active_gizmo_target(self):
+        if self.cyclo_controller == "bimanual_movel" and self.cyclo_grasp_captured:
+            return "virtual"
+        side = getattr(self, "jog_side", "r")
+        return side if side in ("l", "r") else "r"
+
+    def _gizmo_target_world_pose(self, target):
+        if target == "virtual":
+            return self._virtual_object_world_pose()
+        return self._target_world_pose(target)
+
+    def _set_gizmo_target_world_pose(self, target, world_pos, world_quat):
+        if target == "virtual":
+            self.targets["virtual_object_pos"] = self._world_to_base_pos(world_pos).tolist()
+            self.targets["virtual_object_rpy"] = self._world_quat_to_virtual_rpy(world_quat)
+            self.apply_virtual_object_target()
+        else:
+            self.targets[f"pos_{target}"] = self._world_to_base_pos(world_pos).tolist()
+            self.targets[f"rpy_{target}"] = self._world_quat_to_target_rpy(target, world_quat)
+        if self.scenario == "box" and self.box_tracking:
+            self.box_tracking = False
+
+    def _pose_to_imguizmo_matrix(self, world_pos, world_quat):
+        mat = np.eye(4)
+        mat[:3, :3] = self._quat_to_mat(world_quat)
+        mat[:3, 3] = world_pos
+        return imguizmo.im_guizmo.Matrix16(mat.astype(float).reshape(16, order="F"))
+
+    def _imguizmo_matrix_to_pose(self, matrix):
+        mat = np.array(matrix.values, dtype=float).reshape((4, 4), order="F")
+        world_pos = mat[:3, 3].copy()
+        world_quat = self._mat_to_quat(mat[:3, :3])
+        return world_pos, world_quat
+
+    def _imguizmo_camera_matrices(self, viewport):
+        glcam = self.scene.camera[0]
+        forward = np.array(glcam.forward, dtype=float)
+        forward /= max(np.linalg.norm(forward), 1e-9)
+        up = np.array(glcam.up, dtype=float)
+        up /= max(np.linalg.norm(up), 1e-9)
+        right = np.cross(forward, up)
+        right /= max(np.linalg.norm(right), 1e-9)
+        up = np.cross(right, forward)
+        pos = np.array(glcam.pos, dtype=float)
+
+        view = np.eye(4)
+        view[0, :3] = right
+        view[1, :3] = up
+        view[2, :3] = -forward
+        view[0, 3] = -np.dot(right, pos)
+        view[1, 3] = -np.dot(up, pos)
+        view[2, 3] = np.dot(forward, pos)
+
+        near = float(glcam.frustum_near)
+        far = float(glcam.frustum_far)
+        top = float(glcam.frustum_top)
+        bottom = float(glcam.frustum_bottom)
+        aspect = viewport.width / max(1.0, float(viewport.height))
+        right_f = top * aspect
+        left_f = bottom * aspect
+        proj = np.zeros((4, 4))
+        proj[0, 0] = 2.0 * near / (right_f - left_f)
+        proj[0, 2] = (right_f + left_f) / (right_f - left_f)
+        proj[1, 1] = 2.0 * near / (top - bottom)
+        proj[1, 2] = (top + bottom) / (top - bottom)
+        proj[2, 2] = -(far + near) / (far - near)
+        proj[2, 3] = -(2.0 * far * near) / (far - near)
+        proj[3, 2] = -1.0
+
+        return (imguizmo.im_guizmo.Matrix16(view.reshape(16, order="F")),
+                imguizmo.im_guizmo.Matrix16(proj.reshape(16, order="F")))
+
+    def _draw_transform_gizmo(self, viewport):
+        target = self._active_gizmo_target()
+        world_pos, world_quat = self._gizmo_target_world_pose(target)
+        object_matrix = self._pose_to_imguizmo_matrix(world_pos, world_quat)
+        view_matrix, proj_matrix = self._imguizmo_camera_matrices(viewport)
+
+        gizmo = imguizmo.im_guizmo
+        gizmo.begin_frame()
+        gizmo.set_drawlist(imgui.get_foreground_draw_list())
+        gizmo.set_rect(float(viewport.left), float(viewport.bottom),
+                       float(viewport.width), float(viewport.height))
+        gizmo.set_orthographic(False)
+        gizmo.set_gizmo_size_clip_space(0.18)
+        changed_translate = gizmo.manipulate(
+            view_matrix, proj_matrix, gizmo.OPERATION.translate, gizmo.MODE.world,
+            object_matrix)
+        changed_rotate = gizmo.manipulate(
+            view_matrix, proj_matrix, gizmo.OPERATION.rotate, gizmo.MODE.local,
+            object_matrix)
+        self.gizmo_mouse_active = bool(gizmo.is_using_any() or gizmo.is_over())
+        if changed_translate or changed_rotate:
+            new_pos, new_quat = self._imguizmo_matrix_to_pose(object_matrix)
+            self._set_gizmo_target_world_pose(target, new_pos, new_quat)
 
     def _sync_ik_mocaps_from_targets(self):
         if not hasattr(self, "ik_target_mocap_ids"):
@@ -597,6 +781,10 @@ class TeleopApp:
         for side, mocap_id in self.ik_target_mocap_ids.items():
             self.data.mocap_pos[mocap_id] = self._local_to_world_pos(self.targets[f"pos_{side}"])
             self.data.mocap_quat[mocap_id] = self._target_world_quat(side)
+        if hasattr(self, "virtual_object_mocap_id"):
+            pos, quat = self._virtual_object_world_pose()
+            self.data.mocap_pos[self.virtual_object_mocap_id] = pos
+            self.data.mocap_quat[self.virtual_object_mocap_id] = quat
 
     # ------------------------------------------------------------------
     # 메인 루프
@@ -629,10 +817,11 @@ class TeleopApp:
         cur_mouse = list(glfw.get_cursor_pos(self.window))
         dx, dy = cur_mouse[0] - self.last_mouse[0], cur_mouse[1] - self.last_mouse[1]
         self.last_mouse = cur_mouse
-        if io.want_capture_mouse:
+        if io.want_capture_mouse or self.gizmo_mouse_active:
             return
-        if self._handle_ik_target_mouse(dx, dy, cur_mouse):
-            return
+        # The visible IK target markers are output indicators synced from the numeric
+        # X/Y/Z + Roll/Pitch/Yaw targets. Pose control itself lives in those sliders; mouse
+        # drags stay reserved for the normal MuJoCo camera controls.
         left = glfw.get_mouse_button(self.window, glfw.MOUSE_BUTTON_LEFT) == glfw.PRESS
         right = glfw.get_mouse_button(self.window, glfw.MOUSE_BUTTON_RIGHT) == glfw.PRESS
         middle = glfw.get_mouse_button(self.window, glfw.MOUSE_BUTTON_MIDDLE) == glfw.PRESS
@@ -650,70 +839,6 @@ class TeleopApp:
         if io.mouse_wheel != 0:
             mujoco.mjv_moveCamera(self.model, mujoco.mjtMouse.mjMOUSE_ZOOM, 0.0,
                                    -0.05 * io.mouse_wheel, self.scene, self.cam)
-
-    def _handle_ik_target_mouse(self, dx, dy, cur_mouse):
-        ctrl_held = (glfw.get_key(self.window, glfw.KEY_LEFT_CONTROL) == glfw.PRESS
-                     or glfw.get_key(self.window, glfw.KEY_RIGHT_CONTROL) == glfw.PRESS)
-        left = glfw.get_mouse_button(self.window, glfw.MOUSE_BUTTON_LEFT) == glfw.PRESS
-        right = glfw.get_mouse_button(self.window, glfw.MOUSE_BUTTON_RIGHT) == glfw.PRESS
-        middle = glfw.get_mouse_button(self.window, glfw.MOUSE_BUTTON_MIDDLE) == glfw.PRESS
-        if not ctrl_held:
-            self.ik_dragging_side = None
-            self.pert.active = 0
-            return False
-        if not (left or right or middle):
-            self.ik_dragging_side = None
-            self.pert.select = self.ik_target_bodies[self.ik_selected_side]
-            self.pert.active = (int(mujoco.mjtPertBit.mjPERT_TRANSLATE)
-                                | int(mujoco.mjtPertBit.mjPERT_ROTATE))
-            mujoco.mjv_initPerturb(self.model, self.data, self.scene, self.pert)
-            return True
-
-        if self.ik_dragging_side is None:
-            selected_side = self._select_ik_target(cur_mouse)
-            if selected_side is None:
-                selected_side = self.ik_selected_side
-            self.ik_dragging_side = selected_side
-            self.ik_selected_side = selected_side
-            if self.scenario == "box":
-                self.box_tracking = False
-            self.pert.select = self.ik_target_bodies[selected_side]
-            self.pert.active = int(mujoco.mjtPertBit.mjPERT_TRANSLATE)
-            mujoco.mjv_initPerturb(self.model, self.data, self.scene, self.pert)
-
-        shift_held = (glfw.get_key(self.window, glfw.KEY_LEFT_SHIFT) == glfw.PRESS
-                      or glfw.get_key(self.window, glfw.KEY_RIGHT_SHIFT) == glfw.PRESS)
-        if right:
-            self.pert.active = int(mujoco.mjtPertBit.mjPERT_ROTATE)
-            action = mujoco.mjtMouse.mjMOUSE_ROTATE_V if shift_held else mujoco.mjtMouse.mjMOUSE_ROTATE_H
-        else:
-            self.pert.active = int(mujoco.mjtPertBit.mjPERT_TRANSLATE)
-            action = mujoco.mjtMouse.mjMOUSE_MOVE_V if (middle or shift_held) else mujoco.mjtMouse.mjMOUSE_MOVE_H
-
-        _win_w, win_h = glfw.get_window_size(self.window)
-        mujoco.mjv_movePerturb(self.model, self.data, action, dx / win_h, dy / win_h,
-                               self.scene, self.pert)
-        mocap_id = self.ik_target_mocap_ids[self.ik_dragging_side]
-        self._set_target_from_world_pose(
-            self.ik_dragging_side,
-            self.data.mocap_pos[mocap_id].copy(),
-            self.data.mocap_quat[mocap_id].copy(),
-        )
-        return True
-
-    def _select_ik_target(self, cur_mouse):
-        win_w, win_h = glfw.get_window_size(self.window)
-        if win_w <= 0 or win_h <= 0:
-            return None
-        selpnt = np.zeros(3)
-        geomid = np.array([-1], dtype=np.int32)
-        flexid = np.array([-1], dtype=np.int32)
-        skinid = np.array([-1], dtype=np.int32)
-        body_id = mujoco.mjv_select(
-            self.model, self.data, self.opt, win_w / win_h,
-            cur_mouse[0] / win_w, (win_h - cur_mouse[1]) / win_h,
-            self.scene, selpnt, geomid, flexid, skinid)
-        return self.ik_target_body_to_side.get(body_id)
 
     def _handle_edge_keys(self, io):
         """눌렀다 뗄 때 한 번만 반응하는 키(R=캔 리셋, G=접촉 시각화 토글,
@@ -776,7 +901,11 @@ class TeleopApp:
         mujoco.mju_quat2Mat(box_mat, box_quat)
         box_R = box_mat.reshape(3, 3)
         gap = self.targets["squeeze_gap"]
-        offset = BOX_HALF_EXTENTS[1] + gap
+        # `grasp_target_{l,r}` is the palm-forward grasp site validated for the can task,
+        # not the palm collision surface itself. Put the site slightly inside the nominal
+        # box-side target so the palm/finger collision geoms actually reach the box while
+        # the UI's gap value still means "distance from the box face".
+        offset = BOX_HALF_EXTENTS[1] + gap - BOX_TARGET_SITE_TO_PALM_MARGIN
         pos_r = box_pos + box_R @ np.array([0.0, -offset, 0.0])
         pos_l = box_pos + box_R @ np.array([0.0, offset, 0.0])
         self.targets["pos_r"] = world_to_base_pos(pos_r).tolist()
@@ -839,6 +968,8 @@ class TeleopApp:
                 self.targets["squeeze_gap"] += float(gap_delta)
             if self.box_tracking and not self.constraint_active:
                 self._update_box_tracking_targets(world_to_base_pos)
+            if self.cyclo_grasp_captured:
+                self.apply_virtual_object_target()
         else:
             for side in ("r", "l"):
                 if self.grab_state[side] is None:
@@ -945,8 +1076,7 @@ class TeleopApp:
     def _render_scene(self):
         """(한글) 갱신된 물리 상태(data)를 MuJoCo 저수준 API로 화면에 그리고,
         그 위에 ImGui 패널을 합성한다."""
-        if self.ik_dragging_side is None:
-            self._sync_ik_mocaps_from_targets()
+        self._sync_ik_mocaps_from_targets()
         self.opt.flags[mujoco.mjtVisFlag.mjVIS_CONTACTPOINT] = self.contact_viz
         self.opt.flags[mujoco.mjtVisFlag.mjVIS_CONTACTFORCE] = self.contact_viz
         fb_w, fb_h = glfw.get_framebuffer_size(self.window)
@@ -954,6 +1084,7 @@ class TeleopApp:
         mujoco.mjv_updateScene(self.model, self.data, self.opt, self.pert, self.cam,
                                 mujoco.mjtCatBit.mjCAT_ALL, self.scene)
         mujoco.mjr_render(viewport, self.scene, self.context)
+        self._draw_transform_gizmo(viewport)
 
         imgui.render()
         self.impl.render(imgui.get_draw_data())

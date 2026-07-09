@@ -14,6 +14,9 @@ import time
 
 from imgui_bundle import imgui
 
+JOG_POS_STEP_DEFAULT = 0.005
+JOG_RPY_STEP_DEFAULT = 2.0
+
 
 def _begin_expanded(title, flags=0):
     """imgui.begin's return type varies (plain bool vs. (expanded, opened) tuple)
@@ -30,6 +33,167 @@ def _ik_err_text(app, side):
     if app.arm_mode[side] == "ik":
         return f"{app.ik_err_mm[side]:.2f}mm"
     return "FK"
+
+
+def _note_manual_pose_edit(app):
+    if app.scenario == "box" and app.box_tracking:
+        app.box_tracking = False
+
+
+def _ensure_jog_state(app):
+    if not hasattr(app, "jog_side"):
+        app.jog_side = "virtual" if getattr(app, "cyclo_grasp_captured", False) else "r"
+    if not hasattr(app, "jog_pos_step_m"):
+        app.jog_pos_step_m = JOG_POS_STEP_DEFAULT
+    if not hasattr(app, "jog_rpy_step_deg"):
+        app.jog_rpy_step_deg = JOG_RPY_STEP_DEFAULT
+
+
+def _clamp_pose_targets(targets, side):
+    pos = targets[f"pos_{side}"]
+    rpy = targets[f"rpy_{side}"]
+    for i in range(3):
+        pos[i] = min(1.2, max(-0.2, pos[i]))
+        rpy[i] = min(90.0, max(-90.0, rpy[i]))
+
+
+def _apply_cartesian_jog(app, side, pos_delta=(0.0, 0.0, 0.0), rpy_delta=(0.0, 0.0, 0.0)):
+    if side == "virtual":
+        pos = app.targets["virtual_object_pos"]
+        rpy = app.targets["virtual_object_rpy"]
+        for i in range(3):
+            pos[i] = min(1.2, max(-0.2, pos[i] + pos_delta[i]))
+            rpy[i] = min(90.0, max(-90.0, rpy[i] + rpy_delta[i]))
+        app.apply_virtual_object_target()
+        _note_manual_pose_edit(app)
+        return
+
+    sides = ("l", "r") if side == "both" else (side,)
+    for s in sides:
+        if app.arm_mode[s] != "ik":
+            continue
+        pos = app.targets[f"pos_{s}"]
+        rpy = app.targets[f"rpy_{s}"]
+        for i in range(3):
+            pos[i] += pos_delta[i]
+            rpy[i] += rpy_delta[i]
+        _clamp_pose_targets(app.targets, s)
+    _note_manual_pose_edit(app)
+
+
+def _repeat_button(label):
+    pressed = imgui.button(label)
+    active = imgui.is_item_active()
+    return pressed or active
+
+
+def _draw_jog_row(app, title, axis_labels, step, is_rotation=False):
+    imgui.text(title)
+    for i, axis in enumerate(axis_labels):
+        if i:
+            imgui.same_line()
+        neg = f"{axis}-##jog_{title}_{axis}_neg"
+        pos = f"{axis}+##jog_{title}_{axis}_pos"
+        if _repeat_button(neg):
+            delta = [0.0, 0.0, 0.0]
+            delta[i] = -step
+            if is_rotation:
+                _apply_cartesian_jog(app, app.jog_side, rpy_delta=delta)
+            else:
+                _apply_cartesian_jog(app, app.jog_side, pos_delta=delta)
+        imgui.same_line()
+        if _repeat_button(pos):
+            delta = [0.0, 0.0, 0.0]
+            delta[i] = step
+            if is_rotation:
+                _apply_cartesian_jog(app, app.jog_side, rpy_delta=delta)
+            else:
+                _apply_cartesian_jog(app, app.jog_side, pos_delta=delta)
+
+
+def _draw_cyclo_control_panel(app):
+    _ensure_jog_state(app)
+    if not imgui.collapsing_header("Cyclo Control", imgui.TreeNodeFlags_.default_open):
+        return
+
+    imgui.text("Controller")
+    for controller, label in (("movel", "MoveL"), ("bimanual_movel", "Bimanual MoveL")):
+        if controller != "movel":
+            imgui.same_line()
+        if imgui.radio_button(f"{label}##cyclo{controller}", app.cyclo_controller == controller):
+            if controller == "movel" and app.cyclo_grasp_captured:
+                app.release_grasp()
+            app.cyclo_controller = controller
+
+    changed, app.cyclo_move_time = imgui.slider_float(
+        "Move time", app.cyclo_move_time, 0.2, 8.0, "%.1f s")
+    if changed:
+        app.cyclo_move_time = min(8.0, max(0.2, app.cyclo_move_time))
+
+    if app.cyclo_controller == "bimanual_movel":
+        if imgui.button("Release Grasp (/capture_grasp false)"
+                        if app.cyclo_grasp_captured
+                        else "Capture Grasp (/capture_grasp true)"):
+            if app.cyclo_grasp_captured:
+                app.release_grasp()
+                app.jog_side = "r"
+            else:
+                app.capture_grasp()
+                app.jog_side = "virtual"
+        imgui.text(f"status: {app.cyclo_status}")
+
+    imgui.text("Interactive marker")
+    choices = (("virtual", "virtual_object_marker"),) if (
+        app.cyclo_controller == "bimanual_movel" and app.cyclo_grasp_captured
+    ) else (("r", "right_goal_marker"), ("l", "left_goal_marker"))
+    if app.jog_side not in {choice[0] for choice in choices}:
+        app.jog_side = choices[0][0]
+    for i, (side, label) in enumerate(choices):
+        if i:
+            imgui.same_line()
+        if imgui.radio_button(f"{label}##jogside{side}", app.jog_side == side):
+            app.jog_side = side
+    imgui.text("Drag the 3D arrows for XYZ and colored rings for Roll/Pitch/Yaw.")
+
+    changed, app.jog_pos_step_m = imgui.slider_float(
+        "Position step", app.jog_pos_step_m, 0.001, 0.050, "%.3f m")
+    if changed:
+        app.jog_pos_step_m = min(0.050, max(0.001, app.jog_pos_step_m))
+    changed, app.jog_rpy_step_deg = imgui.slider_float(
+        "RPY step", app.jog_rpy_step_deg, 0.5, 15.0, "%.1f deg")
+    if changed:
+        app.jog_rpy_step_deg = min(15.0, max(0.5, app.jog_rpy_step_deg))
+
+    _draw_jog_row(app, "Translate", ("X", "Y", "Z"), app.jog_pos_step_m, is_rotation=False)
+    _draw_jog_row(app, "Rotate", ("Roll", "Pitch", "Yaw"), app.jog_rpy_step_deg, is_rotation=True)
+    if imgui.button("Reset selected RPY##jog_reset_rpy"):
+        if app.jog_side == "virtual":
+            app.targets["virtual_object_rpy"] = [0.0, 0.0, 0.0]
+            app.apply_virtual_object_target()
+        else:
+            for side in (("l", "r") if app.jog_side == "both" else (app.jog_side,)):
+                if app.arm_mode[side] == "ik":
+                    app.targets[f"rpy_{side}"][0] = 0.0
+                    app.targets[f"rpy_{side}"][1] = 0.0
+                    app.targets[f"rpy_{side}"][2] = 0.0
+        _note_manual_pose_edit(app)
+
+    if app.cyclo_controller == "bimanual_movel" and app.cyclo_grasp_captured:
+        imgui.text("virtual_object_goal_move")
+        pos = app.targets["virtual_object_pos"]
+        rpy = app.targets["virtual_object_rpy"]
+        for i, axis in enumerate(("X", "Y", "Z")):
+            changed, pos[i] = imgui.slider_float(
+                f"VO {axis}##virtual_object_pos_{axis}", pos[i], -0.2, 1.2, "%.3f m")
+            if changed:
+                app.apply_virtual_object_target()
+                _note_manual_pose_edit(app)
+        for i, axis in enumerate(("Roll", "Pitch", "Yaw")):
+            changed, rpy[i] = imgui.slider_float(
+                f"VO {axis}##virtual_object_rpy_{axis}", rpy[i], -90.0, 90.0, "%.1f deg")
+            if changed:
+                app.apply_virtual_object_target()
+                _note_manual_pose_edit(app)
 
 
 def draw_panel(app):
@@ -52,16 +216,9 @@ def draw_panel(app):
                f"yaw={math.degrees(data.qpos[app.base_yaw_qadr]):+.1f}deg  "
                f"(Up/Down drive, Left/Right yaw, [/] strafe, Q/E lift)")
     imgui.text(f"Scenario: {app.scenario.upper()}  (set at launch with --scenario)")
-    imgui.text("Mouse IK: Ctrl+click target, Ctrl+Left drag move, Ctrl+Right drag rotate")
-    imgui.same_line()
-    if imgui.button("Mouse L"):
-        app.ik_selected_side = "l"
-    imgui.same_line()
-    if imgui.button("Mouse R"):
-        app.ik_selected_side = "r"
-    imgui.same_line()
-    imgui.text(f"active {app.ik_selected_side.upper()}")
     imgui.separator()
+
+    _draw_cyclo_control_panel(app)
 
     for side, label in (("r", "Right hand control target"), ("l", "Left hand control target")):
         if imgui.collapsing_header(label, imgui.TreeNodeFlags_.default_open):
@@ -75,12 +232,19 @@ def draw_panel(app):
                 pos = targets[f"pos_{side}"]
                 rpy = targets[f"rpy_{side}"]
                 for i, axis in enumerate(("X", "Y", "Z")):
-                    _, pos[i] = imgui.slider_float(f"{axis}##{side}pos", pos[i], -0.2, 1.2, "%.3f m")
+                    changed, pos[i] = imgui.slider_float(
+                        f"{axis}##{side}pos", pos[i], -0.2, 1.2, "%.3f m")
+                    if changed:
+                        _note_manual_pose_edit(app)
                 imgui.text("Roll/Pitch/Yaw (relative to home pose, hand-local axes)")
                 for i, axis in enumerate(("Roll", "Pitch", "Yaw")):
-                    _, rpy[i] = imgui.slider_float(f"{axis}##{side}rpy", rpy[i], -90.0, 90.0, "%.1f deg")
+                    changed, rpy[i] = imgui.slider_float(
+                        f"{axis}##{side}rpy", rpy[i], -90.0, 90.0, "%.1f deg")
+                    if changed:
+                        _note_manual_pose_edit(app)
                 if imgui.button(f"Reset orientation##{side}"):
                     rpy[0], rpy[1], rpy[2] = 0.0, 0.0, 0.0
+                    _note_manual_pose_edit(app)
             else:
                 # FK: IK를 아예 거치지 않고 관절각을 직접 토크 제어기 목표로 쓴다 --
                 # 리프트를 움직이는 동안 이 손을 FK로 두면 팔이 리프트에 강체로
@@ -119,7 +283,7 @@ def draw_panel(app):
                     app.constraint_active = False
                     app.rigid_relative_pose = None
                     app.box_tracking = True
-            _, app.box_tracking = imgui.checkbox("Box-tracking targets", app.box_tracking)
+            _, app.box_tracking = imgui.checkbox("Auto-align XYZ targets to box", app.box_tracking)
             if app.gap_locked:
                 imgui.text(f"Squeeze locked at {targets['squeeze_gap']*1000:.1f}mm")
             else:
