@@ -33,16 +33,16 @@ graph LR
 
 ## 읽는 순서
 
-| 순서 | 문서 | 내용 |
-|---|---|---|
-| 1 | [grasp.py](grasp.md) | 손가락 synergy와 grasp 판정 |
-| 2 | [ik.py](ik.md) | site 기준 6DOF IK |
-| 3 | [arm_control.py](arm_control.md) | 팔 토크 제어 |
-| 4 | [base_teleop.py](base_teleop.md) | swerve drive |
-| 5 | [teleop_targets.py](teleop_targets.md) | target pose와 Bimanual MoveL |
-| 6 | [teleop_ui.py](teleop_ui.md) | ImGui control panel |
-| 7 | [teleop_render.py](teleop_render.md) | 렌더링과 gizmo |
-| 8 | [teleop_app.py](teleop_app.md) | 전체 조립과 main loop |
+| 순서 | 문서 | 내용 | 파일이 분리된 이유 |
+|---|---|---|---|
+| 1 | grasp.py | 손가락 synergy와 grasp 판정 | 손 제어는 팔/베이스와 독립적으로 actuator target과 contact force만 다루기 때문 |
+| 2 | ik.py | site 기준 6DOF IK | live simulation을 건드리지 않는 scratch 기구학 계산이라 별도 테스트가 쉽기 때문 |
+| 3 | arm_control.py | 팔 토크 제어 | IK 결과를 실제 torque command로 바꾸는 제어층이기 때문 |
+| 4 | base_teleop.py | swerve drive | 베이스 입력 smoothing과 wheel command는 팔/손 target과 독립적이기 때문 |
+| 5 | teleop_targets.py | target pose와 Bimanual MoveL | UI/gizmo/IK 사이 좌표 변환과 Cyclo 상태가 한곳에 있어야 조작감 수정이 쉽기 때문 |
+| 6 | teleop_ui.py | ImGui control panel | 화면 위젯과 상태 변경만 담당하고 physics/render와 분리하기 위해 |
+| 7 | teleop_render.py | 렌더링과 gizmo | GLFW/MuJoCo render/ImGuizmo plumbing이 물리 제어와 독립적이기 때문 |
+| 8 | teleop_app.py | 전체 조립과 main loop | 각 모듈을 순서대로 호출하는 composition root 역할만 남기기 위해 |
 
 ## 공통 규칙
 
