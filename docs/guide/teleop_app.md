@@ -1,182 +1,113 @@
-# `src/teleop_app.py` — 텔레옵 앱, 모든 모듈이 실제로 합쳐지는 지점
+# `src/teleop_app.py`
 
-## 이 파일이 하는 일
+앱의 조립 지점이다. MuJoCo model/data를 만들고, UI/렌더/target/IK/control 모듈을
+연결한 뒤 메인 루프를 실행한다.
 
-`TeleopApp` 클래스 하나가 이 프로젝트 전체를 하나의 실행 가능한 앱으로 묶는다.
-GLFW 창 하나를 띄우고, 그 위에 MuJoCo의 저수준 렌더 API로 3D 장면을, Dear ImGui로
-슬라이더 패널을 함께 그리면서, 매 프레임 (1) 입력 처리 (2) IK/FK (3) 물리 스텝
-(4) 렌더링을 순서대로 실행한다. 다른 일곱 파일(`ik`, `arm_control`, `grasp`,
-`base_teleop`, `teleop_targets`, `teleop_ui`, `teleop_render`)은 전부 이 파일에서 import되어 조립된다 — **이 파일을
-읽으면 나머지 파일들이 정확히 언제, 어떤 순서로, 어떤 데이터를 주고받으며
-호출되는지 전부 드러난다.**
+## 책임
 
-## 구현: 클래스 하나, 메서드 여러 개
+| 구분 | 내용 |
+|---|---|
+| 초기화 | model/data, IK solver, arm controller, actuator/site/joint id 준비 |
+| 입력 | 키보드 edge 입력, 주행/리프트 continuous 입력 |
+| 상태 | `app.targets`, arm mode, grab state, Cyclo state |
+| 물리 step | target smoothing, IK solve, actuator command, `mj_step` |
+| 연결 | `teleop_ui`, `teleop_render`, `teleop_targets` wrapper 제공 |
 
-`__init__`이 세 그룹으로 나눠 초기화한다:
+## 메인 루프
 
-```python title="src/teleop_app.py — TeleopApp.__init__"
-def __init__(self):
-    self._setup_sim()      # 모델/솔버/제어기/슬라이더 목표값 -- 렌더링과 무관한 전부
-    self._setup_render()   # teleop_render.setup_render(self, ...)
-    self._setup_loop_state()  # IK 웜스타트 값, 타이밍, 입력 헬퍼
-```
-
-`run()`은 그 자체로 이 프로젝트의 데이터 흐름을 요약하는 6줄이다:
-
-```python title="src/teleop_app.py — 메인 루프"
+```python
 while not glfw.window_should_close(self.window):
-    t0 = time.perf_counter()
     io = teleop_render.begin_frame(self)
-
     teleop_render.handle_camera_mouse(self, io)
-    self._handle_edge_keys(io)             # R(캔 리셋)/G(접촉 시각화)/C(카메라)
+    self._handle_edge_keys(io)
     drive_keys = self._read_drive_and_lift_keys(io)
-    self._draw_ui_panel()                  # teleop_ui.draw_panel(self) 호출
-    self._step_physics(drive_keys)         # ik/arm_control/grasp/base_teleop 전부 호출
+    self._draw_ui_panel()
+    self._step_physics(drive_keys)
     teleop_render.render_scene(self)
     teleop_render.end_frame(self, t0)
 ```
 
-각 메서드는 원래 하나의 거대한 `main()` 함수 안에 지역 변수로 얽혀 있던 코드를
-그대로 단계별 메서드로 나눈 것뿐이라, 동작 자체는 나누기 전과 완전히 같다 — 상태는
-전부 `self.*` 속성으로 공유된다.
+## 함수와 메서드
 
-### `_step_physics` — 실제로 모든 모듈이 호출되는 곳
+### 모듈 함수
 
-```python title="src/teleop_app.py — _step_physics 핵심 (오른손 IK/FK 분기)"
-if self.arm_mode["r"] == "ik":
-    quat_r = ...  # home_quat_r ⊗ rpy_delta, base_quat 적용
-    pos_r_world = local_to_world_pos(self.home_pos_local["r"] + self.smoothed_pos["r"])
-    iter_r = STUCK_MAX_ITER if self.stuck_counter["r"] >= STUCK_FRAMES_THRESHOLD else IK_MAX_ITER
-    self.q_des_r, perr_r, _ = self.solver_r.solve_pose(self.q_des_r, pos_r_world, quat_r,
-                                                        max_iter=iter_r, context_qpos=ctx_qpos)
-    ...
-else:
-    self.q_des_r = np.radians(self.fk_q_deg["r"])   # FK: IK를 아예 건너뜀
+| 이름 | 역할 |
+|---|---|
+| `rpy_deg_to_quat(rpy_deg)` | `teleop_targets.rpy_deg_to_quat()` wrapper |
+| `quat_to_rpy_deg(q)` | `teleop_targets.quat_to_rpy_deg()` wrapper |
+| `_reset_can_random(model, data, rng)` | 캔 free joint를 home 근처에 랜덤 리셋 |
+| `_parse_args(argv)` | CLI 인자 파싱 |
+| `main(argv=None)` | `TeleopApp().run()` 실행 |
 
-wheel_cmds = self.base_drive.update(drive_keys, self.frame_dt, base_yaw)
+### `KeyEdge`
 
-for _ in range(self.steps_per_frame):
-    self.ctrl_r.apply(data, self.q_des_r)     # arm_control.py
-    self.ctrl_l.apply(data, self.q_des_l)
-    data.ctrl[self.lift_aid] = self.targets["lift"]
-    for wheel, (steer_angle, drive_angvel) in wheel_cmds.items():
-        data.ctrl[self.wheel_steer_aids[wheel]] = steer_angle
-        data.ctrl[self.wheel_drive_aids[wheel]] = drive_angvel
-    grasp.apply_grasp(model, data, grasp=self.targets["grasp_r"], thumb=self.targets["thumb_r"], side="r")
-    grasp.apply_grasp(model, data, grasp=self.targets["grasp_l"], thumb=self.targets["thumb_l"], side="l")
-    mujoco.mj_step(model, data)
-```
+| 메서드 | 역할 |
+|---|---|
+| `pressed(window, key)` | 눌림 edge를 한 번만 true로 반환 |
 
-렌더 프레임 하나(`frame_dt`, 25Hz)당 물리 스텝을 여러 번(`steps_per_frame`) 돌리는
-이유는 렌더링은 25Hz면 충분해도 물리는 훨씬 촘촘한 timestep이 필요하기 때문이다.
-IK는 프레임당 한 번만 풀지만, `arm_control.apply`/`grasp.apply_grasp`/바퀴 ctrl은
-**매 물리 서브스텝마다 다시 적용**된다 — 목표는 프레임당 한 번만 바뀌어도, 그
-목표를 향한 토크 계산 자체는 물리 스텝만큼 촘촘하게 다시 해야 하기 때문이다.
+### `TeleopApp`
 
-텔레옵 앱은 can workflow 하나만 사용한다. 이전 box workflow의 XML asset은 남아 있어도
-앱 시작 시 충돌과 렌더를 끄고 화면 밖으로 치워 live control surface에서는 제외한다.
+| 메서드 | 역할 |
+|---|---|
+| `__init__()` | sim, render, loop state 초기화 |
+| `_setup_sim()` | model/data 로드, solver/controller/id/target 상태 생성 |
+| `_setup_render()` | `teleop_render.setup_render()` 호출 |
+| `_setup_loop_state()` | q_des, FK slider, timing, input 상태 생성 |
+| `reset_can()` | 캔 위치 리셋 후 `mj_forward()` |
+| `reset_active_object()` | 캔/grab/Cyclo 상태 리셋 |
+| `_disable_legacy_box_asset()` | XML에 남은 box asset 비활성화 |
+| `cycle_camera()` | 카메라 preset 전환 |
+| `set_arm_mode(side, mode)` | 손별 IK/FK 전환과 target 동기화 |
+| `_draw_ui_panel()` | `teleop_ui.draw_panel(self)` 호출 |
+| `_handle_edge_keys(io)` | `R/G/C` edge key 처리 |
+| `_read_drive_and_lift_keys(io)` | 주행/리프트 continuous key 처리 |
+| `_step_physics(drive_keys)` | target smoothing, IK, base/grasp/lift/arm command, `mj_step` |
+| `run()` | 전체 frame loop 실행 |
 
-화면의 IK target 마커는 숫자 X/Y/Z + Roll/Pitch/Yaw target과 양방향으로 동기화된다.
-손별 X/Y/Z target은 베이스 절대 좌표가 아니라 시작 손 위치 기준 offset이라, 앱을
-켜면 오른손/왼손 모두 `0, 0, 0`에서 시작한다. 실제 IK에 넘길 때는 이 offset을
-`home_pos_local[side]`에 더한 뒤 베이스의 현재 pose로 월드 좌표화한다.
-`MoveL`에서는 오른손/왼손 marker를 독립적으로 조작하고, `Bimanual MoveL`에서
-`capture_grasp()`를 누른 뒤에는 `virtual_object_marker`의 pose가 양손 target을 함께
-파생한다. `_sync_ik_mocaps_from_targets()`가 매 렌더 프레임 marker mocap pose를
-target에 맞추고, ImGuizmo drag 결과는 `_set_gizmo_target_world_pose()`에서 다시
-home-relative XYZ offset과 home-relative RPY target으로 변환된다.
+### `teleop_targets.py` wrapper
 
-이 좌표계 변환과 `Bimanual MoveL` capture/apply 구현은 `teleop_targets.py`로 분리되어
-있고, `TeleopApp` 안에는 기존 테스트/렌더 호출을 위한 얇은 wrapper만 남아 있다.
+기존 렌더/테스트 호출 계약을 유지하기 위해 아래 이름은 `TeleopApp`에 남아 있다.
+실제 계산은 `teleop_targets.py`가 수행한다.
 
-### IK ↔ FK 모드 전환 — `set_arm_mode`
+| wrapper | 실제 역할 |
+|---|---|
+| `_base_pose()` | base x/y/yaw와 yaw quaternion |
+| `_local_to_world_pos()` / `_world_to_base_pos()` | base/world 위치 변환 |
+| `_target_pos_to_base_pos()` / `_target_pos_to_world_pos()` / `_world_to_target_pos()` | 손별 home-relative target 위치 변환 |
+| `_target_world_quat()` / `_world_quat_to_target_rpy()` | 손별 RPY/world quaternion 변환 |
+| `_world_quat_to_virtual_rpy()` | virtual object RPY 변환 |
+| `_quat_to_mat()` / `_mat_to_quat()` | quaternion/matrix 변환 |
+| `_target_world_pose()` | 손 target world pose |
+| `_virtual_object_world_pose()` | virtual object world pose |
+| `sync_virtual_object_to_hand_targets()` | virtual object를 양손 중점에 배치 |
+| `capture_grasp()` | Bimanual MoveL capture |
+| `release_grasp()` | Bimanual MoveL release |
+| `apply_virtual_object_target()` | virtual object pose로 양손 target 갱신 |
+| `_bimanual_marker_visible()` | virtual marker 표시 여부 |
+| `_sync_marker_visibility()` | marker alpha 갱신 |
+| `_active_gizmo_target()` | gizmo 대상 선택 |
+| `_gizmo_target_world_pose()` | gizmo 대상 world pose |
+| `_set_gizmo_target_world_pose()` | gizmo 결과를 target에 반영 |
+| `_sync_ik_mocaps_from_targets()` | mocap marker와 target 동기화 |
 
-리프트를 움직이는 동안 IK가 매 프레임에만 어깨 높이를 다시 읽어 들이는데 리프트는
-프레임 사이에도 계속 움직여서 생기는 출렁임을, 손별로 관절각을 직접 고정하는
-FK 모드로 회피할 수 있다(팔이 리프트에 강체로 붙어 그대로 오르내리기만 함). 전환
-순간 팔이 튀지 않도록 방향에 따라 다르게 동기화한다:
+## `_step_physics()` 내부 순서
 
-```python title="src/teleop_app.py — set_arm_mode"
-if mode == "fk":
-    # ik -> fk: 지금 추종 중이던 관절각(q_des)을 그대로 FK 슬라이더 값으로 복사
-    # -- 전환 직후 첫 스텝의 목표 관절각이 전환 직전과 정확히 같아 점프가 없다.
-    self.fk_q_deg[side] = [math.degrees(v) for v in q_des]
-else:
-    # fk -> ik: "지금 실제 site가 있는 월드 포즈"를 홈 기준 XYZ offset/RPY로 역산해
-    # targets/smoothed_pos/smoothed_rpy에 채워 넣는다 -- 낡은 목표로 갑자기
-    # 끌려가지 않고, 방금 있던 자리에서부터 IK가 이어서 풀린다.
-    ...
-    rpy_deg = quat_to_rpy_deg(rpy_delta_quat)
-    self.targets[f"pos_{side}"] = local_pos
-    self.targets[f"rpy_{side}"] = rpy_deg
-    self.smoothed_pos[side] = np.array(local_pos)
-    self.smoothed_rpy[side] = np.array(rpy_deg)
-```
+1. 현재 `data.qpos`를 IK `context_qpos`로 복사한다.
+2. Bimanual MoveL capture 상태면 virtual object target을 양손 target으로 적용한다.
+3. grab/release button 상태를 grasp/thumb slider 값으로 ramp한다.
+4. raw target을 `smoothed_pos`, `smoothed_rpy`로 rate-limit한다.
+5. IK 모드인 손은 `ik.solve_pose()`로 `q_des`를 계산한다.
+6. FK 모드인 손은 FK slider 값을 `q_des`로 사용한다.
+7. `base_teleop.SwerveDrive.update()`로 wheel command를 계산한다.
+8. 물리 substep마다 arm torque, lift, wheel, hand command를 `data.ctrl`에 쓴다.
+9. `mujoco.mj_step()`을 호출한다.
 
-fk→ik 방향은 순전히 기하 변환이다: 실제 site의 월드 위치/자세를,
-`_step_physics`가 쓰는 것과 정확히 같은 home-relative XYZ offset +
-home-relative RPY 변환의 **역변환**으로 되짚는다. 이 역변환이 정확한지는 render 비교와 `solve_pose`가
-그 결과에서 즉시(0 iteration에 가깝게) 수렴하는지로 직접 검증했다.
+## 직접 쓰는 `data`
 
-### 렌더링 — `teleop_render.py`로 분리
+| 쓰기 위치 | 목적 |
+|---|---|
+| `_reset_can_random()` | 자유물체 캔 리셋 |
+| `_disable_legacy_box_asset()` | legacy box asset 비활성화 |
+| `_step_physics()` | actuator command 기록과 `mj_step` |
 
-`mujoco.viewer.launch_passive`는 편리한 내장 뷰어지만 자체 창을 소유해서 커스텀
-위젯을 넣을 훅이 없다. 대신 MuJoCo의 C++ "simulate" 앱과 같은 방식으로, 하나의
-GLFW 창 안에서 저수준 API(`MjvScene`/`MjrContext`/`mjv_updateScene`/`mjr_render`)를
-직접 호출해 3D 장면을 그리고, 그 위에 같은 프레임버퍼로 Dear ImGui를 그린다
-(`teleop_render.render_scene`).
-
-```python title="src/teleop_render.py — render_scene"
-app._sync_ik_mocaps_from_targets()
-mujoco.mjv_updateScene(app.model, app.data, app.opt, app.pert, app.cam,
-                       mujoco.mjtCatBit.mjCAT_ALL, app.scene)
-mujoco.mjr_render(viewport, app.scene, app.context)
-draw_transform_gizmo(app, viewport)
-imgui.render()
-app.impl.render(imgui.get_draw_data())
-glfw.swap_buffers(app.window)
-```
-
-### `src/imgui.ini` — 코드가 아니라 ImGui가 쓰는 파일
-
-같은 디렉터리의 `imgui.ini`는 사람이 작성한 코드가 아니라, `imgui.create_context()`
-+ `GlfwRenderer`가 앱을 실행할 때마다 자동으로 읽고 쓰는 **창 레이아웃 상태 파일**
-(패널 위치/크기)이다. 10줄짜리 텍스트(`[Window][FFW-SH5 Teleop] Pos=... Size=...`)
-뿐이라 구현 로직은 없다 — 다음에 앱을 켰을 때 패널이 마지막으로 둔 자리에 그대로
-뜨게 해주는 역할만 한다.
-
-## 이 파일이 다른 파일과 합쳐지는 방식 (전체 그림)
-
-```text
-teleop_app.py
-├── import ik            → InverseKinematics 인스턴스 2개 (손당 하나)
-├── import arm_control   → ArmTorqueController 인스턴스 2개 (손당 하나)
-├── import grasp         → apply_grasp()를 물리 서브스텝마다 양손 호출
-├── import base_teleop   → SwerveDrive 인스턴스 1개, 프레임당 한 번 호출
-├── import teleop_targets → home-relative target 변환 + Bimanual MoveL capture/apply
-├── import teleop_ui     → draw_panel(self)를 프레임당 한 번 호출 (app 자신을 넘김)
-└── import teleop_render → GLFW/ImGui/MuJoCo 렌더링 + ImGuizmo 조작
-```
-
-- **ik.py / arm_control.py**는 손마다 짝을 이뤄 협업한다: `ik`가 "어디로"를,
-  `arm_control`이 "어떻게(토크)"를 담당하고, 그 사이를 잇는 게 `q_des_r`/`q_des_l`
-  뿐이다. FK 모드에서는 이 짝의 앞쪽(`ik`)이 빠지고 `teleop_ui`의 슬라이더 값이
-  그 자리를 대신한다 — `arm_control` 쪽 코드는 이 사실을 전혀 모른다.
-- **grasp.py**는 팔과 완전히 독립된 액추에이터(손가락)를 담당해서, 같은 물리
-  서브스텝 루프 안에서 그냥 나란히 호출된다. 현재 live teleop에서는 손별
-  `apply_grasp()`/`is_grasped()` 경로를 사용한다.
-- **base_teleop.py**는 프레임당 한 번만 호출되고(물리 서브스텝마다는 아님), 그
-  결과(`wheel_cmds`)만 서브스텝 루프 안에서 반복 사용된다. 이때 실제 조향 qpos와
-  바퀴 qvel을 같이 넘겨 ROBOTIS식 180도 반전 FSM과 alignment gating이 물리 상태
-  기준으로 동작하게 한다.
-- **teleop_targets.py**는 손 target 좌표계 변환과 Cyclo-style `Bimanual MoveL` 상태
-  전이를 담당한다. UI/렌더/테스트 호환을 위해 `TeleopApp`에는 `_target_world_pose()`
-  같은 wrapper가 남아 있지만 실제 계산은 이 모듈에 있다.
-- **teleop_ui.py**는 유일하게 "값을 읽는 쪽"이 아니라 "`self`(=app) 객체 자체를
-  받아 그 상태를 직접 읽고 쓰는" 모듈이다 — 자세한 이유는 `teleop_ui.md` 참고.
-- **teleop_render.py**는 창 생성, 카메라 마우스, ImGuizmo, scene render, frame pacing을
-  담당한다. 이 파일도 `teleop_app`을 import하지 않고 `app` 객체를 duck typing으로 받는다.
-- 물리 상태(`data`)에 대한 예외적 직접 쓰기는 `reset_active_object()`의 캔 리셋과
-  legacy box asset 비활성화뿐이다 — 자유물체의 리셋/초기 배치로, 로봇 관절에 대한
-  kinematic 치팅이 아니다.
+로봇 관절 위치를 live `data.qpos`로 직접 덮어쓰지 않는다.

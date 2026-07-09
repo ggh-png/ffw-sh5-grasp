@@ -1,48 +1,69 @@
-# 직접 실행하기
+# 실행 방법
 
-## 설치 (최초 1회)
+## 설치
 
 ```bash
 pip install --break-system-packages mujoco numpy trimesh pillow glfw imgui-bundle
 ```
 
-## 각 Phase 자동 검증 테스트 (headless, 전부 독립 실행 가능)
+문서 미리보기까지 필요하면:
 
 ```bash
-for p in 0 1 2 3 4 5 6; do python3 tests/test_phase_$p.py; done
+pip install --break-system-packages mkdocs mkdocs-material
 ```
 
-## 직접 조작 (하나의 네이티브 창, 3D 뷰 + 슬라이더 패널)
+## 텔레옵 실행
 
 ```bash
 python3 src/teleop_app.py
 ```
 
-- **마우스**(3D 뷰 위): 좌클릭 드래그 = 궤도 회전, 우클릭 드래그 = 팬, 휠 = 줌.
-- 텔레옵 앱은 can workflow 하나만 사용하며, 별도의 시나리오 인자는 받지 않는다.
-- **Up/Down** = 베이스 전진/후진, **Left/Right** = 제자리 yaw 회전, **[/]**
-  = 좌우 스트레이프 (전부 실제 바퀴-지면 마찰로 구동), **Q/E** = 리프트 하강/상승.
-- **R** = 캔 리셋, **G** = contact force/point 시각화 토글,
-  **C** = 카메라 프리셋 전환.
-- 양손 EE 포즈(X/Y/Z + Roll/Pitch/Yaw)는 `Cyclo Control` 패널에서 조작한다.
-  `MoveL`에서는 `right_goal_marker`/`left_goal_marker`가 각 손 목표이고,
-  `Bimanual MoveL`에서 `Capture Grasp`를 누른 뒤에는 `virtual_object_marker`가
-  양손을 함께 움직이는 목표가 된다.
-- 3D 화면에 표시되는 X/Y/Z 화살표를 드래그하면 위치가 바뀌고, Roll/Pitch/Yaw 회전
-  링을 드래그하면 자세가 바뀐다. 패널의 +/- 버튼과 숫자 슬라이더는 같은 target을
-  보조적으로 미세 조정하는 용도다.
-- 손별 XYZ는 시작 손 위치 기준 offset이라 0,0,0이 현재 손 위치이고, RPY도 각 손의
-  홈 포즈 기준 로컬 회전이라 0,0,0이 자연스러운 기본 자세다.
-- Can grasp는 손별 grasp/thumb 시너지로 조작한다. 양팔 동시 이동은
-  `Bimanual MoveL` capture 후 `virtual_object_marker`를 통해 제어한다.
+하나의 네이티브 창에 3D 뷰와 ImGui 패널이 함께 열린다.
 
-## 이 문서 사이트를 로컬에서 미리보기
+## 조작
+
+| 입력 | 기능 |
+|---|---|
+| Mouse left drag | 카메라 orbit |
+| Mouse right drag | 카메라 pan |
+| Mouse wheel | 카메라 zoom |
+| `Up` / `Down` | 베이스 전진 / 후진 |
+| `Left` / `Right` | 베이스 yaw 회전 |
+| `[` / `]` | 베이스 좌 / 우 strafe |
+| `Q` / `E` | 리프트 하강 / 상승 |
+| `R` | 캔 리셋 |
+| `G` | contact point/force 표시 토글 |
+| `C` | 카메라 프리셋 전환 |
+
+## UI 패널
+
+| 패널 | 역할 |
+|---|---|
+| Status | controller, marker, IK 오차, base pose 표시 |
+| Cyclo / Marker Control | `MoveL`, `Bimanual MoveL`, marker jog, capture/release |
+| Right Arm / Left Arm | 손별 IK pose 또는 FK joint target |
+| Can Grasp | 손별 grasp/thumb synergy |
+| Lift / Utilities | lift, reset, contact 표시, camera |
+| Joint Monitor | 주요 관절 위치 표시 |
+
+## 테스트
+
+전체 테스트:
 
 ```bash
-pip install --break-system-packages mkdocs mkdocs-material
-mkdocs serve   # http://127.0.0.1:8000
+for p in 0 1 2 3 4 5 6; do python3 tests/test_phase_$p.py; done
 ```
 
----
+자주 쓰는 테스트:
 
-[프로젝트 개요](overview.md) · [MuJoCo 튜토리얼로 돌아가기](guide/index.md)
+```bash
+python3 tests/test_phase_5.py  # swerve drive/base
+python3 tests/test_phase_6.py  # Cyclo marker/XYZ/RPY target
+```
+
+## 문서 빌드
+
+```bash
+mkdocs build --strict
+mkdocs serve
+```

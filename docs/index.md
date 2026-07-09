@@ -1,65 +1,56 @@
 # ffw-sh5-grasp
 
-**ROBOTIS FFW-SH5**(양팔 7DOF×2 + HX5-D20 5지 핸드×2 + 모바일 베이스)가 **kinematic 치팅
-없이, 오직 contact force만으로** 테이블 위 캔을 집어 드는 MuJoCo 물리 기반 텔레오퍼레이션
-시뮬레이터다. 모바일 베이스는 실제 바퀴-지면 마찰로 구동되고, 텔레옵은 사람이 슬라이더와
-키보드로 직접 조작하는 단일 네이티브 창 애플리케이션이다.
+ROBOTIS FFW-SH5 양팔 로봇의 MuJoCo 기반 텔레오퍼레이션 프로젝트.
+캔 grasp, 모바일 베이스 주행, Cyclo Control 스타일 양팔 target 조작을 제공한다.
 
 <figure class="hero-figure" markdown>
   ![full_scene.xml 렌더](assets/hero.jpg)
-  <figcaption>models/full_scene.xml — 양팔 7DOF×2, HX5-D20 5지 핸드×2, 모바일 베이스(바퀴
-  3개 실제 지면 마찰 구동), 실제 라벨 텍스처를 두른 캔.</figcaption>
+  <figcaption>전신 FFW-SH5 모델: 양팔, 양손, 리프트, 헤드, 모바일 베이스, 캔.</figcaption>
 </figure>
 
 [![GitHub](https://img.shields.io/badge/GitHub-Repository-black?logo=github)](https://github.com/ggh-png/ffw-sh5-grasp)
 
----
+## Demo
 
-## 이 문서 사이트는 두 갈래로 나뉜다
+<div style="position: relative; padding-bottom: 56.25%; height: 0; overflow: hidden; border-radius: 8px;">
+  <iframe
+    src="https://www.youtube.com/embed/2LV_RsAGdz8"
+    title="ffw-sh5-grasp demo"
+    style="position: absolute; inset: 0; width: 100%; height: 100%; border: 0;"
+    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+    allowfullscreen>
+  </iframe>
+</div>
 
-- ***정직한 물리***: 손가락-캔 접촉은 위치 대입이 아니라 force-limited position
-  actuator가 만드는 실제 접촉력으로만 성립한다. `data.qpos[...]`로 물리 상태를 직접
-  덮어쓰는 코드는 리셋/초기 배치를 제외하면 이 레포 어디에도 없다.
-- ***실제 바퀴 마찰 주행***: 모바일 베이스는 가상 액추에이터가 아니라 바퀴 3개의 실제
-  조향+구동 관절과 지면 마찰 접촉으로 밀린다(슬립 0.8%로 확인).
-- ***MuJoCo 3.10 (Python)***: 별도 물리 엔진 래퍼 없이 MuJoCo의 Python 바인딩만으로
-  IK, 토크 제어, grasp synergy, 렌더링까지 전부 직접 구현한다.
+## 기능
 
-Phase 0–6 전체 완료. `tests/test_phase_{0,1,2,3,4,5,6}.py`는 캔 pick 회귀, 실제
-바퀴 주행, Cyclo Control식 bimanual MoveL UI와 수동 XYZ/RPY IK target 제어를 headless로
-검증한다.
+| 구분 | 내용 |
+|---|---|
+| 로봇 모델 | FFW-SH5 전신, 양팔 7DOF x2, HX5-D20 5지 핸드 x2 |
+| 팔 제어 | 6DOF IK + 토크 제어(PD + gravity/Coriolis feedforward) |
+| 손 제어 | grasp/thumb synergy, contact force 기반 grasp 판정 |
+| 베이스 | 실제 바퀴 조향/구동 액추에이터와 지면 마찰 기반 주행 |
+| UI | GLFW + MuJoCo renderer + ImGui |
+| Target 조작 | 숫자 XYZ/RPY, 3D gizmo 화살표/회전 링 |
+| 양팔 제어 | Cyclo-style `MoveL`, `Bimanual MoveL`, virtual object marker |
+| 검증 | Phase 0-6 headless 테스트 |
 
-- **[프로젝트 개요](overview.md)** — 왜 이런 구조로 만들었는가. 앞서 실패한 두 번의
-  시도, 세 모델로 나눈 이유, 설계 판단 6가지, 가장 비직관적이었던 버그들, 현재 상태.
-- **[MuJoCo 튜토리얼](guide/index.md)** — `src/` 코드 파일 하나하나가 각각 무엇을
-  구현하는지, 그리고 그 파일들이 서로 어떻게 호출/연결되어 하나의 텔레옵 앱으로
-  합쳐지는지를 파일 단위로 설명한다.
-- **[직접 실행하기](run.md)** — 설치, 테스트, 텔레옵 앱 실행 방법.
+## 문서 바로가기
 
----
+- [실행 방법](run.md)
+- [프로젝트 구조](overview.md)
+- [코드 가이드](guide/index.md)
 
-## Features and Updates
+## 핵심 파일
 
-### (Session 8, 2026-07) Phase 5 — 모바일 베이스 완성
-- 평면 가상 액추에이터 → **실제 바퀴 3개 조향/구동 + 지면 마찰**로 재작업
-- 바퀴-바닥 접촉 강성 튜닝(로봇 실제 무게의 28배였던 반발력 문제 해결)
-- 팔/손가락 미러링 버그 다수 수정, 캔에 실제 STL 형상 위 라벨 텍스처 적용
-
-### (Session 11+, 2026-07) Phase 6 — Cyclo marker 기반 양팔 제어
-- 텔레옵 앱을 can workflow 하나로 정리하고, box 시나리오 전환 기능 제거
-- `MoveL`에서는 오른손/왼손 target marker를 독립 제어
-- `Bimanual MoveL` capture 후에는 virtual object marker의 X/Y/Z 화살표와 Roll/Pitch/Yaw 링으로 양손 target을 함께 제어
-
-### (Session 6-7) Phase 4 — 전신 조립 + 텔레옵 UI
-- 양팔/양손/헤드/리프트 전체 조립, 단일 네이티브 창(GLFW+ImGui) 텔레옵
-- 팔 액추에이터를 `<position>`에서 `<motor>` + PD + 중력 feedforward로 교체
-
-### (Session 4-5) Phase 3 — 6DOF IK
-- 계층형 damped-least-squares IK, backtracking line search, multistart
-- 통합 pick(접근 → 파지 → 들어올리기) 10/10
-
-### (Session 2-3) Phase 1-2 — 손 콜리전 + 고정 손 grasp
-- 메시 콜리전 → 캡슐 근사(실측 AABB 기반)
-- grasp synergy 스칼라 두 개 + force-limited actuator로 순응 그립 구현
-
-See more details in [프로젝트 개요](overview.md) and [MuJoCo 튜토리얼](guide/index.md).
+```text
+src/
+├── teleop_app.py        # 앱 조립과 메인 루프
+├── teleop_ui.py         # ImGui UI
+├── teleop_render.py     # 렌더링/카메라/gizmo
+├── teleop_targets.py    # target pose와 Cyclo 상태
+├── base_teleop.py       # swerve drive
+├── ik.py                # IK solver
+├── arm_control.py       # 팔 토크 제어
+└── grasp.py             # 손 synergy와 grasp 판정
+```

@@ -1,67 +1,52 @@
-# MuJoCo 튜토리얼 — `src/` 코드가 실제로 하는 일과, 그 파일들이 합쳐지는 방식
+# 코드 가이드
 
-ROBOTIS FFW-SH5 로봇이 **kinematic 치팅 없이, 오직 접촉력(contact force)만으로**
-테이블 위 캔을 집어 드는 시뮬레이터의 `src/` 코드를 파일 단위로 뜯어본다. 각
-페이지는 **그 파일이 무엇을 구현하는지 → 어떻게 구현했는지(실제 코드) → 다른
-파일과 어떻게 연결되는지** 순서로 구성된다. 코드 스니펫은 전부 실제 레포
-(`ffw-sh5-grasp`)에서 그대로 가져온 것이다.
+`src/` 모듈별 역할과 주요 함수/클래스를 정리한다.
 
-이 프로젝트를 **왜** 이런 구조로 설계했는지(실패했던 이전 두 번의 시도, 설계 판단의
-근거)가 궁금하다면 [프로젝트 개요](../overview.md)를 먼저 보는 것도 좋다. 이
-튜토리얼은 그 반대편 — **어떻게(How)** 구현되고 **어떻게 합쳐지는가**에 집중한다.
-
-## 파일이 합쳐지는 방식 (한눈에)
+## 모듈 의존 구조
 
 ```mermaid
 graph LR
-    UI["teleop_ui.py<br/>슬라이더 패널"] -->|app.targets 갱신| APP
-    APP["teleop_app.py<br/>TeleopApp — 메인 루프"] -->|draw_panel self| UI
-    APP -->|"target 변환/capture"| TARGET["teleop_targets.py<br/>pose/Cyclo target"]
-    TARGET -->|"world target_pos/quat"| APP
-    APP -->|"q_init, target_pos/quat"| IK["ik.py<br/>InverseKinematics"]
-    IK -->|q_des| APP
-    APP -->|"q_des"| ARM["arm_control.py<br/>ArmTorqueController"]
-    ARM -->|"data.ctrl 토크"| PHYS[(MuJoCo<br/>mj_step)]
-    APP -->|"grasp, thumb"| GRASP["grasp.py<br/>apply_grasp"]
-    GRASP -->|"data.ctrl 손가락"| PHYS
-    APP -->|"drive_keys, yaw"| BASE["base_teleop.py<br/>SwerveDrive"]
-    BASE -->|"조향각/구동속도"| PHYS
-    APP -->|"render_scene self"| RENDER["teleop_render.py<br/>렌더링/카메라/gizmo"]
-    RENDER -->|"gizmo world pose"| TARGET
-```
+    APP["teleop_app.py<br/>main loop"]
+    UI["teleop_ui.py<br/>ImGui controls"]
+    RENDER["teleop_render.py<br/>render/camera/gizmo"]
+    TARGETS["teleop_targets.py<br/>target pose/Cyclo"]
+    IK["ik.py<br/>IK solver"]
+    ARM["arm_control.py<br/>torque control"]
+    GRASP["grasp.py<br/>hand synergy"]
+    BASE["base_teleop.py<br/>swerve drive"]
+    PHYS[(MuJoCo)]
 
-`teleop_app.py`가 유일하게 나머지 주요 파일 전부를 import하는 "허브"다. 나머지
-파일들은 서로를 알지 못한다 — `ik.py`는 `arm_control.py`가 존재하는지 모르고,
-`grasp.py`는 `base_teleop.py`가 뭘 하는지 모른다. 전부 `teleop_app.py`의 물리
-루프 안에서만 만난다. 자세한 호출 시점/순서는 [teleop_app.py](teleop_app.md)
-페이지에 그대로 나온다.
+    UI -->|updates app.targets| APP
+    RENDER -->|gizmo world pose| APP
+    APP --> TARGETS
+    TARGETS -->|world target pose| APP
+    APP --> IK
+    IK -->|q_des| APP
+    APP --> ARM
+    APP --> GRASP
+    APP --> BASE
+    ARM --> PHYS
+    GRASP --> PHYS
+    BASE --> PHYS
+    PHYS --> RENDER
+```
 
 ## 읽는 순서
 
-1. [MuJoCo 최소 개념 사전](00-basics.md) — model/data, actuator 세 가지, contact
-   파라미터. 낯선 용어가 나올 때 참고.
-2. [`src/grasp.py`](grasp.md) — grasp synergy 매핑 + 접촉력 기반 파지 판정
-3. [`src/ik.py`](ik.md) — 6DOF damped least squares IK
-4. [`src/arm_control.py`](arm_control.md) — PD + 중력/코리올리 feedforward 토크 제어
-5. [`src/base_teleop.py`](base_teleop.md) — 조작감 스무딩 + ROBOTIS식 스워브 제어
-6. [`src/teleop_app.py`](teleop_app.md) — 제어/렌더/UI 파일이 실제로 합쳐지는 메인 루프
-7. [`src/teleop_targets.py`](teleop_targets.md) — 손 목표 pose 변환 + Cyclo-style bimanual target
-8. [`src/teleop_ui.py`](teleop_ui.md) — ImGui 슬라이더 패널
-9. [`src/teleop_render.py`](teleop_render.md) — MuJoCo 렌더링 + 카메라 + 3D gizmo
-10. [흔한 함정 총정리](pitfalls.md) — 이 프로젝트가 반복해서 배운 것들
-11. [API 치트시트](cheatsheet.md) — 실제로 쓴 MuJoCo API/MJCF 요소 전부 + 더 읽어볼 곳
+| 순서 | 문서 | 내용 |
+|---|---|---|
+| 1 | [grasp.py](grasp.md) | 손가락 synergy와 grasp 판정 |
+| 2 | [ik.py](ik.md) | site 기준 6DOF IK |
+| 3 | [arm_control.py](arm_control.md) | 팔 토크 제어 |
+| 4 | [base_teleop.py](base_teleop.md) | swerve drive |
+| 5 | [teleop_targets.py](teleop_targets.md) | target pose와 Bimanual MoveL |
+| 6 | [teleop_ui.py](teleop_ui.md) | ImGui control panel |
+| 7 | [teleop_render.py](teleop_render.md) | 렌더링과 gizmo |
+| 8 | [teleop_app.py](teleop_app.md) | 전체 조립과 main loop |
 
-!!! tip "이 문서 전체에서 가장 자주 반복되는 진단 원칙"
-    파라미터를 몇 배씩 바꿔도 결과가 거의 그대로면, 그 파라미터는 원인이 아니다.
-    "게인을 더 올리면 되겠지" 식으로 큰 수를 넣어보는 습관은 시간을 크게 낭비시킨다 —
-    이 프로젝트에서 최소 세 번, 그 신호를 무시하고 계속 파라미터를 밀어붙였다가
-    나중에야 진짜 원인(좌표계 버그, keyframe 오타, 구조적 접촉 조건)을 찾은 사례가
-    나온다.
+## 공통 규칙
 
-!!! quote "절대 규칙 하나만 먼저 기억하자"
-    이 프로젝트 전체에서 `data.qpos[...] = 값`으로 로봇의 물리 상태를 직접 덮어쓰는
-    코드는 (리셋과 물체 초기 배치를 제외하고) 단 한 줄도 없다. "물리 엔진이 원하는
-    결과를 안 주면, 상태를 억지로 만들지 말고 XML의 물리 파라미터(질량, 마찰,
-    solver, actuator)를 고친다"는 태도로 이해하면 된다. 이게 바로 **kinematic
-    시뮬레이션**(좌표를 직접 지정)과 **dynamic 시뮬레이션**(힘과 접촉으로 좌표가
-    결과로 나옴)의 차이이고, 이 프로젝트가 정확히 후자를 지키려고 만들어졌다.
+- live simulation의 로봇 관절 `qpos`를 직접 덮어쓰지 않는다.
+- UI/gizmo는 target 값을 바꾸고, 물리 반영은 `teleop_app.py`의 step에서 한다.
+- IK는 scratch `MjData`에서만 계산하고, 결과는 actuator command로 적용한다.
+- 렌더/UI/target/control 로직은 분리되어 있고 `TeleopApp`이 조립한다.

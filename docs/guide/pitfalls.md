@@ -1,23 +1,18 @@
-# 흔한 함정 총정리 — 이 프로젝트가 반복해서 배운 것들
+# 체크리스트
 
-MuJoCo를 처음 쓸 때 특히 자주 부딪히는 함정만 추려서 표로 정리했다. 대부분 "에러
-없이 조용히 틀린 결과"를 낸다는 공통점이 있다 — 그래서 발견하는 데 오래 걸린다.
+MuJoCo 코드 수정 시 확인할 항목.
 
-| 증상 | 진짜 원인 | 일반화된 교훈 |
-|---|---|---|
-| 정상 동작하는 것처럼 보이지만 결과가 이상하게 완벽함(0.000mm 등) | `arr[None] = x`가 numpy에서 전체 배열 broadcast로 해석됨 | lookup 실패로 None/-1이 나올 수 있는 값을 배열 인덱스에 그대로 쓰지 말 것 |
-| "range=0으로 잠갔다"는 관절이 수십 초에 걸쳐 서서히 움직임 | `limited="true"` 누락 — autolimits가 명시적 [0,0]과 미지정을 구분 못함 | 문서화된 의도와 컴파일된 모델의 실제 동작은 다를 수 있다 — 직접 찍어볼 것 |
-| 손 geom에 정확한 solimp/solref를 넣었는데 관통이 그대로 | 상대 geom의 `priority`가 solver 파라미터 전체를 통째로 가져감 | priority는 마찰만이 아니라 접촉 파라미터 세트 전체를 좌우한다 |
-| 여러 지점에서 손끝이 항상 똑같은 벡터만큼 어긋남 | 한 씬의 world 좌표를 다른 body의 로컬 오프셋으로 그대로 재사용 | 동일한 오프셋이 여러 곳에 나타나면 개별 설정이 아니라 공통 기준 좌표계를 의심 |
-| 바퀴 조향이 극도로 뻣뻣하고 느림 | 수직 자유도가 없는 body에 걸린 고정 침투 깊이가 실제 무게의 28배 반발력을 만듦 | body의 자유도보다 접촉 가정이 많으면 fixed penetration depth에서의 실제 힘을 반드시 확인할 것 |
-| 원통(cylinder) primitive에 사진 텍스처를 입혔는데 안 감김 | MuJoCo 원통 primitive의 자동 UV 생성이 세밀한 이미지를 원주로 못 감음 | 엔진의 "자동" 동작(자동 UV, 자동 리밋 등)은 렌더링/테스트로 직접 확인하기 전엔 가정하지 말 것 |
-| 큰 파라미터 변화를 줘도 증상이 완전히 그대로 | 가설 자체가 틀림(해당 파라미터는 원인이 아님) | 배수로 바꿔도 결과가 안 바뀌면 그 파라미터를 더 밀어붙이지 말고 다른 원인을 찾을 것 |
-
-첫 번째 줄(`arr[None]` broadcast)은 [grasp.py](grasp.md)에서, 좌표계 관련 줄들은
-[ik.py](ik.md)에서 실제로 겪은 사례다 — 나머지(접촉 solver 파라미터, 텍스처 UV)는
-`models/*.xml`과 `tests/` 쪽 자산 스크립트에서 나온 것이라 이 코드 가이드의 범위
-밖이지만, 교훈 자체는 이 저장소의 `NOTES.md`에 실측 수치와 함께 기록돼 있다.
-
----
-
-다음: [API 치트시트](cheatsheet.md)
+| 항목 | 확인 |
+|---|---|
+| `mj_name2id` 결과 | `-1` 여부 확인 후 사용 |
+| actuator lookup | `aid is None` 여부 확인 후 `data.ctrl[aid]` 사용 |
+| numpy index | `arr[None] = value`가 전체 배열 broadcast가 되지 않는지 확인 |
+| qpos 직접 쓰기 | reset/초기 배치 외 live robot qpos 수정 금지 |
+| IK scratch | live `data`가 아니라 solver scratch `MjData` 사용 |
+| site/body 기준 | IK target은 body origin이 아니라 `site` 기준인지 확인 |
+| quaternion frame | local/world frame 변환 순서 확인 |
+| contact force | 위치 조건이 아니라 `mj_contactForce()` 기반 판정인지 확인 |
+| actuator range | `ctrlrange`, `forcerange`, joint `range` 확인 |
+| wheel command | 조향 정렬 전 wheel velocity가 0으로 gated 되는지 확인 |
+| marker state | UI target, mocap marker, IK world target 동기화 확인 |
+| 문서 | 함수 역할이나 target 의미가 바뀌면 `docs/guide/` 업데이트 |

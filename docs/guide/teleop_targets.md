@@ -1,81 +1,67 @@
-# `src/teleop_targets.py` — 손 목표 pose와 Cyclo-style bimanual target
+# `src/teleop_targets.py`
 
-## 이 파일이 하는 일
+UI target, 3D marker/gizmo pose, IK world pose 사이의 변환을 담당한다.
 
-`teleop_targets.py`는 UI 숫자 target, 3D marker/gizmo pose, IK solver에 들어가는
-world pose 사이의 변환을 담당한다. `teleop_app.py`에 있던 home-relative XYZ/RPY
-좌표계 변환과 `Bimanual MoveL` capture/apply 로직을 분리한 모듈이다.
+## Target 의미
 
-핵심 계약은 세 가지다.
+| 값 | 의미 |
+|---|---|
+| `pos_r`, `pos_l` | 각 손의 시작 위치 기준 XYZ offset |
+| `rpy_r`, `rpy_l` | 각 손의 시작 자세 기준 RPY delta |
+| `virtual_object_pos` | base frame의 virtual object 위치 |
+| `virtual_object_rpy` | base frame 기준 virtual object RPY |
 
-- 손별 `pos_r`/`pos_l`은 world 좌표가 아니라 시작 손 위치 기준 XYZ offset이다.
-- 손별 `rpy_r`/`rpy_l`은 시작 손 자세 기준 local Roll/Pitch/Yaw delta다.
-- `Bimanual MoveL` capture 이후에는 `virtual_object_pos/rpy`가 명령 원천이고,
-  오른손/왼손 target은 capture 당시의 상대 transform에서 다시 파생된다.
+## 함수
 
-## 구현: target 좌표계
+| 함수 | 역할 |
+|---|---|
+| `rpy_deg_to_quat(rpy_deg)` | RPY degree를 quaternion으로 변환 |
+| `quat_to_rpy_deg(q)` | quaternion을 RPY degree로 변환 |
+| `set_home_references(app)` | 양손 시작 위치/자세를 target 기준으로 저장 |
+| `base_pose(app)` | base x/y/yaw, sin/cos, yaw quaternion 반환 |
+| `local_to_world_pos(app, p_local)` | base-local 위치를 world 위치로 변환 |
+| `world_to_base_pos(app, p_world)` | world 위치를 base-local 위치로 변환 |
+| `target_pos_to_base_pos(app, side, pos_target)` | 손별 home-relative offset을 base-local 위치로 변환 |
+| `target_pos_to_world_pos(app, side, pos_target)` | 손별 target 위치를 world 위치로 변환 |
+| `world_to_target_pos(app, side, world_pos)` | world 위치를 손별 target offset으로 변환 |
+| `target_world_quat(app, side)` | 손별 RPY target을 world quaternion으로 변환 |
+| `world_quat_to_target_rpy(app, side, world_quat)` | world quaternion을 손별 RPY target으로 변환 |
+| `world_quat_to_virtual_rpy(app, world_quat)` | world quaternion을 virtual object RPY로 변환 |
+| `quat_to_mat(quat)` | quaternion을 3x3 rotation matrix로 변환 |
+| `mat_to_quat(mat)` | 3x3 rotation matrix를 quaternion으로 변환 |
+| `target_world_pose(app, side)` | 손 target의 world position/quaternion 반환 |
+| `virtual_object_world_pose(app)` | virtual object의 world position/quaternion 반환 |
+| `sync_virtual_object_to_hand_targets(app)` | virtual object를 양손 target 중점으로 이동 |
+| `capture_grasp(app)` | 양손 target을 virtual object 기준 상대 transform으로 저장 |
+| `release_grasp(app)` | Bimanual MoveL capture 해제 |
+| `apply_virtual_object_target(app)` | virtual object pose에서 양손 target 재계산 |
+| `bimanual_marker_visible(app)` | virtual marker 표시 여부 반환 |
+| `sync_marker_visibility(app)` | virtual marker alpha 갱신 |
+| `active_gizmo_target(app)` | 현재 gizmo 대상 반환 |
+| `gizmo_target_world_pose(app, target)` | gizmo 대상의 world pose 반환 |
+| `set_gizmo_target_world_pose(app, target, world_pos, world_quat)` | gizmo 결과를 target 값으로 반영 |
+| `sync_ik_mocaps_from_targets(app)` | 손/virtual marker mocap pose를 target과 동기화 |
 
-앱 시작 시 `set_home_references(app)`가 양손의 기준 pose를 저장한다.
+## Bimanual MoveL 상태 흐름
 
-```python title="src/teleop_targets.py — set_home_references"
-app.home_quat_r = ...
-app.home_quat_l = ...
-app.home_pos_local = {
-    "r": world_to_base_pos(app, app.data.site_xpos[app.site_r]),
-    "l": world_to_base_pos(app, app.data.site_xpos[app.site_l]),
-}
+```text
+MoveL
+  right/left target을 독립 조작
+
+Capture Grasp
+  현재 양손 target pose를 virtual object 기준 상대 transform으로 저장
+
+Bimanual MoveL
+  virtual object pose 변경
+  -> 저장된 상대 transform 적용
+  -> left/right target 자동 갱신
+
+Release Grasp
+  다시 독립 MoveL 상태
 ```
 
-따라서 UI에서 `pos_r = [0, 0, 0]`이면 "오른손을 시작 위치에 둔다"는 뜻이다.
-실제 IK에는 `home_pos_local["r"] + pos_r`를 base pose로 world 변환한 값이 들어간다.
+## 사용 위치
 
-```python title="src/teleop_targets.py — target_world_pose"
-def target_world_pose(app, side):
-    return target_pos_to_world_pos(app, side, app.targets[f"pos_{side}"]), \
-           target_world_quat(app, side)
-```
-
-반대로 3D gizmo가 world pose를 돌려주면 `world_to_target_pos()`와
-`world_quat_to_target_rpy()`가 다시 UI target 값으로 환산한다. 그래서 숫자 슬라이더,
-marker, IK target이 같은 목표를 서로 다른 표현으로 공유한다.
-
-## 구현: Bimanual MoveL
-
-`capture_grasp(app)`는 현재 양손 target pose를 virtual object marker 기준 상대
-transform으로 저장한다.
-
-```python title="src/teleop_targets.py — capture_grasp"
-obj_pos, obj_quat = virtual_object_world_pose(app)
-obj_R = quat_to_mat(obj_quat)
-for side in ("r", "l"):
-    hand_pos, hand_quat = target_world_pose(app, side)
-    offsets[side] = {
-        "pos": obj_R.T @ (hand_pos - obj_pos),
-        "mat": obj_R.T @ quat_to_mat(hand_quat),
-    }
-```
-
-이후 `apply_virtual_object_target(app)`은 현재 virtual object pose에 저장된 상대
-transform을 다시 곱해서 양손 target을 갱신한다.
-
-```python title="src/teleop_targets.py — apply_virtual_object_target"
-hand_pos = obj_pos + obj_R @ offset["pos"]
-hand_quat = mat_to_quat(obj_R @ offset["mat"])
-app.targets[f"pos_{side}"] = world_to_target_pos(app, side, hand_pos)
-app.targets[f"rpy_{side}"] = world_quat_to_target_rpy(app, side, hand_quat)
-```
-
-즉 MuJoCo 안에서 ROS topic을 쓰지는 않지만, 의미상 Cyclo Control의
-`capture_grasp`/`virtual_object_goal_move` 흐름과 같은 상태 전이를 구현한다.
-
-## 이 파일이 다른 파일과 합쳐지는 방식
-
-- **teleop_app.py**가 유일한 직접 사용자다. 기존 테스트와 렌더 코드 호환을 위해
-  `TeleopApp._target_world_pose()` 같은 얇은 wrapper는 남겨 두고, 실제 구현은 이
-  모듈 함수로 위임한다.
-- **teleop_ui.py**는 `app.targets` 값을 바꾼다. 이 모듈은 그 값을 world pose로
-  해석하거나, world pose를 다시 target 값으로 환산한다.
-- **teleop_render.py**는 gizmo drag 결과를 `app._set_gizmo_target_world_pose()`로
-  넘긴다. wrapper를 거쳐 이 모듈의 `set_gizmo_target_world_pose()`가 target을 갱신한다.
-- **ik.py**는 이 모듈을 모른다. `teleop_app.py`의 물리 스텝이 이 모듈로 계산된
-  world pose를 `solve_pose()`에 넘길 뿐이다.
+- `teleop_app.py`: target wrapper와 물리 step에서 호출
+- `teleop_render.py`: gizmo pose 조회/반영 wrapper를 통해 사용
+- `teleop_ui.py`: capture/release/apply 메서드를 통해 사용
