@@ -43,23 +43,23 @@ ImGui 기반 텔레옵 패널을 그린다.
 
 ```mermaid
 flowchart TD
-    A["teleop_app._draw_ui_panel"] --> B["draw_panel(app)"]
-    B --> C["_draw_status_panel()"]
-    B --> D["_draw_cyclo_control_panel()"]
-    B --> E["_draw_arm_panel(r/l)"]
-    B --> F["_draw_can_grasp_panel()"]
-    B --> G["_draw_lift_utils_panel()"]
-    B --> H["_draw_joint_monitor()"]
+    A["teleop_app._draw_ui_panel<br>앱에서 UI 렌더링 진입"] --> B["draw_panel(app)<br>전체 ImGui 패널 구성"]
+    B --> C["_draw_status_panel()<br>FPS/모드/solver 상태 표시"]
+    B --> D["_draw_cyclo_control_panel()<br>MoveL/Bimanual marker 제어 UI"]
+    B --> E["_draw_arm_panel(r/l)<br>오른팔/왼팔 IK/FK 조작 UI"]
+    B --> F["_draw_can_grasp_panel()<br>grasp/thumb synergy 조작 UI"]
+    B --> G["_draw_lift_utils_panel()<br>lift/reset/contact/camera 유틸 UI"]
+    B --> H["_draw_joint_monitor()<br>현재 관절값 모니터링"]
 
-    D --> I["_apply_cartesian_jog()"]
-    I --> J["app.targets update"]
-    D --> K["capture_grasp() / release_grasp()"]
-    E --> L["_draw_ik_pose_controls()"]
-    E --> M["_draw_fk_joint_controls()"]
+    D --> I["_apply_cartesian_jog()<br>버튼 jog를 위치/RPY target 변화로 적용"]
+    I --> J["app.targets update<br>UI 입력을 target 상태에 저장"]
+    D --> K["capture_grasp() / release_grasp()<br>양팔 강체 제어 모드 전환"]
+    E --> L["_draw_ik_pose_controls()<br>손 위치/RPY slider 표시 및 갱신"]
+    E --> M["_draw_fk_joint_controls()<br>관절각 slider 표시 및 갱신"]
     L --> J
-    M --> N["app.fk_q_deg update"]
-    F --> O["grasp/thumb target update"]
-    G --> P["lift/reset/contact/camera state update"]
+    M --> N["app.fk_q_deg update<br>FK 목표 관절각 저장"]
+    F --> O["grasp/thumb target update<br>손가락 synergy 목표 저장"]
+    G --> P["lift/reset/contact/camera state update<br>유틸 명령과 표시 상태 갱신"]
 ```
 
 ## 패널 구조

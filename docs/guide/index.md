@@ -6,14 +6,14 @@
 
 ```mermaid
 graph LR
-    APP["teleop_app.py<br/>main loop"]
-    UI["teleop_ui.py<br/>ImGui controls"]
-    RENDER["teleop_render.py<br/>render/camera/gizmo"]
-    TARGETS["teleop_targets.py<br/>target pose/Cyclo"]
-    IK["ik.py<br/>IK solver"]
-    ARM["arm_control.py<br/>torque control"]
-    GRASP["grasp.py<br/>hand synergy"]
-    BASE["base_teleop.py<br/>swerve drive"]
+    APP["teleop_app.py<br>전체 실행 흐름 조립"]
+    UI["teleop_ui.py<br>ImGui 조작 패널"]
+    RENDER["teleop_render.py<br>렌더링/카메라/gizmo"]
+    TARGETS["teleop_targets.py<br>목표 pose와 Cyclo 상태"]
+    IK["ik.py<br>손 목표를 팔 관절각으로 변환"]
+    ARM["arm_control.py<br>팔 torque 제어"]
+    GRASP["grasp.py<br>손가락 synergy와 grasp 판정"]
+    BASE["base_teleop.py<br>swerve drive 명령 생성"]
     PHYS[(MuJoCo)]
 
     UI -->|updates app.targets| APP

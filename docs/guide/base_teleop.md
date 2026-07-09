@@ -29,18 +29,18 @@
 
 ```mermaid
 flowchart TD
-    A["teleop_app._read_drive_and_lift_keys"] --> B["drive_keys"]
-    B --> C["SwerveDrive.update(keys, dt, yaw, steering, wheel_vel)"]
-    C --> D["BaseTeleop.update()"]
-    D --> E["smoothed vx/vy/wz"]
-    E --> F["per-wheel swerve inverse kinematics"]
-    F --> G["180 deg steering optimization"]
-    G --> H["_update_reversal_phase()"]
-    H --> I["_limit_steering_rate()"]
-    I --> J["alignment gating"]
-    J --> K["wheel speed clamp"]
-    K --> L["{wheel: steer_angle, drive_angvel}"]
-    L --> M["teleop_app writes data.ctrl"]
+    A["teleop_app._read_drive_and_lift_keys<br>키보드 주행 입력 수집"] --> B["drive_keys<br>전후/좌우/회전 명령 상태"]
+    B --> C["SwerveDrive.update(keys, dt, yaw, steering, wheel_vel)<br>swerve wheel 목표각/속도 생성"]
+    C --> D["BaseTeleop.update()<br>입력 가속도 제한과 속도 smoothing"]
+    D --> E["smoothed vx/vy/wz<br>부드럽게 변한 body velocity"]
+    E --> F["per-wheel swerve inverse kinematics<br>각 바퀴별 조향각과 구동속도 계산"]
+    F --> G["180 deg steering optimization<br>조향을 덜 돌리도록 바퀴 회전 방향 반전"]
+    G --> H["_update_reversal_phase()<br>반전 상태 전환을 안정적으로 관리"]
+    H --> I["_limit_steering_rate()<br>조향 모터 회전 속도 제한"]
+    I --> J["alignment gating<br>조향 정렬 전 과한 구동 억제"]
+    J --> K["wheel speed clamp<br>바퀴 속도 상한 적용"]
+    K --> L["{wheel: steer_angle, drive_angvel}<br>바퀴별 최종 명령 반환"]
+    L --> M["teleop_app writes data.ctrl<br>반환 명령을 actuator에 기록"]
 ```
 
 ## 출력 형식

@@ -46,25 +46,25 @@ UI target, 3D marker/gizmo pose, IK world pose 사이의 변환을 담당한다.
 
 ```mermaid
 flowchart TD
-    A["UI sliders / marker jog"] --> B["app.targets"]
-    C["ImGuizmo drag world pose"] --> D["set_gizmo_target_world_pose()"]
+    A["UI sliders / marker jog<br>사용자가 target 값을 직접 조정"] --> B["app.targets<br>IK/FK/virtual object 목표 상태 저장소"]
+    C["ImGuizmo drag world pose<br>3D marker를 world 좌표에서 조작"] --> D["set_gizmo_target_world_pose()<br>gizmo 결과를 app target 좌표계로 변환"]
     D --> B
-    B --> E["target_world_pose(side)"]
-    E --> F["target_pos_to_world_pos()"]
-    E --> G["target_world_quat()"]
-    F --> H["IK target world pose"]
+    B --> E["target_world_pose(side)<br>손별 IK 목표 world pose 계산"]
+    E --> F["target_pos_to_world_pos()<br>home-relative 위치를 world 위치로 변환"]
+    E --> G["target_world_quat()<br>target RPY를 world quaternion으로 변환"]
+    F --> H["IK target world pose<br>IK solver에 넘길 최종 목표"]
     G --> H
-    H --> I["teleop_app -> ik.solve_pose()"]
+    H --> I["teleop_app -> ik.solve_pose()<br>world pose를 관절 목표로 변환"]
 
-    J["Capture Grasp"] --> K["capture_grasp()"]
-    K --> L["sync_virtual_object_to_hand_targets()"]
-    L --> M["store hand offsets from virtual object"]
-    N["Move virtual object"] --> O["apply_virtual_object_target()"]
-    O --> P["world_to_target_pos()"]
-    O --> Q["world_quat_to_target_rpy()"]
+    J["Capture Grasp<br>양손 상대 관계 저장 시작"] --> K["capture_grasp()<br>현재 양손 pose를 virtual object 기준으로 캡처"]
+    K --> L["sync_virtual_object_to_hand_targets()<br>virtual object를 양손 중앙에 배치"]
+    L --> M["store hand offsets from virtual object<br>object 기준 양손 상대 transform 저장"]
+    N["Move virtual object<br>양손을 하나의 강체처럼 이동"] --> O["apply_virtual_object_target()<br>virtual object pose에서 양손 target 재계산"]
+    O --> P["world_to_target_pos()<br>world 위치를 target 좌표로 변환"]
+    O --> Q["world_quat_to_target_rpy()<br>world 자세를 target RPY로 변환"]
     P --> B
     Q --> B
-    B --> R["sync_ik_mocaps_from_targets()"]
+    B --> R["sync_ik_mocaps_from_targets()<br>시각 marker mocap pose 동기화"]
 ```
 
 ## Bimanual MoveL 상태 흐름

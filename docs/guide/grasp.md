@@ -37,23 +37,23 @@
 
 ```mermaid
 flowchart TD
-    A["teleop_app._step_physics"] --> B["apply_grasp(side, grasp, thumb)"]
-    B --> C["thumb pre-shape / yaw ramp"]
-    B --> D["thumb curl joints"]
-    B --> E["index/middle curl joints"]
-    B --> F["ring/pinky cosmetic curl"]
-    C --> G["_set_joint_ctrl()"]
+    A["teleop_app._step_physics<br>물리 substep마다 손 명령 실행"] --> B["apply_grasp(side, grasp, thumb)<br>grasp/thumb 값을 손가락 목표로 변환"]
+    B --> C["thumb pre-shape / yaw ramp<br>엄지 벌림과 회전 자세를 먼저 잡음"]
+    B --> D["thumb curl joints<br>엄지 굽힘 관절 목표 계산"]
+    B --> E["index/middle curl joints<br>검지/중지 grasp synergy 적용"]
+    B --> F["ring/pinky cosmetic curl<br>약지/새끼 시각 자세 동기화"]
+    C --> G["_set_joint_ctrl()<br>관절 이름으로 actuator 목표 기록"]
     D --> G
     E --> G
-    F --> H["_resolve_joint_actuator()"]
-    H --> I["data.ctrl[finger actuator]"]
+    F --> H["_resolve_joint_actuator()<br>joint에 연결된 actuator 탐색/캐싱"]
+    H --> I["data.ctrl[finger actuator]<br>MuJoCo 제어 입력에 최종 반영"]
     G --> I
 
-    J["tests / grasp check"] --> K["is_grasped()"]
-    K --> L["get_finger_can_contacts()"]
-    L --> M["mj_contactForce()"]
-    M --> N["finger group force sum"]
-    N --> O["grasp true/false"]
+    J["tests / grasp check<br>잡힘 여부 검사 시작"] --> K["is_grasped()<br>손가락 수와 접촉력 기준으로 판정"]
+    K --> L["get_finger_can_contacts()<br>캔과 닿은 손가락 그룹 수집"]
+    L --> M["mj_contactForce()<br>접촉 normal force 계산"]
+    M --> N["finger group force sum<br>손가락 그룹별 힘 합산"]
+    N --> O["grasp true/false<br>grasp 성공 여부 반환"]
 ```
 
 ## 사용 위치

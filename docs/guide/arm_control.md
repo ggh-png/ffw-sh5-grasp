@@ -24,16 +24,16 @@
 
 ```mermaid
 flowchart TD
-    A["teleop_app._step_physics"] --> B["ArmTorqueController.apply(data, q_des)"]
-    B --> C["read q from data.qpos"]
-    B --> D["read qd from data.qvel"]
-    B --> E["read qfrc_bias"]
-    C --> F["tau = qfrc_bias + kp error - kd qd"]
+    A["teleop_app._step_physics<br>IK 결과를 실제 팔 토크로 변환"] --> B["ArmTorqueController.apply(data, q_des)<br>목표 관절각을 actuator torque로 계산"]
+    B --> C["read q from data.qpos<br>현재 관절 위치 읽기"]
+    B --> D["read qd from data.qvel<br>현재 관절 속도 읽기"]
+    B --> E["read qfrc_bias<br>중력/관성 bias 보상값 읽기"]
+    C --> F["tau = qfrc_bias + kp error - kd qd<br>PD 제어와 bias 보상으로 토크 계산"]
     D --> F
     E --> F
-    F --> G["clamp by actuator_ctrlrange"]
-    G --> H["data.ctrl[arm actuator]"]
-    H --> I["mujoco.mj_step()"]
+    F --> G["clamp by actuator_ctrlrange<br>actuator 허용 범위로 제한"]
+    G --> H["data.ctrl[arm actuator]<br>MuJoCo 제어 입력에 토크 기록"]
+    H --> I["mujoco.mj_step()<br>물리 시뮬레이션 한 step 진행"]
 ```
 
 ## 사용 위치

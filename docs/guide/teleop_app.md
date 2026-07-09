@@ -68,28 +68,28 @@ while not glfw.window_should_close(self.window):
 
 ```mermaid
 flowchart TD
-    A["main()"] --> B["TeleopApp()"]
-    B --> C["_setup_sim()"]
-    B --> D["_setup_render()"]
-    B --> E["_setup_loop_state()"]
-    B --> F["run()"]
-    F --> G["teleop_render.begin_frame()"]
-    G --> H["teleop_render.handle_camera_mouse()"]
-    H --> I["_handle_edge_keys()"]
-    I --> J["_read_drive_and_lift_keys()"]
-    J --> K["_draw_ui_panel()"]
-    K --> L["teleop_ui.draw_panel()"]
-    L --> M["_step_physics()"]
-    M --> N["teleop_targets.apply_virtual_object_target()"]
-    M --> O["ik.solve_pose()"]
-    M --> P["base_teleop.SwerveDrive.update()"]
-    M --> Q["arm_control.apply()"]
-    M --> R["grasp.apply_grasp()"]
-    Q --> S["mujoco.mj_step()"]
+    A["main()<br>CLI entry point"] --> B["TeleopApp()<br>시뮬레이터와 UI 앱 객체 생성"]
+    B --> C["_setup_sim()<br>MuJoCo model/data와 controller 초기화"]
+    B --> D["_setup_render()<br>GLFW, MuJoCo renderer, ImGui 초기화"]
+    B --> E["_setup_loop_state()<br>target, mode, smoothing 상태 초기화"]
+    B --> F["run()<br>종료 전까지 frame loop 실행"]
+    F --> G["teleop_render.begin_frame()<br>입력 이벤트와 ImGui frame 시작"]
+    G --> H["teleop_render.handle_camera_mouse()<br>카메라 마우스 조작 처리"]
+    H --> I["_handle_edge_keys()<br>R/G/C 같은 edge key 처리"]
+    I --> J["_read_drive_and_lift_keys()<br>주행/리프트 continuous key 읽기"]
+    J --> K["_draw_ui_panel()<br>UI 모듈 호출 wrapper"]
+    K --> L["teleop_ui.draw_panel()<br>조작 패널을 그리고 target 갱신"]
+    L --> M["_step_physics()<br>target을 actuator 명령으로 변환하고 physics 진행"]
+    M --> N["teleop_targets.apply_virtual_object_target()<br>Bimanual MoveL 양손 target 갱신"]
+    M --> O["ik.solve_pose()<br>손 목표 pose를 팔 관절각으로 변환"]
+    M --> P["base_teleop.SwerveDrive.update()<br>swerve base 바퀴 명령 생성"]
+    M --> Q["arm_control.apply()<br>팔 관절 목표를 torque로 적용"]
+    M --> R["grasp.apply_grasp()<br>손가락 synergy를 actuator에 적용"]
+    Q --> S["mujoco.mj_step()<br>최종 ctrl로 물리 step 진행"]
     R --> S
     P --> S
-    S --> T["teleop_render.render_scene()"]
-    T --> U["teleop_render.end_frame()"]
+    S --> T["teleop_render.render_scene()<br>MuJoCo scene, gizmo, UI 렌더링"]
+    T --> U["teleop_render.end_frame()<br>frame timing 정리"]
     U --> F
 ```
 
