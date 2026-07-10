@@ -13,6 +13,12 @@ UI target, 3D marker/gizmo pose, IK world pose 사이의 변환을 담당한다.
 
 ## 수식
 
+> **왜 base-local 좌표가 필요한가**: IK는 world 좌표 기준 목표를 받지만, 손
+> target 슬라이더는 "로봇 기준 앞/옆/위"를 조작하려는 것이다 — 베이스가 주행
+> 중에 움직여도 슬라이더 값 자체는 그대로 두고 싶으므로, 매 프레임 베이스의
+> 현재 pose로 변환해서 IK에 넘긴다. 자세한 이유는
+> [ROS2 개발자를 위한 가이드](ros2-guide.md) Part 10.3 참고.
+
 base-local 위치 \((x,y,z)\) → world 위치, 베이스 pose \((x_b,y_b,\theta_b)\)만큼
 2D 회전 후 평행이동(`local_to_world_pos`; 역변환 `world_to_base_pos`는 반대 순서로
 뺀 뒤 \(R^{T}\)를 곱한다):
@@ -30,8 +36,12 @@ base-local 위치 \((x,y,z)\) → world 위치, 베이스 pose \((x_b,y_b,\theta
 q_{world} = q_{base\_yaw} \otimes q_{home} \otimes q_{rpy\_delta}
 \]
 
-Bimanual MoveL의 world→virtual-object-local 오프셋 캡처(`capture_grasp`)와
-그 역변환(`apply_virtual_object_target`), \(R^{-1}=R^{T}\)(회전행렬이므로):
+양손으로 물건을 함께 드는 건 두 손이 서로에 대한 상대 pose를 유지한 채(보이지
+않는 막대로 이어진 강체처럼) 같이 움직인다는 뜻이다 — virtual object가 그
+기준이고, capture 시점의 상대 오프셋을 한 번 저장해두면 이후 virtual object만
+옮겨도 그 관계가 그대로 재적용된다. Bimanual MoveL의 world→virtual-object-local
+오프셋 캡처(`capture_grasp`)와 그 역변환(`apply_virtual_object_target`),
+\(R^{-1}=R^{T}\)(회전행렬은 직교행렬이라 역행렬이 전치행렬과 같다):
 
 \[
 p_{\text{offset}} = R_{obj}^{T}(p_{hand}-p_{obj}), \quad R_{\text{offset}} = R_{obj}^{T}R_{hand}

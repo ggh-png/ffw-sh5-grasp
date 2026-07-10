@@ -2,7 +2,7 @@ site_name: "ffw-sh5-grasp"
 site_author: ggh-png
 repo_url: https://github.com/ggh-png/ffw-sh5-grasp
 site_url: https://ggh-png.github.io/ffw-sh5-grasp/
-site_description: "MuJoCo 물리 기반 grasp 시뮬레이터 — ROBOTIS FFW-SH5가 contact force만으로 캔을 집어 드는 텔레오퍼레이션 프로젝트, 그리고 그 과정을 그대로 따라가는 MuJoCo 입문 튜토리얼."
+site_description: "MuJoCo 물리 기반 grasp 시뮬레이터 — ROBOTIS FFW-SH5가 contact force만으로 캔을 집어 드는 텔레오퍼레이션 프로젝트, 그리고 그 구조를 설명하는 코드 가이드와 ROS2 개발자를 위한 안내서."
 
 theme:
     name: material
@@ -79,7 +79,7 @@ nav:
     - Home: index.md
     - 프로젝트 개요: overview.md
     - ROS2 개발자를 위한 가이드: guide/ros2-guide.md
-    - MuJoCo 튜토리얼:
+    - 코드 가이드:
         - guide/index.md
         - MuJoCo 최소 개념 사전: guide/00-basics.md
         - src/grasp.py: guide/grasp.md
