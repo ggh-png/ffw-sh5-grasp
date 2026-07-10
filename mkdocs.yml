@@ -76,9 +76,9 @@ extra_javascript:
     - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
 
 nav:
-    - Home: index.md
+    - 홈: index.md
+    - ROS2 개발자를 위한 튜토리얼: guide/ros2-guide.md
     - 프로젝트 개요: overview.md
-    - ROS2 개발자를 위한 가이드: guide/ros2-guide.md
     - 코드 가이드:
         - guide/index.md
         - MuJoCo 최소 개념 사전: guide/00-basics.md
@@ -90,6 +90,6 @@ nav:
         - src/teleop_targets.py: guide/teleop_targets.md
         - src/teleop_ui.py: guide/teleop_ui.md
         - src/teleop_render.py: guide/teleop_render.md
-        - 흔한 함정 총정리: guide/pitfalls.md
+        - 체크리스트: guide/pitfalls.md
         - API 치트시트: guide/cheatsheet.md
     - 직접 실행하기: run.md
