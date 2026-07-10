@@ -9,22 +9,22 @@ sliders:
     from a safe rest angle to a wider "folds toward the palm" angle -- see
     THUMB_YAW_REST/THUMB_YAW_CURL below for why yaw is no longer a flat constant. Thumb
     CMC (abduction) is still a genuinely fixed pre-shape, independent of either scalar --
-    found by FK sweep in Phase 2 (see NOTES.md) so the thumb opposes the index/middle
+    found by FK sweep in Phase 2 so the thumb opposes the index/middle
     convergence zone around the can.
 
-Ring and pinky mcp (spread) stay locked at range=0 (3-point grasp fallback from PLAN.md's
-own guidance), so this module never actively grasps with them. Their pip/dip/tip *do* get a
+Ring and pinky mcp (spread) stay locked at range=0 (3-point grasp fallback), so this
+module never actively grasps with them. Their pip/dip/tip *do* get a
 small cosmetic curl here (Session 8 후속 4), scaled by the same `grasp` scalar as index/
 middle but capped at RING_PINKY_MAX_FRAC (0.35, not 1.0) of their own range -- purely so the
 hand doesn't look like two fingers are frozen open while the other three visibly close.
 0.35 is not an arbitrary cosmetic choice: it's the exact ceiling found by sweeping this
-fraction against tests/test_phase_4.py's pick success (see NOTES.md "Phase 5 후속 3") --
+fraction against tests/test_phase_4.py's pick success --
 20-40% all held 10/10, 45%+ dropped to 0/10 (ring/pinky start interfering with the real
 3-point grasp past that point). Scaling by `grasp` (0 at rest, 0.35 at grasp=1.0) rather than
 holding 0.35 as a flat constant regardless of `grasp` was a deliberate change from the
 previous session's approach: a *constant* curl meant ring/pinky started the session already
 curled even at grasp=0/rest, which looked wrong and differed from every other digit's
-fully-extended rest pose (see NOTES.md "Phase 5 후속 4").
+fully-extended rest pose.
 
 Both scalars map to a *sub-range* of each joint's travel, not [lo, hi]: starting fully
 extended left ~10cm of empty travel before any contact, which meant the freely-falling can
@@ -35,19 +35,19 @@ gap) so `grasp=0`/`thumb=0` sits ~20mm short of the can surface -- see models/ha
 
 Widened from an initial ~2mm margin once Phase 3 started chaining IK + a real (imperfect)
 arm servo in front of it: the arm settles with a real but small (~15-20mm) residual site
-error (see NOTES.md "Phase 3" -- a torque/kinematics limitation of the specific reach
-configuration, not a bug), and a razor-thin capture margin that only worked with
-millimeter-perfect hand placement just knocked the can away instead of wrapping around it.
+error (a torque/kinematics limitation of the specific reach configuration, not a bug), and
+a razor-thin capture margin that only worked with millimeter-perfect hand placement just
+knocked the can away instead of wrapping around it.
 The wider start still closes fully within Phase 2's own ramp+settle timing, so this doesn't
-regress Phase 2's fixed-hand grasp (still 10/10, see NOTES.md).
+regress Phase 2's fixed-hand grasp (still 10/10).
 
 Left-hand thumb pre-shape (Phase 4, models/full_scene.xml): mirrored from the right's
 FK-sweep result, not independently re-swept -- thumb_l_cmc's range is symmetric with
 thumb_r_cmc's so the CMC value carries over unchanged (now -0.131, see below), but
 thumb_l_mcp_yaw's range is the mirror image of thumb_r_mcp_yaw's ([0, pi] vs [-pi, 0]) so
 THUMB_YAW_REST/THUMB_YAW_CURL negate the right hand's values for "l". The left hand has
-no can of its own in this project (single shared can, right-hand regression only, see
-NOTES.md "Phase 4") so this mirror hasn't been independently validated against real
+no can of its own in this project (single shared can, right-hand regression only) so
+this mirror hasn't been independently validated against real
 contact-force grasp success the way the right hand's has -- it's provided for teleop
 completeness, not claimed to be as thoroughly tuned.
 
@@ -87,6 +87,8 @@ the pre-regression baseline).
 
 import mujoco
 import numpy as np
+
+import mj_util
 
 # 검지/중지 각 손가락의 pip/dip/tip 관절 이름 (좌/우 손 각각). grasp 스칼라 하나가
 # 이 여섯 관절 전부의 목표 각도로 동시에 퍼진다.
@@ -209,14 +211,21 @@ def _resolve_joint_actuator(model, joint_name):
     if cached is not None:
         return cached
     jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, joint_name)
-    aid = None
-    if jid != -1:
-        for a in range(model.nu):
-            if model.actuator_trntype[a] == mujoco.mjtTrn.mjTRN_JOINT and model.actuator_trnid[a, 0] == jid:
-                aid = a
-                break
+    aid = mj_util.find_actuator_for_joint(model, jid) if jid != -1 else None
     _JOINT_ACTUATOR_CACHE[key] = (jid, aid)
     return jid, aid
+
+
+def _ramp_value(lo, hi, frac, open_at_hi=False):
+    """관절 range의 [lo, hi] 구간을 frac(0~1) 비율로 보간한다.
+
+    open_at_hi=False면 lo가 "펼침"(frac=0 -> lo, frac=1 -> hi), True면 그 반대
+    (frac=0 -> hi, frac=1 -> lo) -- 왼손 엄지처럼 range 자체가 미러링돼 "펼침"이
+    hi 쪽인 관절에 쓴다(THUMB_CURL_OPEN_AT_HI 참고).
+    """
+    if open_at_hi:
+        return hi - frac * (hi - lo)
+    return lo + frac * (hi - lo)
 
 
 def _set_joint_ctrl(model, data, joint_name, value):
@@ -258,23 +267,19 @@ def apply_grasp(model, data, grasp: float, thumb: float, side: str = "r"):
     #    손별로 range의 "편 상태"가 lo/hi 중 어느 쪽인지 다르므로(THUMB_CURL_OPEN_AT_HI)
     #    보간 방향을 뒤집어준다.
     for joint_name in THUMB_CURL_JOINTS[side]:
-        jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, joint_name)
+        jid, aid = _resolve_joint_actuator(model, joint_name)
         lo, hi = model.jnt_range[jid]
         frac = THUMB_OPEN_FRAC + thumb * (1.0 - THUMB_OPEN_FRAC)
-        if THUMB_CURL_OPEN_AT_HI[side]:
-            value = hi - frac * (hi - lo)
-        else:
-            value = lo + frac * (hi - lo)
-        _set_joint_ctrl(model, data, joint_name, value)
+        data.ctrl[aid] = _ramp_value(lo, hi, frac, open_at_hi=THUMB_CURL_OPEN_AT_HI[side])
 
     # 3) 검지/중지 pip/dip/tip -- grasp 스칼라를 [FINGER_OPEN_FRAC, 1.0] 구간에 매핑.
     #    실제로 캔을 쥐는 3점 파지(엄지+검지+중지)의 핵심 구동부.
     for finger_joints in FINGER_CURL_JOINTS[side].values():
         for joint_name in finger_joints:
-            jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, joint_name)
+            jid, aid = _resolve_joint_actuator(model, joint_name)
             lo, hi = model.jnt_range[jid]
             frac = FINGER_OPEN_FRAC + grasp * (1.0 - FINGER_OPEN_FRAC)
-            _set_joint_ctrl(model, data, joint_name, lo + frac * (hi - lo))
+            data.ctrl[aid] = _ramp_value(lo, hi, frac)
 
     # 4) 약지/새끼 pip/dip/tip -- 실제 grasp에는 참여하지 않고, grasp 스칼라에 비례해
     #    자기 range의 RING_PINKY_MAX_FRAC까지만 코스메틱하게 굽는다(0=rest에서 완전히
@@ -282,10 +287,9 @@ def apply_grasp(model, data, grasp: float, thumb: float, side: str = "r"):
     for joint_name in RING_PINKY_CURL_JOINTS[side]:
         # jid can be -1 (hand_only.xml/arm_hand.xml have no left hand at all) and aid can be
         # None even when jid is valid (those two models still hard-lock ring/pinky pip/dip/
-        # tip at range="0 0" with no actuator, unlike full_scene.xml -- see NOTES.md "Phase 5
-        # 후속 4"). Must check both explicitly: data.ctrl[None] silently broadcasts to the
-        # *entire* ctrl array instead of raising (the exact bug Session 2 already hit once,
-        # see NOTES.md "Phase 2").
+        # tip at range="0 0" with no actuator, unlike full_scene.xml). Must check both
+        # explicitly: data.ctrl[None] silently broadcasts to the *entire* ctrl array instead
+        # of raising (the exact bug this project has hit more than once).
         # (한글) jid/aid가 없을 수 있는 모델(hand_only/arm_hand)이 있으므로 반드시 둘 다
         # None/-1 여부를 확인하고 건너뛴다 -- data.ctrl[None]은 에러 없이 배열 전체를
         # 덮어써버리는 numpy의 함정이라 이 프로젝트에서 세 번이나 반복 재발했던 버그.
@@ -293,8 +297,7 @@ def apply_grasp(model, data, grasp: float, thumb: float, side: str = "r"):
         if jid == -1 or aid is None:
             continue
         lo, hi = model.jnt_range[jid]
-        frac = grasp * RING_PINKY_MAX_FRAC
-        data.ctrl[aid] = lo + frac * (hi - lo)
+        data.ctrl[aid] = _ramp_value(lo, hi, grasp * RING_PINKY_MAX_FRAC)
 
 
 def apply_open_hand(model, data, side: str = "r"):
@@ -345,7 +348,7 @@ def is_grasped(model, data, min_fingers=2, min_total_force=0.05, require_thumb=T
     """Contact-force-based grasp check (no position/attachment cheating).
 
     True if >= min_fingers distinct finger groups touch the can (thumb required by
-    default, matching PLAN.md), and the summed normal force exceeds min_total_force (N).
+    default), and the summed normal force exceeds min_total_force (N).
     """
     forces = get_finger_can_contacts(model, data, side=side)
     # 엄지가 반드시 포함되고(기본값), 서로 다른 손가락 그룹 2개 이상이 닿아 있으며,

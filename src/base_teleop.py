@@ -126,65 +126,16 @@ class SwerveDrive:
         cmd_zero = vx_body == 0.0 and vy_body == 0.0 and wz == 0.0
 
         if cmd_zero:
-            for name in WHEELS:
-                self.reversal_phase[name] = ReversalPhase.NORMAL
-                self.wheel_speed_scale[name] = 1.0
-                cur = self._current_steering(name, steering_positions)
-                self.steer_angle[name] = cur
-                self.previous_commands[name] = cur
-            return {name: (self.steer_angle[name], 0.0) for name in WHEELS}
+            return self._hold_zero(steering_positions)
 
         module_results = {}
         all_aligned = True
         for name, (module_x, module_y) in WHEEL_POS.items():
-            current_steering = self._current_steering(name, steering_positions)
-            current_wheel_velocity = self._current_wheel_velocity(name, wheel_velocities)
-            angle_offset = MODULE_ANGLE_OFFSETS[name]
-
-            wheel_vel_x = vx_body - wz * module_y
-            wheel_vel_y = vy_body + wz * module_x
-            target_robot_angle = math.atan2(wheel_vel_y, wheel_vel_x + 1e-9)
-            target_speed = math.hypot(wheel_vel_x, wheel_vel_y)
-            target_joint_angle = _normalize_angle(target_robot_angle - angle_offset)
-
-            optimized_angle = target_joint_angle
-            wheel_direction = 1.0
-            if abs(_shortest_angular_distance(current_steering, target_joint_angle)) > math.pi / 2:
-                optimized_angle = _normalize_angle(target_joint_angle + math.pi)
-                wheel_direction = -1.0
-
-            angle_after_opt = _shortest_angular_distance(current_steering, optimized_angle)
-            crosses_boundary = (
-                (current_steering > 0 and optimized_angle < 0 and angle_after_opt > 0)
-                or (current_steering < 0 and optimized_angle > 0 and angle_after_opt < 0)
-            )
-            if crosses_boundary:
-                optimized_angle = _normalize_angle(optimized_angle + math.pi)
-                wheel_direction *= -1.0
-
-            limited_target = _clamp(_normalize_angle(optimized_angle), *STEER_RANGE)
-            steering_target = self._update_reversal_phase(
-                name, wheel_direction, limited_target, current_steering, cmd_zero, dt)
-            steering_cmd = _limit_steering_rate(current_steering, steering_target, dt)
-
-            effective_direction = (
-                self.previous_wheel_rotation_direction[name]
-                if self.reversal_phase[name] == ReversalPhase.DECELERATING else wheel_direction
-            )
-            wheel_cmd = effective_direction * target_speed * self.wheel_speed_scale[name] / WHEEL_RADIUS
-
-            align_err = abs(_shortest_angular_distance(current_steering, limited_target))
-            aligned = True
-            if abs(current_wheel_velocity) >= STEERING_ALIGNMENT_START_SPEED_ERROR_THRESHOLD:
-                aligned = align_err < STEERING_ALIGNMENT_ANGLE_ERROR_THRESHOLD
-            else:
-                aligned = align_err < STEERING_ALIGNMENT_START_ANGLE_ERROR_THRESHOLD
-            if not aligned:
-                wheel_cmd = 0.0
-            all_aligned = all_aligned and aligned
-
-            wheel_cmd = _clamp(wheel_cmd, *WHEEL_SPEED_LIMIT)
+            steering_cmd, wheel_cmd, aligned = self._solve_wheel_module(
+                name, module_x, module_y, vx_body, vy_body, wz, dt,
+                steering_positions, wheel_velocities)
             module_results[name] = (steering_cmd, wheel_cmd)
+            all_aligned = all_aligned and aligned
 
         if not all_aligned:
             module_results = {name: (angle, 0.0) for name, (angle, _speed) in module_results.items()}
@@ -193,6 +144,70 @@ class SwerveDrive:
             self.steer_angle[name] = angle
             self.previous_commands[name] = angle
         return module_results
+
+    def _hold_zero(self, steering_positions):
+        """cmd_zero일 때: 반전 상태를 전부 NORMAL로 리셋하고, 지금 조향각을 그대로
+        유지한 채 구동 속도만 0으로 반환한다(원래 update()에 있던 early-return 분기)."""
+        for name in WHEELS:
+            self.reversal_phase[name] = ReversalPhase.NORMAL
+            self.wheel_speed_scale[name] = 1.0
+            cur = self._current_steering(name, steering_positions)
+            self.steer_angle[name] = cur
+            self.previous_commands[name] = cur
+        return {name: (self.steer_angle[name], 0.0) for name in WHEELS}
+
+    def _solve_wheel_module(self, name, module_x, module_y, vx_body, vy_body, wz, dt,
+                            steering_positions, wheel_velocities):
+        """바퀴 모듈 하나의 목표 조향각/구동속도를 계산한다 (원래 update()의 for문 안
+        본문 그대로, 이름 붙여 분리만 했다). cmd_zero는 여기 도달하는 시점엔 항상
+        False라서(update()가 그 경우 _hold_zero로 먼저 반환) 인자로 받지 않는다.
+        Returns (steering_cmd, wheel_cmd, aligned)."""
+        current_steering = self._current_steering(name, steering_positions)
+        current_wheel_velocity = self._current_wheel_velocity(name, wheel_velocities)
+        angle_offset = MODULE_ANGLE_OFFSETS[name]
+
+        wheel_vel_x = vx_body - wz * module_y
+        wheel_vel_y = vy_body + wz * module_x
+        target_robot_angle = math.atan2(wheel_vel_y, wheel_vel_x + 1e-9)
+        target_speed = math.hypot(wheel_vel_x, wheel_vel_y)
+        target_joint_angle = _normalize_angle(target_robot_angle - angle_offset)
+
+        optimized_angle = target_joint_angle
+        wheel_direction = 1.0
+        if abs(_shortest_angular_distance(current_steering, target_joint_angle)) > math.pi / 2:
+            optimized_angle = _normalize_angle(target_joint_angle + math.pi)
+            wheel_direction = -1.0
+
+        angle_after_opt = _shortest_angular_distance(current_steering, optimized_angle)
+        crosses_boundary = (
+            (current_steering > 0 and optimized_angle < 0 and angle_after_opt > 0)
+            or (current_steering < 0 and optimized_angle > 0 and angle_after_opt < 0)
+        )
+        if crosses_boundary:
+            optimized_angle = _normalize_angle(optimized_angle + math.pi)
+            wheel_direction *= -1.0
+
+        limited_target = _clamp(_normalize_angle(optimized_angle), *STEER_RANGE)
+        steering_target = self._update_reversal_phase(
+            name, wheel_direction, limited_target, current_steering, False, dt)
+        steering_cmd = _limit_steering_rate(current_steering, steering_target, dt)
+
+        effective_direction = (
+            self.previous_wheel_rotation_direction[name]
+            if self.reversal_phase[name] == ReversalPhase.DECELERATING else wheel_direction
+        )
+        wheel_cmd = effective_direction * target_speed * self.wheel_speed_scale[name] / WHEEL_RADIUS
+
+        align_err = abs(_shortest_angular_distance(current_steering, limited_target))
+        if abs(current_wheel_velocity) >= STEERING_ALIGNMENT_START_SPEED_ERROR_THRESHOLD:
+            aligned = align_err < STEERING_ALIGNMENT_ANGLE_ERROR_THRESHOLD
+        else:
+            aligned = align_err < STEERING_ALIGNMENT_START_ANGLE_ERROR_THRESHOLD
+        if not aligned:
+            wheel_cmd = 0.0
+
+        wheel_cmd = _clamp(wheel_cmd, *WHEEL_SPEED_LIMIT)
+        return steering_cmd, wheel_cmd, aligned
 
     def _current_steering(self, name, steering_positions):
         if steering_positions is not None and name in steering_positions:

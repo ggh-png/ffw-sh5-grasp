@@ -1,6 +1,6 @@
 """Phase 1 — hand_only scene + collision validation.
 
-Runs the penetration test from PLAN.md: close all finger curl joints at max
+Runs the penetration test: close all finger curl joints at max
 actuator authority toward the can, 20 times, and record the worst
 finger-vs-can contact penetration depth (`contact.dist`, negative = overlap).
 

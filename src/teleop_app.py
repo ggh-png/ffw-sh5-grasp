@@ -15,14 +15,13 @@ attempts at this in this sandboxed environment (Python 3.14, Wayland session) hi
 `OpenGL.error.Error: Attempt to retrieve context when no valid context` from imgui-bundle's
 PyOpenGL-based renderer; the fix is `glfw.init_hint(glfw.PLATFORM, glfw.PLATFORM_X11)`
 before `glfw.init()`, which makes GLFW create an XWayland (GLX) window instead of a native
-Wayland (EGL) one, matching the platform PyOpenGL's context tracking expects (see
-NOTES.md "Phase 4" for the diagnosis; imgui_bundle's own glfw_backend.py has a related
-PYOPENGL_PLATFORM workaround, but it only takes effect if applied before `OpenGL` is
-imported anywhere in the process -- forcing GLFW's own platform sidesteps that ordering
-requirement entirely).
+Wayland (EGL) one, matching the platform PyOpenGL's context tracking expects
+(imgui_bundle's own glfw_backend.py has a related PYOPENGL_PLATFORM workaround, but it
+only takes effect if applied before `OpenGL` is imported anywhere in the process --
+forcing GLFW's own platform sidesteps that ordering requirement entirely).
 
 Since everything now runs in one thread/one loop (no more GUI-thread-writes-targets /
-physics-thread-reads split), the one-way-data-flow constraint PLAN.md asks for is trivially
+physics-thread-reads split), the one-way-data-flow this project relies on is trivially
 true: there's only one flow, target sliders read by the physics update each frame, no
 concurrent access at all.
 
@@ -47,7 +46,7 @@ the coupling that was previously present even at the resting/default slider posi
 the base frame, not world-fixed -- every frame the current pos_r/pos_l offset is added to
 that hand's startup base-local home position and then rotated+translated by the base's live
 `(base_x, base_y, base_yaw)` qpos before being handed to IK, so the arm doesn't have to
-fight the base moving/turning under it (ffw-sh5-mobile-and-box-plan.md S3.3).
+fight the base moving/turning under it.
 Driving itself never touches qpos -- arrow keys go through `base_teleop.SwerveDrive`
 (accel/brake smoothing ported from the sibling ffw-sh5-teleoperation repo's reference feel,
 then converted to per-wheel steer angle + drive speed) into the three wheels' real steer/
@@ -55,7 +54,7 @@ drive actuators. Motion is genuinely wheel-friction-driven now (Session 8 후속
 base_x/base_y/base_yaw joints are still there so base_link can't tip over, but nothing
 actuates them directly any more -- ground contact under the spinning wheels is what pushes
 base_link along them. Deliberately arrow-keys-only, not WASD -- WASD collides with the
-keybindings a MuJoCo user already expects from other tools (see NOTES.md "Phase 5 후속").
+keybindings a MuJoCo user already expects from other tools.
 
 Run: `python3 src/teleop_app.py`.
 Mouse: left-drag orbit, right-drag pan, scroll zoom (standard MuJoCo camera controls).
@@ -105,7 +104,7 @@ ARM_R = [f"arm_r_joint{i}" for i in range(1, 8)]
 ARM_L = [f"arm_l_joint{i}" for i in range(1, 8)]
 # Matches models/full_scene.xml's "home" keyframe, which as of Session 8 (Phase 5 follow-up)
 # matches the sibling ffw-sh5-mujoco repo's rest pose (only the elbow/joint4 bent -90 deg,
-# everything else 0) -- see NOTES.md "Phase 5 후속".
+# everything else 0).
 HOME_Q_R = np.array([0.0, 0.0, 0.0, -1.5707963267948966, 0.0, 0.0, 0.0])
 HOME_Q_L = np.array([0.0, 0.0, 0.0, -1.5707963267948966, 0.0, 0.0, 0.0])
 LIFT_RANGE = (-0.5, 0.0)
@@ -172,7 +171,7 @@ def quat_to_rpy_deg(q):
 
 def _reset_can_random(model, data, rng):
     """The one qpos write in this file outside of the initial keyframe reset -- resetting a
-    freely-placed object's spawn pose is the explicit exception PLAN.md's rule 1 carves out,
+    freely-placed object's spawn pose is the explicit "no kinematic override" exception,
     not a kinematic override of the robot itself."""
     can_jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "can_free")
     qadr = model.jnt_qposadr[can_jid]

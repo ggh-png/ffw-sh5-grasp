@@ -5,7 +5,7 @@ the exact palm-relative offset validated in Phase 1/2) rather than a body origin
 `mj_jacSite` gives the position+rotation Jacobian of that offset point directly -- no manual
 offset correction needed the way a raw `mj_jacBody` would require.
 
-Developed in the two stages PLAN.md asks for:
+Developed in two stages:
   1. `solve_position` -- position-only, 3DOF, verify convergence first.
   2. `solve_pose` -- adds orientation on top of the same DLS core.
 
@@ -91,7 +91,7 @@ class InverseKinematics:
         context_qpos: full-model qpos to seed every *other* joint from (e.g. models/
         full_scene.xml's lift_joint, which sits upstream of the arm chain and is not part
         of this solver's own joint_names) -- without it those joints reset to 0, silently
-        moving the whole chain's base to the wrong place (see NOTES.md "Phase 4"). Leave
+        moving the whole chain's base to the wrong place. Leave
         None for single-arm models like models/arm_hand.xml where nothing upstream varies.
         """
         scratch = self._scratch

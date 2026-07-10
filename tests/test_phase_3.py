@@ -3,8 +3,8 @@
 Part 1 (IK unit test): sample 100 random reachable poses via forward kinematics, starting
 from HOME_Q (a "ready" configuration near the table, not an arbitrary all-zero pose) and
 perturbing every joint by up to +-IK_TEST_SPREAD rad -- this is "the reachable workspace"
-in the sense PLAN.md means it: the region actually used while reaching for something on the
-table, not arbitrary/unlikely arm configurations across the full joint range (many of which
+in the sense this project means it: the region actually used while reaching for something on
+the table, not arbitrary/unlikely arm configurations across the full joint range (many of which
 require routing through singularities that no reasonable teleop session would ever visit).
 Each target is solved via solve_pose_multistart (home guess, then a few random restarts if
 that doesn't converge -- solve_pose alone can land in a local minimum for a large gap).
@@ -37,9 +37,9 @@ import ik  # noqa: E402
 ARM_JOINTS = [f"arm_r_joint{i}" for i in range(1, 8)]
 
 # "Ready" configuration 10cm back / 20cm above the can -- well clear of the table (see the
-# "home" keyframe in models/arm_hand.xml). Recomputed after fixing the grasp_target site
-# definition bug (see NOTES.md "Phase 3"): the site was defined using the can's *world*
-# coordinates from hand_only.xml as if they were a *local* offset from the palm, which they
+# "home" keyframe in models/arm_hand.xml). Recomputed after fixing a grasp_target site
+# definition bug: the site was defined using the can's *world* coordinates from
+# hand_only.xml as if they were a *local* offset from the palm, which they
 # were not -- every HOME_Q/q_pregrasp/q_grasp computed before the fix targeted the wrong
 # physical point on the hand entirely.
 HOME_Q = np.array([-0.225, -0.394, 0.682, -2.613, -0.704, 0.843, -1.218])
@@ -52,11 +52,11 @@ IK_SUCCESS_RATE_TARGET = 0.95
 
 N_PICK_TRIALS = 10
 PICK_SUCCESS_RATE_TARGET = 0.7
-APPROACH_SPEED = 0.03  # m/s, per PLAN.md
+APPROACH_SPEED = 0.03  # m/s
 PRE_GRASP_OFFSET = np.array([0.0, 0.0, 0.10])  # straight above the can, then descend
 # Before fixing models/arm_hand.xml's grasp_target site (it was defined using
 # hand_only.xml's can *world* coordinates as if they were a palm-*local* offset -- they
-# weren't, see NOTES.md "Phase 3"), the resulting bad geometry made the middle finger's MCP
+# weren't), the resulting bad geometry made the middle finger's MCP
 # knuckle graze the table. Kept at zero now that the real fix (the site itself) is in;
 # a future can/table layout that reintroduces the clearance problem should raise this
 # instead of trying to "float" the can (it has a real freejoint -- it free-falls back to
@@ -162,7 +162,7 @@ def run_pick_trial(model, data, solver, controller, rng):
 
     # 1) move arm to pre-grasp (torque control: gravity/Coriolis feedforward + PD, see
     # src/arm_control.py -- this is what replaced the old <position>-actuator approach
-    # after diagnosing its ~15-20mm residual site error, NOTES.md "Phase 3").
+    # after diagnosing its ~15-20mm residual site error).
     _move(model, data, controller, q_home, q_pregrasp, 3.0, dt, grasp_frac=0.0, thumb_frac=0.0)
     _hold(model, data, controller, q_pregrasp, 1.0, dt, grasp_frac=0.0, thumb_frac=0.0)
 

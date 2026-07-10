@@ -7,7 +7,7 @@ applied to it. STL never carries UV data, so this script re-derives it geometric
 than hand-authoring it.
 
 Why two separate meshes instead of one: profiling the STL's own vertex radius as a function
-of height (see NOTES.md "Phase 5 후속 10") showed the mesh is a near-perfect constant-radius
+of height showed the mesh is a near-perfect constant-radius
 cylinder from about z_frac=0.03 to 0.94 of its own height range, with almost all of its
 ~15k vertices concentrated in the complex top ~5% (dome/rim/tab) and bottom ~3% (concave
 base) -- i.e. the geometry itself already tells you where the "label goes here" band is,

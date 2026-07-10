@@ -1,6 +1,6 @@
 """Phase 3 -- arm torque control: software PD + gravity/Coriolis feedforward.
 
-Diagnosed in NOTES.md "Phase 3": MuJoCo's built-in <position> actuator is a bare
+Diagnosed in Phase 3: MuJoCo's built-in <position> actuator is a bare
 proportional term with no integral and no feedforward. Holding any static arm pose against
 its own required torque left a residual site error of ~15-20mm. Three candidate causes were
 tested and ruled out in order:
@@ -35,6 +35,8 @@ this module only concerns the rigid-body arm positioning problem.
 import mujoco
 import numpy as np
 
+import mj_util
+
 
 class ArmTorqueController:
     """팔 관절을 <motor>(순수 토크) 액추에이터로 구동하는 PD + 중력/코리올리
@@ -52,11 +54,7 @@ class ArmTorqueController:
         # (매 스텝 다시 찾지 않도록 __init__에서 한 번만 수행).
         for n in joint_names:
             jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, n)
-            aid = None
-            for a in range(model.nu):
-                if model.actuator_trntype[a] == mujoco.mjtTrn.mjTRN_JOINT and model.actuator_trnid[a, 0] == jid:
-                    aid = a
-                    break
+            aid = mj_util.find_actuator_for_joint(model, jid)
             if aid is None:
                 raise ValueError(f"no motor actuator found for joint {n}")
             self.actuator_ids.append(aid)

@@ -180,8 +180,8 @@
         </body>
       </body>
 
-      <!-- Ring finger (4 joints) -- locked at range=0 (see Phase 2 NOTES: 3-point grasp
-           fallback, thumb+index+middle only, per PLAN.md's own fallback guidance) -->
+      <!-- Ring finger (4 joints) -- locked at range=0 (Phase 2: 3-point grasp
+           fallback, thumb+index+middle only) -->
       <body name="finger_r_link13" pos="-0.0015 -0.01792 0.09775">
         <inertial pos="0.00519340 -1.81631e-05 0.0211155" mass="0.0388044"
           diaginertia="3.52499e-06 5.79216e-06 4.71268e-06"/>
@@ -244,8 +244,8 @@
 
     <!-- Static support so the can rests in place until grasped instead of free-falling
          (hand_only has no table yet -- that's Phase 3). Without this, gravity pulls the can
-         out of the fingers' reach faster than the gentle force-limited actuators can close
-         (see NOTES.md "Phase 2"): a real table will replace this in Phase 3. Sized to clear
+         out of the fingers' reach faster than the gentle force-limited actuators can close:
+         a real table will replace this in Phase 3. Sized to clear
          palm_collision (world Y <= 0.021) and stay below the index/middle curl band
          (world Z >= 0.159) so it doesn't interfere with the grasp itself. -->
     <geom name="can_support" type="box" size="0.05 0.045 0.01" pos="0.105 0.085 0.095"
@@ -270,7 +270,7 @@
        Parent-child pairs copied verbatim from the official ffw_sh5.xml <contact> section.
        The finger_r_link5/9/13/17 (mcp) pairs are new: replacing mesh collision with fatter
        capsule approximations (Phase 1) made adjacent fingers' mcp capsules overlap even
-       though the original meshes did not -- see NOTES.md "Phase 2". -->
+       though the original meshes did not (Phase 2). -->
   <contact>
     <exclude body1="finger_r_link1" body2="finger_r_link2"/>
     <exclude body1="finger_r_link2" body2="finger_r_link3"/>
@@ -324,7 +324,7 @@
   <!-- Phase 2 "pregrasp" (grasp=0, thumb=0 in src/grasp.py's synergy mapping): thumb
        pre-shape (joint1 CMC, joint2 MCP-yaw) found by FK sweep so the thumb opposes the
        index/middle convergence zone, PLUS index/middle/thumb curl already partway closed
-       (see NOTES.md "Phase 2" -- starting from full extension left ~10cm of empty travel
+       (starting from full extension left ~10cm of empty travel
        before any contact, giving the freely-falling can time to drop out of reach before
        the gentle force-limited actuators could catch it. Pre-curling to within ~7mm of the
        can keeps the final closing motion short). -->

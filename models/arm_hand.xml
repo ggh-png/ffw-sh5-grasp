@@ -122,11 +122,11 @@
     <light pos="0 0 2.2" dir="0 0 -1" directional="true"/>
     <geom name="floor" size="0 0 0.05" type="plane" material="groundplane"/>
 
-    <!-- Table: top surface at z=0.65 (per PLAN.md) -->
+    <!-- Table: top surface at z=0.65 -->
     <!-- Narrow along X (arm-facing direction): the validated Phase 1/2 grasp geometry
          needs the palm to dip below the fingertip/can height on its near side (the palm
          sits "behind" the grasp point in this hand orientation) -- a full-width table
-         collided with the palm every time it reached down (see NOTES.md "Phase 3"). Still
+         collided with the palm every time it reached down. Still
          wide enough in Y and deep enough under the can to look and behave like a table. -->
     <geom name="table" type="box" size="0.08 0.15 0.05" pos="0.5 0.0 0.60" material="table_mat"/>
 
@@ -134,7 +134,7 @@
          half-height = 0.705 regardless of spawn height, so "floating" it here wouldn't
          work; the table-clearance fix lives in tests/test_phase_3.py's
          GRASP_TARGET_OFFSET instead, which aims the IK target 3cm above the can's actual
-         resting center -- see NOTES.md "Phase 3"). -->
+         resting center). -->
     <body name="can" pos="0.5 0.0 0.705">
       <freejoint name="can_free"/>
       <inertial pos="0 0 0" mass="0.35" diaginertia="0.000448 0.000448 0.00019"/>
@@ -144,8 +144,8 @@
     </body>
 
     <!-- Right arm: base rigidly fixed to world at ~1.0m (approximate FFW-SH5 shoulder
-         height per PLAN.md) -- mobile base and lift column are out of scope for this
-         project, see PLAN.md Phase 4 (full_scene freezes the base too). -->
+         height) -- mobile base and lift column are out of scope for this
+         project (full_scene freezes the base too). -->
     <body name="arm_base_link" pos="0 0 1.0">
       <geom type="box" size="0.06 0.06 0.06" rgba="0.2 0.2 0.2 1"/>
 
@@ -214,8 +214,7 @@
                            LOCAL frame -- this site was defined with that exact bug for most
                            of Phase 3 (copied the world-frame numbers directly), which is
                            the actual root cause of the integrated pick failures, not arm
-                           precision (see NOTES.md "Phase 3" for the full story and how the
-                           bug was found: finger-to-can relative positions computed here
+                           precision (found by noticing: finger-to-can relative positions computed here
                            didn't match hand_only.xml's at all, by a large *constant* offset
                            across all three fingers -- the signature of a frame bug, not a
                            joint/control error). Correct local offset, verified by direct
@@ -313,7 +312,7 @@
                         </body>
                       </body>
 
-                      <!-- Ring finger (4 joints) -- locked at range=0, see NOTES.md Phase 2 -->
+                      <!-- Ring finger (4 joints) -- locked at range=0 (Phase 2) -->
                       <body name="finger_r_link13" pos="-0.0015 -0.01792 0.09775">
                         <inertial pos="0.00519340 -1.81631e-05 0.0211155" mass="0.0388044"
                           diaginertia="3.52499e-06 5.79216e-06 4.71268e-06"/>
@@ -343,7 +342,7 @@
                         </body>
                       </body>
 
-                      <!-- Pinky finger (4 joints) -- locked at range=0, see NOTES.md Phase 2 -->
+                      <!-- Pinky finger (4 joints) -- locked at range=0 (Phase 2) -->
                       <body name="finger_r_link17" pos="-0.0015 -0.04492 0.07875">
                         <inertial pos="0.00519340 -1.81631e-05 0.0211155" mass="0.0388044"
                           diaginertia="3.52499e-06 5.79216e-06 4.71268e-06"/>
@@ -415,12 +414,12 @@
     <exclude body1="hx5_r_base" body2="finger_r_link18"/>
     <exclude body1="arm_r_link7" body2="hx5_r_base"/>
     <!-- palm_collision is a single solid box standing in for the real (narrower, curved)
-         palm mesh (see NOTES.md "Phase 2"). In the validated Phase 1/2 grasp geometry the
+         palm mesh (Phase 2). In the validated Phase 1/2 grasp geometry the
          palm sits behind and below the fingertip/grasp point, which puts the box's own bulk
          right at table height when reaching for a can this close to the table surface --
          real box, but not the real palm shape, so it isn't the thing this phase means to
          test. Excluded rather than re-deriving whole-arm collision-free motion planning
-         (out of scope -- see NOTES.md "Phase 3"). -->
+         (out of scope for this project). -->
     <exclude body1="hx5_r_base" body2="world"/>
     <!-- Ring/pinky are locked at range=0 (Phase 2's 3-point grasp fallback) -- fixed,
          inert, out of the active grasp. Their exact resting collision against the
@@ -438,8 +437,8 @@
 
   <actuator>
     <!-- Arm: pure torque (motor) actuators, driven every step by src/arm_control.py's
-         software PD + gravity/Coriolis feedforward (see NOTES.md "Phase 3" for why
-         MuJoCo's built-in <position> actuator wasn't accurate enough here: no integral, no
+         software PD + gravity/Coriolis feedforward (MuJoCo's built-in <position> actuator
+         wasn't accurate enough here: no integral, no
          feedforward, and the per-joint dampratio=1 doesn't critically damp a coupled
          7-link chain). ctrlrange matches the official forcerange values. -->
     <motor name="arm_r_joint1" joint="arm_r_joint1" ctrlrange="-61.4 61.4"/>
@@ -466,7 +465,7 @@
 
   <!-- "home": arm at a ready pose 10cm back / 20cm above the can (HOME_Q in
        tests/test_phase_3.py, found via IK), well clear of the table. Recomputed after
-       fixing the grasp_target site definition bug -- see NOTES.md "Phase 3": the site's
+       fixing the grasp_target site definition bug: the site's
        local offset was copy-pasted from hand_only.xml's can *world* position without
        transforming into the palm's local frame, so every arm pose computed against it
        before the fix targeted the wrong physical point on the hand. Hand in its Phase 2

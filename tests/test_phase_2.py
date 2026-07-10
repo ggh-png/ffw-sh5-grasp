@@ -23,11 +23,11 @@ MODEL_PATH = REPO_ROOT / "models" / "hand_only.xml"
 import grasp  # noqa: E402
 
 N_TRIALS = 10
-NOISE = 0.005  # +-5mm, per PLAN.md
+NOISE = 0.005  # +-5mm
 RAMP_TIME = 1.0  # s, grasp/thumb 0->1
 SETTLE_TIME = 1.0  # s, hold closed grasp before lifting
 LIFT_HEIGHT = 0.10  # m
-LIFT_SPEED = 0.02  # m/s (2cm/s, per PLAN.md)
+LIFT_SPEED = 0.02  # m/s (2cm/s)
 POST_LIFT_HOLD = 5.0  # s
 MIN_NET_LIFT = 0.08  # m -- some sag under load is expected, still counts as a real lift
 MAX_SLIP = 0.01  # m, measured in the hand's own frame over the post-lift hold

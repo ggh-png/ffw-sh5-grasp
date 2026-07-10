@@ -43,7 +43,7 @@
          profiles the STL's own vertex radius vs. height (it's a near-perfect constant-radius
          cylinder from about 5% to 92% of its height, with the rest of its ~15k vertices
          concentrated in the complex top/bottom caps -- a face-normal heuristic was tried
-         first and rejected, see NOTES.md "Phase 5 후속 10", because the tab/rim detail is
+         first and rejected, because the tab/rim detail is
          locally steep enough to fool it), splits the mesh's faces into that side band vs.
          the two cap regions by height, and computes real UV for the side faces (u = angle
          around the can's own axis, unwrapped per-face to avoid a seam artifact since this
@@ -164,8 +164,8 @@
          yaw) on base_link replacing the freejoint the official model would otherwise need,
          driven by velocity actuators (see src/base_teleop.py). This is the MuJoCo-native
          equivalent of the sibling ffw-sh5-teleoperation repo's kinematic transform+sweep-test
-         base (see ffw-sh5-mobile-and-box-plan.md S3.1) -- collision sliding against
-         obstacles (e.g. the table, T9) comes free from the constraint solver instead of a
+         base -- collision sliding against
+         obstacles (e.g. the table) comes free from the constraint solver instead of a
          hand-rolled sweep test, and it does not touch qpos directly (ctrl only). -->
     <!-- frictionloss (Coulomb/static friction, N or N*m) matters here beyond the usual
          "avoid numerical stiffness" role: a pure <velocity> actuator has zero position
@@ -795,7 +795,7 @@
     <!-- Table + can: same relative geometry validated in Phase 1-3 (models/arm_hand.xml),
          translated by the offset between arm_hand.xml's fixed arm_base (0,0,1.0) and this
          scene's arm_base_link resting position with lift_joint at its "home" value -0.5
-         ((0.0055, 0, 1.0816), see NOTES.md "Phase 4") -- so grasp_target's local offset,
+         ((0.0055, 0, 1.0816)) -- so grasp_target's local offset,
          the thumb pre-shape, HOME_Q and every capsule number above carry over unchanged. -->
     <!-- Footprint enlarged (Session 8 후속, user request) from 0.08x0.15 -- height/position
          unchanged (table top stays at exactly the same world z the can/grasp geometry was
@@ -918,7 +918,7 @@
          claims corner volume the real curved/tapered hand never occupies. The validated
          pick pose points this box at the can's center from above-and-behind, which puts its
          far corner *kinematically* ~11-12mm below the table top if IK is solved with no
-         collision at all (measured directly: see NOTES.md "Phase 4 Session 8"). A blanket
+         collision at all (measured directly). A blanket
          <exclude> against world (this repo's earlier fix, and arm_hand.xml's Phase 3
          approach) hides this by removing ALL force, including a genuine deep push -- which is
          exactly the "hand goes through the table" bug reported during manual teleop.
@@ -931,7 +931,7 @@
          reliably reproduces tests/test_phase_4.py's validated pick geometry (10/10, confirmed
          across the full trial set, not just the trials that previously failed), while still
          ramping to near-default stiffness for any push beyond that (so a deliberate manual
-         push settles a few mm in, not through the table -- see diag script in NOTES.md). -->
+         push settles a few mm in, not through the table). -->
     <pair geom1="palm_l_collision" geom2="table" solref="0.005 1" solimp="0.0001 0.95 0.015"/>
     <pair geom1="palm_r_collision" geom2="table" solref="0.005 1" solimp="0.0001 0.95 0.015"/>
     <pair geom1="palm_l_collision" geom2="floor" solref="0.005 1" solimp="0.0001 0.95 0.015"/>
@@ -939,7 +939,7 @@
     <!-- Wheel-floor contact (Session 8 후속 6, retuned 후속 8): base_link only has
          base_x/base_y/base_yaw joints (Phase 4's deliberate simplification, no vertical or
          tilt DOF -- see the wheel bodies' comment above), so the wheels' ~1.5mm floor
-         overlap (itself deliberate, see NOTES.md "Phase 5 후속 2" on numerically-unstable
+         overlap (itself deliberate, to avoid numerically-unstable
          exact-zero gaps) can never settle to a natural equilibrium depth the way it would
          on a body that's actually free to sink under load -- there's no DOF for it to sink
          into. With MuJoCo's default solref (0.02 1) at that fixed, unrelaxable 1.5mm depth,
@@ -950,7 +950,7 @@
          steering felt sluggish (pivoting a wheel scrubbing against that much phantom normal
          force needed far more torque than a realistically-loaded wheel would) and in-place
          rotation barely happened at all. solref="0.15 1" (retuned from the first pass's
-         "0.1 1" -- see NOTES.md "Phase 5 후속 8") plus wheel_drive's kv=150 (below,
+         "0.1 1") plus wheel_drive's kv=150 (below,
          retuned from 30) together were the best swept combination: steering aligns in
          ~0.5s (vs ~5s unfixed), steady in-place yaw rate reaches ~23% of the commanded
          rate (vs ~0.5% unfixed) with the lowest peak transient among combinations tried,
@@ -958,7 +958,7 @@
          slip) as a side effect of the higher kv. Idle drift is byte-for-byte unchanged
          (0.645mm) since neither knob does anything without a drive command. Rotation is
          still well under the commanded 1.2 rad/s -- a further, deeper traction ceiling
-         this combination doesn't fully remove, see NOTES.md for the fuller sweep data. -->
+         this combination doesn't fully remove. -->
     <pair geom1="left_wheel_collision" geom2="floor" solref="0.15 1"/>
     <pair geom1="right_wheel_collision" geom2="floor" solref="0.15 1"/>
     <pair geom1="rear_wheel_collision" geom2="floor" solref="0.15 1"/>
@@ -1021,16 +1021,16 @@
     <position class="finger_dip" name="finger_l_joint11" joint="finger_l_joint11" inheritrange="1"/>
     <position class="finger_tip" name="finger_l_joint12" joint="finger_l_joint12" inheritrange="1"/>
     <!-- Left ring/pinky (Session 8 후속): pip/dip/tip range widened from the Phase 2
-         locked-at-0 fallback (see NOTES.md "Phase 5 후속") for a cosmetic curl driven by
+         locked-at-0 fallback for a cosmetic curl driven by
          grasp.py's RING_PINKY_CURL_JOINTS mapping -- they still never touch the can (no
          actuator here overrides that, it's purely grasp.py's ctrl writes each step), this
          is visual only. mcp (spread) stays locked at 0/unactuated, same as Phase 2 --
          inheritrange can't attach to a zero-width range anyway (Session 2 finding), and no
          spread is wanted here regardless.
          grasp.py scales this curl by the live `grasp` scalar (0 at rest -> fully extended,
-         capped at 35% of range at grasp=1.0), not a flat constant -- see NOTES.md "Phase 5
-         후속 4" for why a flat 35%-regardless-of-grasp constant (Session 8 후속 3's original
-         fix) was replaced: it left these two fingers visibly curled even at rest while every
+         capped at 35% of range at grasp=1.0), not a flat constant -- a flat
+         35%-regardless-of-grasp constant (Session 8 후속 3's original
+         fix) was replaced because it left these two fingers visibly curled even at rest while every
          other digit starts fully open, which is wrong on its own terms regardless of how it
          looks mid-grasp. The keyframe below now leaves qpos/ctrl at 0 for these joints
          (matching grasp=0's fully-extended rest state) since grasp.py re-commands them every

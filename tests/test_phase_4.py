@@ -4,8 +4,8 @@ models/full_scene.xml embeds the exact Phase 1-3 right-arm+hand physics (capsule
 collision, grasp synergy, IK site offset, HOME_Q) inside the full FFW-SH5 body: fixed
 base (freejoint removed), visual-only wheels (joints removed), lift_joint + head kept as
 real actuators, both arms as motor+feedforward torque control (src/arm_control.py, same
-fix as Phase 3), both hands with mirrored capsule collision. See NOTES.md "Phase 4" for how
-the arm_base translation (mobile-base+lift height vs. arm_hand.xml's fixed 1.0m) was folded
+fix as Phase 3), both hands with mirrored capsule collision. The arm_base translation
+(mobile-base+lift height vs. arm_hand.xml's fixed 1.0m) was folded
 into the table/can placement so every Phase 1-3 validated number (HOME_Q, grasp_target site
 offset, thumb pre-shape, capsule sizes) carries over unchanged for the right arm -- this is
 verified directly by part 1 below rather than assumed.
@@ -26,7 +26,7 @@ Phase 3's bar.
 The left hand's grasp synergy is mirrored geometry (see src/grasp.py), not independently
 regression-tested against its own can -- Part 1's hold check covers it (no divergence, small
 site drift) but Part 2 only exercises the right hand, honestly matching what's actually been
-validated (see NOTES.md "Phase 4").
+validated.
 
 Run headless: `python3 tests/test_phase_4.py`
 """
@@ -49,8 +49,8 @@ ARM_R = [f"arm_r_joint{i}" for i in range(1, 8)]
 ARM_L = [f"arm_l_joint{i}" for i in range(1, 8)]
 
 # Session 8 (Phase 5 follow-up): matches the rest pose used by the sibling ffw-sh5-mujoco
-# repo's Controller.reset() (only joint4/elbow set to -90 deg, everything else 0; see
-# NOTES.md "Phase 5 후속" for the derivation) rather than the old arm_hand.xml-derived
+# repo's Controller.reset() (only joint4/elbow set to -90 deg, everything else 0)
+# rather than the old arm_hand.xml-derived
 # "already reaching for the can" pose. This is now just a generic ready/rest seed for IK
 # multistart, not tied to any particular can geometry -- solve_pose_multistart's random
 # restarts (not this seed) do the real work of finding the pregrasp/grasp configuration.

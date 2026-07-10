@@ -1,8 +1,7 @@
 """Phase 0 — official model validation.
 
 Loads the official ROBOTIS FFW-SH5 menagerie scene (unmodified) and:
-  1. Reports model structure (dof counts, joints, actuators, geoms, solver options)
-    to NOTES.md.
+  1. Prints a model structure report (dof counts, joints, actuators, geoms, solver options).
   2. Runs a 5s gravity-only, zero-control simulation and asserts it does not diverge.
   3. Determines whether finger collision geoms are mesh- or primitive-based.
 
@@ -17,7 +16,6 @@ import numpy as np
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 SCENE_PATH = REPO_ROOT / "assets" / "robotis_ffw" / "scene_ffw_sh5.xml"
-NOTES_PATH = REPO_ROOT / "NOTES.md"
 
 JOINT_TYPE_NAMES = {
     mujoco.mjtJoint.mjJNT_FREE: "free",
@@ -146,28 +144,6 @@ def build_report(model):
     return "\n".join(lines), finger_collision_types
 
 
-def write_notes_section(section_text, heading="## Phase 0"):
-    """Replace only this heading's section in NOTES.md, preserving other phases' notes."""
-    if NOTES_PATH.exists():
-        content = NOTES_PATH.read_text()
-    else:
-        content = "# NOTES\n"
-
-    start = content.find(heading)
-    if start == -1:
-        if not content.endswith("\n\n"):
-            content += "\n\n"
-        content += section_text.rstrip() + "\n"
-        NOTES_PATH.write_text(content)
-        return
-
-    rest = content[start + len(heading) :]
-    next_marker = rest.find("\n## ")
-    end = len(content) if next_marker == -1 else start + len(heading) + next_marker + 1
-    content = content[:start] + section_text.rstrip() + "\n\n" + content[end:]
-    NOTES_PATH.write_text(content)
-
-
 def run_divergence_test(model, seconds=5.0):
     data = mujoco.MjData(model)
     mujoco.mj_resetData(model, data)
@@ -215,10 +191,7 @@ def main():
 
     report += "### Finger collision mesh vs primitive judgement\n"
     report += conclusion + "\n\n"
-
-    section = "## Phase 0 — 공식 모델 검증\n\n" + report
-    write_notes_section(section)
-    print(f"Wrote report to {NOTES_PATH.relative_to(REPO_ROOT)}")
+    print(report)
 
     ok = not diverged
     print("PASS" if ok else "FAIL: simulation diverged (max|qacc| >= 1e5)")

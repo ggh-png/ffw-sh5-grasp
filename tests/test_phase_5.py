@@ -169,10 +169,9 @@ def _step(model, data, rig, drive, keys, frame_dt):
 
 def run_idle_regression(model):
     """No drive keys held at all -- this is the direct regression check for two bugs found
-    while building this: a dropped keyframe token (see NOTES.md "Phase 5") and a
-    numerically-unstable exact-zero wheel/floor gap that silently dropped two of three
-    wheels from `data.contact` (see NOTES.md "Phase 5 후속") -- both showed up first as
-    exactly this idle-hold test drifting when it shouldn't."""
+    while building this: a dropped keyframe token and a numerically-unstable exact-zero
+    wheel/floor gap that silently dropped two of three wheels from `data.contact` -- both
+    showed up first as exactly this idle-hold test drifting when it shouldn't."""
     data = mujoco.MjData(model)
     _reset_home(model, data)
     rig = _make_rig(model)
@@ -236,8 +235,7 @@ def run_collision_test(model):
     """Hold 'w' (forward, toward the table the arm is already reaching for) for a generous
     6s -- long enough that an unobstructed drive would travel well over a meter -- and check
     the base does NOT get anywhere near that far: contact between the reaching arm/hand and
-    the table should block it well short, matching ffw-sh5-mobile-and-box-plan.md's T9
-    ("베이스가 테이블 앞에서 정지, 관통 X")."""
+    the table should block it well short ("베이스가 테이블 앞에서 정지, 관통 X")."""
     data = mujoco.MjData(model)
     _reset_home(model, data)
     rig = _make_rig(model)

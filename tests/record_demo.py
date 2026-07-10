@@ -1,7 +1,7 @@
 """Dev utility (not a Phase test): render the Phase 4 scripted pick-and-lift sequence on
 models/full_scene.xml to an animated GIF, contact force/point visualization on, camera
-following the right hand. This is the offline stand-in for the "촬영" deliverable in
-PLAN.md's Phase 4 -- the interactive src/teleop_app.py is for a human at the sliders, but
+following the right hand. This is the offline stand-in for Phase 4's "촬영" deliverable --
+the interactive src/teleop_app.py is for a human at the sliders, but
 this script drives the identical validated sequence from tests/test_phase_4.py
 headlessly so the demo doesn't depend on someone being at a keyboard/mouse.
 
@@ -25,8 +25,7 @@ import ik  # noqa: E402
 
 ARM_R = [f"arm_r_joint{i}" for i in range(1, 8)]
 ARM_L = [f"arm_l_joint{i}" for i in range(1, 8)]
-# Matches models/full_scene.xml's "home" keyframe (Session 8 Phase 5 follow-up) -- see
-# NOTES.md "Phase 5 후속".
+# Matches models/full_scene.xml's "home" keyframe (Session 8 Phase 5 follow-up).
 HOME_Q_R = np.array([0.0, 0.0, 0.0, -1.5707963267948966, 0.0, 0.0, 0.0])
 HOME_Q_L = np.array([0.0, 0.0, 0.0, -1.5707963267948966, 0.0, 0.0, 0.0])
 
