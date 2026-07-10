@@ -11,6 +11,34 @@ UI target, 3D marker/gizmo pose, IK world pose 사이의 변환을 담당한다.
 | `virtual_object_pos` | base frame의 virtual object 위치 |
 | `virtual_object_rpy` | base frame 기준 virtual object RPY |
 
+## 수식
+
+base-local 위치 \((x,y,z)\) → world 위치, 베이스 pose \((x_b,y_b,\theta_b)\)만큼
+2D 회전 후 평행이동(`local_to_world_pos`; 역변환 `world_to_base_pos`는 반대 순서로
+뺀 뒤 \(R^{T}\)를 곱한다):
+
+\[
+\begin{pmatrix} X\\Y\\Z \end{pmatrix} =
+\begin{pmatrix} x_b\\y_b\\0 \end{pmatrix} +
+\begin{pmatrix} \cos\theta_b & -\sin\theta_b & 0\\ \sin\theta_b & \cos\theta_b & 0\\ 0&0&1 \end{pmatrix}
+\begin{pmatrix} x\\y\\z \end{pmatrix}
+\]
+
+손 target의 world quaternion(`target_world_quat`)은 세 쿼터니언의 곱:
+
+\[
+q_{world} = q_{base\_yaw} \otimes q_{home} \otimes q_{rpy\_delta}
+\]
+
+Bimanual MoveL의 world→virtual-object-local 오프셋 캡처(`capture_grasp`)와
+그 역변환(`apply_virtual_object_target`), \(R^{-1}=R^{T}\)(회전행렬이므로):
+
+\[
+p_{\text{offset}} = R_{obj}^{T}(p_{hand}-p_{obj}), \quad R_{\text{offset}} = R_{obj}^{T}R_{hand}
+\qquad\Longleftrightarrow\qquad
+p_{hand} = p_{obj} + R_{obj}\,p_{\text{offset}}, \quad R_{hand} = R_{obj}\,R_{\text{offset}}
+\]
+
 ## 함수
 
 | 함수 | 역할 |

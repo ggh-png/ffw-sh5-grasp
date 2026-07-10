@@ -11,6 +11,17 @@
 | 제어식 | `tau = qfrc_bias + kp * (q_des - q) - kd * qvel` |
 | 목적 | 중력/코리올리 보상 + PD feedback으로 목표 자세 유지 |
 
+## 수식
+
+\[
+\tau = h(q, \dot q) + K_p\,(q_{des} - q) - K_d\,\dot q
+\]
+
+\(h(q,\dot q)\)는 MuJoCo가 매 스텝 계산해주는 `qfrc_bias`(중력+코리올리+원심력을
+정확히 상쇄하는 feedforward 항), \(K_p\)/\(K_d\)는 스칼라 게인(`kp=600.0`,
+`kd=40.0`)을 모든 관절에 동일하게 적용한다. 계산 결과는 `actuator_ctrlrange`로
+clamp한 뒤 `data.ctrl`에 쓴다.
+
 ## 클래스
 
 ### `ArmTorqueController`

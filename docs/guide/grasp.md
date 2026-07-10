@@ -20,11 +20,33 @@
 | `RING_PINKY_CURL_JOINTS` | 약지/새끼 cosmetic curl 관절 |
 | `FINGER_BODY_GROUPS` | 접촉 body를 손가락 그룹으로 매핑 |
 
+## 수식
+
+슬라이더 스칼라 \(s\in[0,1]\)(`grasp` 또는 `thumb`)를 관절 range \([lo,hi]\) 위의
+목표각으로 바꾸는 보간(`_ramp_value`), `open_frac`은 "완전히 편 상태에서도
+남겨두는 여유":
+
+\[
+\text{frac} = \text{open\_frac} + s\,(1-\text{open\_frac}), \qquad
+\theta =
+\begin{cases}
+lo + \text{frac}\,(hi-lo) & \text{open\_at\_hi=False} \\
+hi - \text{frac}\,(hi-lo) & \text{open\_at\_hi=True (왼손 엄지처럼 range가 미러링된 경우)}
+\end{cases}
+\]
+
+약지/새끼 코스메틱 curl은 `open_frac` 없이 `grasp` 스칼라에 비례해 자기 range의
+`RING_PINKY_MAX_FRAC`까지만 움직인다: \(\theta = lo + (s\cdot\text{RING\_PINKY\_MAX\_FRAC})(hi-lo)\).
+
+엄지 MCP-yaw는 같은 형태의 선형 램프이지만 대상이 range가 아니라 REST/CURL 두
+각도 사이다: \(\text{yaw}(s) = \text{yaw}_{rest} + s\,(\text{yaw}_{curl}-\text{yaw}_{rest})\).
+
 ## 함수
 
 | 함수 | 역할 |
 |---|---|
-| `_resolve_joint_actuator(model, joint_name)` | joint id와 actuator id를 찾고 캐싱 |
+| `_resolve_joint_actuator(model, joint_name)` | joint id와 actuator id를 찾고 캐싱 (actuator 탐색 자체는 `mj_util.find_actuator_for_joint` 공용 함수 사용) |
+| `_ramp_value(lo, hi, frac, open_at_hi=False)` | 관절 range를 frac(0~1) 비율로 보간(엄지/검지·중지/약지·새끼 세 곳에서 공용으로 사용) |
 | `_set_joint_ctrl(model, data, joint_name, value)` | 관절 이름 기준으로 actuator target 기록 |
 | `apply_grasp(model, data, grasp, thumb, side="r")` | synergy 값을 손가락 actuator target으로 변환 |
 | `apply_open_hand(model, data, side="r")` | actuated finger joint를 open pose로 명령 |

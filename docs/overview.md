@@ -43,6 +43,7 @@ flowchart TD
 | `src/arm_control.py` | 팔 관절 토크 명령 계산 |
 | `src/grasp.py` | 손가락 synergy 적용, 접촉 기반 grasp 판정 |
 | `src/bimanual_constraint.py` | legacy box rigid grasp projection helper |
+| `src/mj_util.py` | `grasp.py`/`arm_control.py`가 공용으로 쓰는 MuJoCo 조회 헬퍼(joint -> actuator 탐색) |
 
 ## 데이터 흐름
 

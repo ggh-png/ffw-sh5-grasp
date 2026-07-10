@@ -66,7 +66,8 @@ src/
 ├── ik.py                # 6DOF damped least-squares IK
 ├── arm_control.py       # 팔 토크 제어기
 ├── grasp.py             # 손가락 synergy와 접촉 기반 grasp 판정
-└── bimanual_constraint.py # legacy box constraint helper
+├── bimanual_constraint.py # legacy box constraint helper
+└── mj_util.py            # joint -> actuator 탐색 등 공용 MuJoCo 헬퍼
 ```
 
 ## Tests
