@@ -78,6 +78,7 @@ extra_javascript:
 nav:
     - Home: index.md
     - 프로젝트 개요: overview.md
+    - ROS2 개발자를 위한 가이드: guide/ros2-guide.md
     - MuJoCo 튜토리얼:
         - guide/index.md
         - MuJoCo 최소 개념 사전: guide/00-basics.md
