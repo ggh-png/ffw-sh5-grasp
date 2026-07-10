@@ -17,7 +17,7 @@ UI target, 3D marker/gizmo pose, IK world pose 사이의 변환을 담당한다.
 > target 슬라이더는 "로봇 기준 앞/옆/위"를 조작하려는 것이다 — 베이스가 주행
 > 중에 움직여도 슬라이더 값 자체는 그대로 두고 싶으므로, 매 프레임 베이스의
 > 현재 pose로 변환해서 IK에 넘긴다. 자세한 이유는
-> [ROS2 개발자를 위한 가이드](ros2-guide.md) Part 10.3 참고.
+> [ROS2 개발자를 위한 튜토리얼 Part 10.3](ros2-guide.md#part-10-3) 참고.
 
 base-local 위치 \((x,y,z)\) → world 위치, 베이스 pose \((x_b,y_b,\theta_b)\)만큼
 2D 회전 후 평행이동(`local_to_world_pos`; 역변환 `world_to_base_pos`는 반대 순서로
