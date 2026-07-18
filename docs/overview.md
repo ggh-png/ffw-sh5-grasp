@@ -13,7 +13,7 @@
 | 전신 목표 | world-fixed 손별 home-relative XYZ/RPY |
 | 양팔 목표 | Cyclo-style virtual object marker |
 | 캔 grasp | contact force 기반 |
-| IK | base 3축 + lift + 양팔 14축 weighted whole-body IK |
+| IK | base 3축 + lift + 양팔 14축 weighted whole-body IK + reactive collision CBF |
 | 베이스 | ROBOTIS-style swerve drive, 실제 바퀴 마찰 |
 | 종속성 | ROS 없음, NumPy + MuJoCo 알고리즘 구현 |
 | 테스트 | Phase 0-6 + whole-body |
@@ -43,9 +43,10 @@ flowchart TD
 |---|---|
 | `src/teleop_app.py` | 앱 생성, MuJoCo model/data 준비, 메인 루프, 입력, 물리 step |
 | `src/teleop_ui.py` | ImGui 패널, 버튼/슬라이더, marker jog |
-| `src/teleop_render.py` | GLFW window, MuJoCo scene render, camera, ImGuizmo |
+| `src/teleop_render.py` | GLFW window, MuJoCo scene render, camera, ImGuizmo, collision CBF overlay |
 | `src/teleop_targets.py` | target pose 변환, marker sync, Bimanual MoveL 상태 |
 | `src/base_teleop.py` | 키 입력 smoothing, swerve inverse kinematics, wheel command |
+| `src/kinematics.py` | 공유 pose/FK/Jacobian + collision pair 최근접 거리 gradient |
 | `src/whole_body_ik.py` | 양손 task를 base/lift/양팔 velocity로 공동 최적화 |
 | `src/ik.py` | 기존 단일 팔 IK와 Phase 3/4 독립 회귀 경로 |
 | `src/arm_control.py` | 팔 관절 토크 명령 계산 |
@@ -57,12 +58,13 @@ flowchart TD
 
 1. UI와 gizmo가 `app.targets`를 갱신한다.
 2. `teleop_targets.py`가 target 값을 world pose로 변환한다.
-3. `whole_body_ik.py`가 world pose를 base/lift/양팔 공동 명령으로 변환한다.
-4. `arm_control.py`가 팔 위치 명령을 토크로 변환한다.
-5. `base_teleop.py`가 whole-body 또는 키보드 body twist를 바퀴 조향각/속도로 변환한다.
-6. `grasp.py`가 grasp/thumb 값을 손가락 actuator target으로 변환한다.
-7. `teleop_app.py`가 모든 actuator command를 `data.ctrl`에 쓰고 `mj_step`을 호출한다.
-8. `teleop_render.py`가 scene과 marker/gizmo를 다시 그린다.
+3. `kinematics.py`가 정규화된 손 pose와 world-aligned Jacobian을 계산한다.
+4. `whole_body_ik.py`가 world pose를 base/lift/양팔 공동 명령으로 변환한다.
+5. `arm_control.py`가 팔 위치 명령을 토크로 변환한다.
+6. `base_teleop.py`가 whole-body 또는 키보드 body twist를 바퀴 조향각/속도로 변환한다.
+7. `grasp.py`가 grasp/thumb 값을 손가락 actuator target으로 변환한다.
+8. `teleop_app.py`가 모든 actuator command를 `data.ctrl`에 쓰고 `mj_step`을 호출한다.
+9. `teleop_render.py`가 scene과 marker/gizmo를 다시 그린다.
 
 ## Target 좌표계
 
@@ -84,4 +86,4 @@ flowchart TD
 | 4 | `test_phase_4.py` | 전신 hold/IK/pick |
 | 5 | `test_phase_5.py` | 입력 응답/FSM/조향 limiter와 전후·strafe·yaw·복합·반전 물리 주행 |
 | 6 | `test_phase_6.py` | marker, Bimanual MoveL, XYZ/RPY target |
-| WBIK | `test_whole_body.py` | ROS-free gate, 스워브 왕복/포화, 무작위 solver 40회, 실제 4방향 whole-body 추종 |
+| WBIK | `test_whole_body.py` | ROS-free gate, 관절·충돌 CBF, 거리 gradient, 스워브 왕복/포화, 무작위 solver 40회, 실제 4방향 whole-body 추종 |

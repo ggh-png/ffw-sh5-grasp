@@ -33,6 +33,7 @@ python3 src/teleop_app.py
 | `Q` / `E` | 리프트 하강 / 상승 |
 | `R` | 캔 리셋 |
 | `G` | contact point/force 표시 토글 |
+| `V` | collision geometry와 활성 CBF 최근접점/연결선 표시 토글 |
 | `C` | 카메라 프리셋 전환 |
 
 ## UI 패널
@@ -43,7 +44,7 @@ python3 src/teleop_app.py
 | Cyclo / Marker Control | `MoveL`, `Bimanual MoveL`, marker jog, capture/release |
 | Right Arm / Left Arm | 손별 IK pose 또는 FK joint target |
 | Can Grasp | 손별 grasp/thumb synergy |
-| Lift / Utilities | lift, reset, contact 표시, camera |
+| Lift / Utilities | lift, reset, contact/collision 표시, camera |
 | Joint Monitor | 주요 관절 위치 표시 |
 
 ## 테스트

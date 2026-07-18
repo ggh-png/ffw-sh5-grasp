@@ -5,9 +5,10 @@ The controlled generalized velocity is::
     [base_x, base_y, base_yaw, lift, right_arm(7), left_arm(7)]
 
 Both hand pose tasks are solved in one weighted least-squares problem.  Box constraints
-enforce per-DOF velocity limits and one-step joint-position limits.  A small posture task
-keeps the arms away from limits, allowing the holonomic base and lift to share motion instead
-of treating them as unrelated manual controls.
+enforce per-DOF velocity limits and one-step joint-position limits, while signed-distance
+control barriers reactively avoid self/workspace collision.  A small posture task keeps the
+arms away from limits, allowing the holonomic base and lift to share motion instead of
+treating them as unrelated manual controls.
 
 Only the returned command is integrated.  The solver never writes live ``data.qpos``:
 base velocity goes through the real swerve wheels, lift through its position actuator, and
@@ -22,6 +23,7 @@ import mujoco
 import numpy as np
 
 from base_teleop import BodyTwist
+import kinematics
 
 
 BASE_JOINTS = ("base_x", "base_y", "base_yaw")
@@ -41,6 +43,9 @@ class WholeBodyCommand:
     position_errors: dict = field(default_factory=dict)
     orientation_errors: dict = field(default_factory=dict)
     generalized_velocity: np.ndarray = field(default_factory=lambda: np.zeros(0))
+    minimum_collision_distance: float = math.inf
+    active_collision_pairs: tuple = ()
+    collision_constraint_violation: float = 0.0
 
 
 class WholeBodyIK:
@@ -50,7 +55,11 @@ class WholeBodyIK:
                  position_weight=10.0, orientation_weight=5.0,
                  position_gain=8.0, orientation_gain=7.0,
                  linear_velocity_damping=0.0, angular_velocity_damping=0.0,
-                 posture_gain=1.0, joint_limit_margin=0.02):
+                 posture_gain=1.0, joint_limit_margin=0.02,
+                 joint_limit_gain=5.0, rigid_grasp_weight=250.0,
+                 collision_avoidance=True, collision_pairs=None,
+                 collision_buffer=0.03, collision_safe_distance=0.01,
+                 collision_barrier_gain=50.0, collision_slack_weight=1000.0):
         self.model = model
         self.site_ids = {
             side: mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, name)
@@ -81,6 +90,24 @@ class WholeBodyIK:
         self.angular_velocity_damping = float(angular_velocity_damping)
         self.posture_gain = float(posture_gain)
         self.joint_limit_margin = float(joint_limit_margin)
+        self.joint_limit_gain = float(joint_limit_gain)
+        self.rigid_grasp_weight = float(rigid_grasp_weight)
+        self.collision_buffer = float(collision_buffer)
+        self.collision_safe_distance = float(collision_safe_distance)
+        self.collision_barrier_gain = float(collision_barrier_gain)
+        self.collision_slack_weight = float(collision_slack_weight)
+        if self.collision_safe_distance < 0.0:
+            raise ValueError("collision_safe_distance must be non-negative")
+        if self.collision_buffer <= self.collision_safe_distance:
+            raise ValueError("collision_buffer must exceed collision_safe_distance")
+        if self.collision_barrier_gain <= 0.0 or self.collision_slack_weight <= 0.0:
+            raise ValueError("collision barrier gain/weight must be positive")
+        if collision_avoidance:
+            self.collision_pairs = tuple(
+                kinematics.default_collision_pairs(model)
+                if collision_pairs is None else collision_pairs)
+        else:
+            self.collision_pairs = ()
         self.max_task_linear_speed = 1.0
         self.max_task_angular_speed = 2.5
         self.base_linear_acceleration_limit = 8.0
@@ -93,7 +120,7 @@ class WholeBodyIK:
         self._reference_base_xy = None
         self._reference_hand_positions = {}
         self._reference_hand_quaternions = {}
-        self._reference_hand_rotations = {}
+        self._rigid_grasp_reference = None
 
         # Regularization is expressed in task-normalized units.  The mobile/lift DOFs are
         # deliberately cheaper for common dual-hand motion; otherwise fourteen arm columns
@@ -124,23 +151,40 @@ class WholeBodyIK:
             if side in target_poses:
                 position, quaternion = target_poses[side]
                 position = np.asarray(position, dtype=float).copy()
-                quaternion = np.asarray(quaternion, dtype=float).copy()
-                rotation = np.zeros(9)
-                mujoco.mju_quat2Mat(rotation, quaternion)
-                rotation = rotation.reshape(3, 3)
+                quaternion = kinematics.normalize_quaternion(quaternion)
             else:
                 position = data.site_xpos[site_id].copy()
                 quaternion = np.zeros(4)
                 mujoco.mju_mat2Quat(quaternion, data.site_xmat[site_id])
-                rotation = data.site_xmat[site_id].reshape(3, 3).copy()
+                quaternion = kinematics.normalize_quaternion(quaternion)
             self._reference_hand_positions[side] = position
             self._reference_hand_quaternions[side] = quaternion
-            self._reference_hand_rotations[side] = rotation
         self._previous_base_velocity_world[:] = 0.0
         self._last_solve_time = None
 
+    def set_rigid_grasp(self, data, active):
+        """Capture or clear the current left-hand pose in the right-hand frame.
+
+        Cyclo's bimanual MoveL controller adds a six-dimensional relative-pose equality to
+        its QP.  We retain the same velocity-level geometry as a strong least-squares task,
+        which fits this small NumPy solver without adding OSQP or ROS dependencies.
+        """
+        if not active:
+            self._rigid_grasp_reference = None
+            return
+        right = kinematics.evaluate_site(
+            self.model, data, self.site_ids["r"], self.dof_ids)
+        left = kinematics.evaluate_site(
+            self.model, data, self.site_ids["l"], self.dof_ids)
+        right_rotation = _quaternion_matrix(right.quaternion)
+        left_rotation = _quaternion_matrix(left.quaternion)
+        self._rigid_grasp_reference = {
+            "position_right": right_rotation.T @ (left.position - right.position),
+            "rotation_right": right_rotation.T @ left_rotation,
+        }
+
     def solve(self, data, target_poses, dt, *, active_sides=("r", "l"),
-              arm_nominal=None, lift_nominal=None):
+              arm_nominal=None, lift_nominal=None, rigid_grasp=False):
         """Return actuator-level goals for one control frame.
 
         ``target_poses`` maps ``"r"``/``"l"`` to world ``(position, quaternion)``.
@@ -156,30 +200,25 @@ class WholeBodyIK:
         dual_base_request = None
         position_errors, orientation_errors = {}, {}
 
+        site_states = {}
         for side in active_sides:
             target_pos, target_quat = target_poses[side]
-            jacp = np.zeros((3, self.model.nv))
-            jacr = np.zeros((3, self.model.nv))
-            mujoco.mj_jacSite(self.model, data, jacp, jacr, self.site_ids[side])
-            jac = np.vstack((jacp[:, self.dof_ids], jacr[:, self.dof_ids]))
-            site_linear_velocity = jacp @ data.qvel
-            site_angular_velocity = jacr @ data.qvel
+            full_state = kinematics.evaluate_site(self.model, data, self.site_ids[side])
+            site_states[side] = full_state
+            jac = full_state.jacobian[:, self.dof_ids]
+            site_velocity = full_state.jacobian @ data.qvel
 
-            current_pos = data.site_xpos[self.site_ids[side]]
+            current_pos = full_state.position
             pos_error = np.asarray(target_pos, dtype=float) - current_pos
-            current_quat = np.zeros(4)
-            mujoco.mju_mat2Quat(current_quat, data.site_xmat[self.site_ids[side]])
-            ori_error_local = np.zeros(3)
-            mujoco.mju_subQuat(ori_error_local, np.asarray(target_quat), current_quat)
-            current_rotation = data.site_xmat[self.site_ids[side]].reshape(3, 3)
-            ori_error_world = current_rotation @ ori_error_local
+            ori_error_world = kinematics.shortest_orientation_error(
+                target_quat, full_state.quaternion)
 
             desired = np.concatenate((
                 _clip_norm(self.position_gain * pos_error
-                           - self.linear_velocity_damping * site_linear_velocity,
+                           - self.linear_velocity_damping * site_velocity[:3],
                            self.max_task_linear_speed),
                 _clip_norm(self.orientation_gain * ori_error_world
-                           - self.angular_velocity_damping * site_angular_velocity,
+                           - self.angular_velocity_damping * site_velocity[3:],
                            self.max_task_angular_speed),
             ))
             weights = np.sqrt(np.array(
@@ -187,7 +226,15 @@ class WholeBodyIK:
             rows.append(weights[:, None] * jac)
             rhs.append(weights * desired)
             position_errors[side] = float(np.linalg.norm(pos_error))
-            orientation_errors[side] = float(np.linalg.norm(ori_error_local))
+            orientation_errors[side] = float(np.linalg.norm(ori_error_world))
+
+        if rigid_grasp and all(side in site_states for side in ("r", "l")):
+            if self._rigid_grasp_reference is None:
+                self.set_rigid_grasp(data, True)
+            grasp_jacobian, grasp_velocity = self._rigid_grasp_task(site_states, dt)
+            weight = math.sqrt(self.rigid_grasp_weight)
+            rows.append(weight * grasp_jacobian)
+            rhs.append(weight * grasp_velocity)
 
         # A stable hierarchy for dual-hand common motion: explicitly servo the base from
         # the average task error, then let the same least-squares system use lift/arms for
@@ -204,11 +251,8 @@ class WholeBodyIK:
             target_yaw_deltas = []
             for side in ("r", "l"):
                 target_quaternion = np.asarray(target_poses[side][1], dtype=float)
-                delta_local = np.zeros(3)
-                mujoco.mju_subQuat(
-                    delta_local, target_quaternion,
-                    self._reference_hand_quaternions[side])
-                delta_world = self._reference_hand_rotations[side] @ delta_local
+                delta_world = kinematics.shortest_orientation_error(
+                    target_quaternion, self._reference_hand_quaternions[side])
                 target_yaw_deltas.append(delta_world[2])
             desired_base_yaw = self._reference_base_yaw + float(np.mean(target_yaw_deltas))
             base_yaw_error = _wrap_angle(
@@ -265,6 +309,32 @@ class WholeBodyIK:
             qdot[:3] = dual_base_request
         qdot = self._shape_base_velocity(
             qdot, position_errors, orientation_errors, dt, float(data.time))
+        collision_constraints = self._collision_constraints(data, dt)
+        if collision_constraints:
+            barrier_matrix = np.vstack([
+                constraint.gradient for constraint, _bound in collision_constraints])
+            barrier_lower = np.array([
+                bound for _constraint, bound in collision_constraints])
+            # This is Cyclo's collision CBF with a quadratic slack penalty, reduced to a
+            # squared hinge loss and solved by a tiny active set.  Applying it after base
+            # velocity shaping ensures acceleration limiting cannot re-introduce an unsafe
+            # approach velocity.
+            qdot = _bounded_least_squares_with_barriers(
+                np.eye(len(qdot)), qdot, lower, upper,
+                barrier_matrix, barrier_lower, self.collision_slack_weight)
+            # The next acceleration ramp must start from the command actually returned,
+            # including any safety override of the shaped base velocity.
+            self._previous_base_velocity_world = qdot[:3].copy()
+            collision_violation = float(np.max(np.maximum(
+                barrier_lower - barrier_matrix @ qdot, 0.0)))
+            collision_names = tuple(
+                constraint.name for constraint, _bound in collision_constraints)
+            minimum_collision_distance = min(
+                constraint.distance for constraint, _bound in collision_constraints)
+        else:
+            collision_violation = 0.0
+            collision_names = ()
+            minimum_collision_distance = math.inf
         next_q = current_q + qdot * dt
         next_q = self._clip_positions(next_q)
 
@@ -286,7 +356,66 @@ class WholeBodyIK:
             position_errors=position_errors,
             orientation_errors=orientation_errors,
             generalized_velocity=qdot,
+            minimum_collision_distance=minimum_collision_distance,
+            active_collision_pairs=collision_names,
+            collision_constraint_violation=collision_violation,
         )
+
+    def _collision_constraints(self, data, dt):
+        """Return active ``grad(distance) @ qdot >= lower`` CBF rows."""
+        barrier_gain = min(
+            self.collision_barrier_gain, 1.0 / max(float(dt), 1e-5))
+        constraints = []
+        for result in self.collision_distances(data):
+            if np.linalg.norm(result.gradient) < 1e-10:
+                continue
+            lower = -barrier_gain * (result.distance - self.collision_safe_distance)
+            constraints.append((result, float(lower)))
+        return constraints
+
+    def collision_distances(self, data, max_distance=None):
+        """Return monitored pair distances for control diagnostics/visualization.
+
+        The query is read-only and uses the same geometry/gradient code as the CBF, so a
+        rendered closest-point line cannot silently disagree with the safety controller.
+        """
+        distance_limit = (self.collision_buffer if max_distance is None
+                          else max(float(max_distance), 0.0))
+        results = []
+        for pair in self.collision_pairs:
+            result = kinematics.collision_distance_gradient(
+                self.model, data, pair, self.dof_ids, distance_limit)
+            if result is not None:
+                results.append(result)
+        return tuple(results)
+
+    def _rigid_grasp_task(self, site_states, dt):
+        """Build Cyclo-style relative hand Jacobian and drift-correction velocity."""
+        right, left = site_states["r"], site_states["l"]
+        reference = self._rigid_grasp_reference
+        right_rotation = _quaternion_matrix(right.quaternion)
+        right_to_left_world = right_rotation @ reference["position_right"]
+        transform = np.eye(6)
+        transform[:3, 3:] = -_skew(right_to_left_world)
+        right_jacobian = right.jacobian[:, self.dof_ids]
+        left_jacobian = left.jacobian[:, self.dof_ids]
+        grasp_jacobian = left_jacobian - transform @ right_jacobian
+
+        desired_left_position = right.position + right_to_left_world
+        desired_left_rotation = right_rotation @ reference["rotation_right"]
+        desired_left_quaternion = _matrix_quaternion(desired_left_rotation)
+        # Exact 1/dt correction, as in Cyclo, can exceed this model's velocity box after a
+        # contact disturbance. Norm clipping preserves direction while keeping the QP
+        # feasible enough for the strong soft equality to recover over multiple frames.
+        correction_dt = max(float(dt), 1e-5)
+        linear = _clip_norm(
+            (desired_left_position - left.position) / correction_dt,
+            self.max_task_linear_speed)
+        angular = _clip_norm(
+            kinematics.shortest_orientation_error(
+                desired_left_quaternion, left.quaternion) / correction_dt,
+            self.max_task_angular_speed)
+        return grasp_jacobian, np.concatenate((linear, angular))
 
     def _shape_base_velocity(self, qdot, position_errors, orientation_errors, dt, data_time):
         """Fade and acceleration-limit the physical base part of the differential solution.
@@ -322,18 +451,24 @@ class WholeBodyIK:
     def _velocity_bounds(self, current_q, dt):
         lower = -self.velocity_limits.copy()
         upper = self.velocity_limits.copy()
+        barrier_gain = min(self.joint_limit_gain, 1.0 / max(float(dt), 1e-5))
         for i, limited in enumerate(self.position_limited):
             if not limited:
                 continue
             lo, hi = self.position_ranges[i]
             margin = min(self.joint_limit_margin, max(0.0, 0.25 * (hi - lo)))
-            lower[i] = max(lower[i], (lo + margin - current_q[i]) / dt)
-            upper[i] = min(upper[i], (hi - margin - current_q[i]) / dt)
+            safe_lo, safe_hi = lo + margin, hi - margin
+            # Cyclo's joint-limit control-barrier constraint bounds approach velocity by
+            # distance to each limit. Unlike a one-frame hard clamp, this decelerates before
+            # the margin and gives smooth, exponentially safe recovery if contact pushes a
+            # joint outside it.
+            lower[i] = max(lower[i], -barrier_gain * (current_q[i] - safe_lo))
+            upper[i] = min(upper[i], barrier_gain * (safe_hi - current_q[i]))
             if lower[i] > upper[i]:
-                # The state is farther outside the margin than one frame can recover.  Use
-                # the fastest valid recovery velocity without violating the velocity box.
+                # Degenerate/narrow ranges or a badly out-of-range imported state: choose a
+                # bounded recovery direction instead of passing an infeasible box onward.
                 recovery = (self.velocity_limits[i]
-                            if current_q[i] < lo + margin else -self.velocity_limits[i])
+                            if current_q[i] < safe_lo else -self.velocity_limits[i])
                 lower[i] = upper[i] = recovery
         return lower, upper
 
@@ -346,37 +481,111 @@ class WholeBodyIK:
 
 
 def _bounded_least_squares(matrix, vector, lower, upper):
-    """Small active-set box-constrained least-squares solver.
+    """Solve a small box-constrained least-squares problem with a BVLS active set.
 
-    The FFW problem has only 18 variables.  Solving the free set, pinning the largest bound
-    violation, and repeating is deterministic, dependency-free and sufficient for the
-    velocity/one-step position boxes used here.
+    The former one-way active set pinned a variable after its first unconstrained bound
+    violation and could never release it, so coupled Jacobian columns sometimes produced a
+    feasible but non-optimal velocity. Cyclo uses a full QP solver; bounded-variable least
+    squares adds the missing KKT release step and reaches the same box-QP optimum without
+    OSQP. It solves at most a few 18-column least-squares systems per control frame.
     """
     matrix = np.asarray(matrix, dtype=float)
     vector = np.asarray(vector, dtype=float)
     lower = np.asarray(lower, dtype=float)
     upper = np.asarray(upper, dtype=float)
-    x = np.zeros(matrix.shape[1], dtype=float)
-    free = upper - lower > 1e-12
-    fixed = ~free
-    x[fixed] = 0.5 * (lower[fixed] + upper[fixed])
+    if matrix.ndim != 2 or vector.shape != (matrix.shape[0],):
+        raise ValueError("incompatible least-squares matrix/vector shapes")
+    if lower.shape != (matrix.shape[1],) or upper.shape != lower.shape:
+        raise ValueError("incompatible least-squares bound shapes")
+    if np.any(lower > upper):
+        raise ValueError("lower bound exceeds upper bound")
 
-    for _ in range(matrix.shape[1] + 1):
+    tolerance = 1e-10
+    fixed = upper - lower <= tolerance
+    movable = ~fixed
+    x = np.zeros(matrix.shape[1], dtype=float)
+    x[fixed] = 0.5 * (lower[fixed] + upper[fixed])
+    if np.any(movable):
+        reduced_rhs = vector - matrix[:, fixed] @ x[fixed]
+        solution, *_ = np.linalg.lstsq(matrix[:, movable], reduced_rhs, rcond=None)
+        x[movable] = np.clip(solution, lower[movable], upper[movable])
+    active_lower = movable & (x <= lower + tolerance)
+    active_upper = movable & ~active_lower & (x >= upper - tolerance)
+
+    for _ in range(4 * matrix.shape[1] + 4):
+        active = fixed | active_lower | active_upper
+        free = ~active
+        candidate = x.copy()
         if np.any(free):
-            residual = vector - matrix[:, fixed] @ x[fixed]
-            solution, *_ = np.linalg.lstsq(matrix[:, free], residual, rcond=None)
-            x[free] = solution
-        low_violation = lower - x
-        high_violation = x - upper
-        violation = np.maximum(low_violation, high_violation)
-        violation[~free] = -np.inf
-        index = int(np.argmax(violation))
-        if violation[index] <= 1e-10:
+            reduced_rhs = vector - matrix[:, active] @ x[active]
+            candidate[free], *_ = np.linalg.lstsq(
+                matrix[:, free], reduced_rhs, rcond=None)
+
+        direction = candidate - x
+        step = 1.0
+        for index in np.flatnonzero(free):
+            if candidate[index] < lower[index] - tolerance:
+                step = min(step, (lower[index] - x[index]) / direction[index])
+            elif candidate[index] > upper[index] + tolerance:
+                step = min(step, (upper[index] - x[index]) / direction[index])
+        if step < 1.0 - tolerance:
+            x += max(0.0, step) * direction
+            x = np.clip(x, lower, upper)
+            active_lower |= free & (direction < 0.0) & (x <= lower + tolerance)
+            active_upper |= free & (direction > 0.0) & (x >= upper - tolerance)
+            continue
+
+        x = np.clip(candidate, lower, upper)
+        residual = matrix @ x - vector
+        gradient = matrix.T @ residual
+        lower_violation = np.where(active_lower, -gradient, -np.inf)
+        upper_violation = np.where(active_upper, gradient, -np.inf)
+        lower_index = int(np.argmax(lower_violation))
+        upper_index = int(np.argmax(upper_violation))
+        worst_lower = lower_violation[lower_index]
+        worst_upper = upper_violation[upper_index]
+        if max(worst_lower, worst_upper) <= tolerance:
             break
-        x[index] = lower[index] if low_violation[index] > high_violation[index] else upper[index]
-        free[index] = False
-        fixed[index] = True
+        if worst_lower >= worst_upper:
+            active_lower[lower_index] = False
+        else:
+            active_upper[upper_index] = False
     return np.clip(x, lower, upper)
+
+
+def _bounded_least_squares_with_barriers(matrix, vector, lower, upper,
+                                         barrier_matrix, barrier_lower, slack_weight):
+    """Solve box least squares plus soft one-sided linear barrier constraints.
+
+    Eliminating non-negative slack from ``G x + s >= h`` adds the convex penalty
+    ``weight * max(0, h - G x)^2``.  On each smooth region this is ordinary bounded least
+    squares, so updating the violated-row active set reaches its piecewise-quadratic
+    optimum without bringing ROS, OSQP, or another optimizer into the runtime.
+    """
+    barrier_matrix = np.asarray(barrier_matrix, dtype=float)
+    barrier_lower = np.asarray(barrier_lower, dtype=float)
+    if barrier_matrix.ndim != 2 or barrier_matrix.shape[1] != np.shape(matrix)[1]:
+        raise ValueError("incompatible collision barrier matrix shape")
+    if barrier_lower.shape != (barrier_matrix.shape[0],):
+        raise ValueError("incompatible collision barrier lower-bound shape")
+    if barrier_matrix.shape[0] == 0:
+        return _bounded_least_squares(matrix, vector, lower, upper)
+
+    root_weight = math.sqrt(float(slack_weight))
+    solution = _bounded_least_squares(matrix, vector, lower, upper)
+    active = barrier_matrix @ solution < barrier_lower
+    for _ in range(2 * barrier_matrix.shape[0] + 4):
+        if not np.any(active):
+            return solution
+        augmented_matrix = np.vstack((matrix, root_weight * barrier_matrix[active]))
+        augmented_vector = np.concatenate((vector, root_weight * barrier_lower[active]))
+        candidate = _bounded_least_squares(
+            augmented_matrix, augmented_vector, lower, upper)
+        next_active = barrier_matrix @ candidate < barrier_lower - 1e-10
+        if np.array_equal(next_active, active):
+            return candidate
+        solution, active = candidate, next_active
+    return solution
 
 
 def _clip_norm(vector, limit):
@@ -387,3 +596,20 @@ def _clip_norm(vector, limit):
 
 def _wrap_angle(angle):
     return (float(angle) + math.pi) % (2.0 * math.pi) - math.pi
+
+
+def _skew(vector):
+    x, y, z = np.asarray(vector, dtype=float)
+    return np.array([[0.0, -z, y], [z, 0.0, -x], [-y, x, 0.0]])
+
+
+def _quaternion_matrix(quaternion):
+    matrix = np.zeros(9)
+    mujoco.mju_quat2Mat(matrix, kinematics.normalize_quaternion(quaternion))
+    return matrix.reshape(3, 3)
+
+
+def _matrix_quaternion(matrix):
+    quaternion = np.zeros(4)
+    mujoco.mju_mat2Quat(quaternion, np.asarray(matrix, dtype=float).reshape(9))
+    return kinematics.normalize_quaternion(quaternion)

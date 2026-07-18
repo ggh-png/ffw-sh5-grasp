@@ -174,14 +174,76 @@ def draw_transform_gizmo(app, viewport):
         app._set_gizmo_target_world_pose(target, new_pos, new_quat)
 
 
+def collision_visualization_data(app):
+    """Return the exact active collision pairs that the CBF currently monitors."""
+    if not getattr(app, "collision_viz", False):
+        return ()
+    solver = getattr(app, "whole_body_solver", None)
+    if solver is None:
+        return ()
+    return solver.collision_distances(app.data)
+
+
+def _collision_color(distance, safe_distance):
+    if distance <= 0.0:
+        return np.array([1.0, 0.02, 0.02, 1.0], dtype=np.float32)
+    if distance < safe_distance:
+        return np.array([1.0, 0.18, 0.02, 1.0], dtype=np.float32)
+    return np.array([1.0, 0.78, 0.05, 1.0], dtype=np.float32)
+
+
+def _append_visual_geom(scene, geom_type, size, pos, mat, rgba):
+    if scene.ngeom >= scene.maxgeom:
+        return None
+    geom = scene.geoms[scene.ngeom]
+    mujoco.mjv_initGeom(
+        geom, geom_type, np.asarray(size, dtype=float), np.asarray(pos, dtype=float),
+        np.asarray(mat, dtype=float).reshape(9), np.asarray(rgba, dtype=np.float32))
+    scene.ngeom += 1
+    return geom
+
+
+def _append_collision_overlay(app, constraints):
+    """Tint collision meshes, then draw closest points and their separation segment."""
+    for index in range(app.scene.ngeom):
+        geom = app.scene.geoms[index]
+        if (int(geom.objtype) == int(mujoco.mjtObj.mjOBJ_GEOM)
+                and 0 <= int(geom.objid) < app.model.ngeom
+                and int(app.model.geom_group[int(geom.objid)]) == 3):
+            geom.rgba[:] = [0.05, 0.75, 1.0, 0.28]
+            geom.transparent = 1
+
+    identity = np.eye(3)
+    safe_distance = app.whole_body_solver.collision_safe_distance
+    for constraint in constraints:
+        color = _collision_color(constraint.distance, safe_distance)
+        for point in (constraint.point_a, constraint.point_b):
+            _append_visual_geom(
+                app.scene, mujoco.mjtGeom.mjGEOM_SPHERE,
+                [0.007, 0.007, 0.007], point, identity, color)
+        line = _append_visual_geom(
+            app.scene, mujoco.mjtGeom.mjGEOM_LINE,
+            [0.0, 0.0, 0.0], np.zeros(3), identity, color)
+        if line is not None:
+            mujoco.mjv_connector(
+                line, mujoco.mjtGeom.mjGEOM_LINE, 4.0,
+                constraint.point_a, constraint.point_b)
+
+
 def render_scene(app):
     app._sync_ik_mocaps_from_targets()
     app.opt.flags[mujoco.mjtVisFlag.mjVIS_CONTACTPOINT] = app.contact_viz
     app.opt.flags[mujoco.mjtVisFlag.mjVIS_CONTACTFORCE] = app.contact_viz
+    # Model collision geometry lives in group 3 and is hidden by MuJoCo's default option.
+    # The CBF overlay uses the same toggle but remains independent of contact-force viz.
+    app.opt.geomgroup[3] = bool(getattr(app, "collision_viz", False))
     fb_w, fb_h = glfw.get_framebuffer_size(app.window)
     viewport = mujoco.MjrRect(0, 0, fb_w, fb_h)
     mujoco.mjv_updateScene(app.model, app.data, app.opt, app.pert, app.cam,
                            mujoco.mjtCatBit.mjCAT_ALL, app.scene)
+    collision_data = collision_visualization_data(app)
+    if app.collision_viz:
+        _append_collision_overlay(app, collision_data)
     mujoco.mjr_render(viewport, app.scene, app.context)
     draw_transform_gizmo(app, viewport)
 

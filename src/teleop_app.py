@@ -52,14 +52,14 @@ Run: `python3 src/teleop_app.py`.
 Mouse: left-drag orbit, right-drag pan, scroll zoom (standard MuJoCo camera controls).
 Keyboard: Up/Down = base forward/back (robot-local), Left/Right = base yaw,
 [ / ] = base strafe left/right, Q/E = lift down/up, R = reset can (+-2cm random),
-G = toggle contact force/point
-visualization, C = cycle camera preset (overview / right-hand close-up). R/G/C also have
+G = toggle contact force/point visualization, V = toggle collision geometry/CBF visualization,
+C = cycle camera preset (overview / right-hand close-up). R/G/V/C also have
 buttons in the on-screen panel.
 
 **코드 구조 (가독성 정리)**: 이 파일의 핵심 실행 로직은 `TeleopApp` 클래스 하나에
 모여 있다. `__init__`이 (1) 모델/솔버/제어기 (2) 렌더 컨텍스트 (3) 루프 타이밍 상태를
 순서대로 구성하고, `run()`의 메인 루프는 매 프레임 아래 단계를 호출한다:
-마우스 카메라 → 엣지 트리거 키(R/G/C) → 연속 입력 키(주행/리프트) → UI 패널 →
+마우스 카메라 → 엣지 트리거 키(R/G/V/C) → 연속 입력 키(주행/리프트) → UI 패널 →
 물리 스텝(IK+제어+mj_step) → 렌더링 → 프레임 타이밍. 위젯 배치는
 `src/teleop_ui.py`, target pose/Cyclo-style bimanual 변환은 `src/teleop_targets.py`,
 GLFW/ImGui/MuJoCo 렌더링과 ImGuizmo 처리는 `src/teleop_render.py`로 분리했다. 이
@@ -162,7 +162,7 @@ class KeyEdge:
 
 class TeleopApp:
     """단일 네이티브 창 텔레옵 앱. `run()`의 메인 루프가 매 프레임 아래 단계를
-    순서대로 실행한다: 마우스 카메라 -> 엣지 키(R/G/C) -> 연속 키(주행/리프트) ->
+    순서대로 실행한다: 마우스 카메라 -> 엣지 키(R/G/V/C) -> 연속 키(주행/리프트) ->
     UI 패널 -> 물리 스텝 -> 렌더링. 상태는 전부 인스턴스 속성(self.*)에 있다."""
 
     def __init__(self):
@@ -278,6 +278,10 @@ class TeleopApp:
         ], dtype=float)
         self._sync_ik_mocaps_from_targets()
         self.contact_viz = False
+        self.collision_viz = False
+        self.collision_active_pairs = ()
+        self.collision_min_distance = math.inf
+        self.collision_constraint_violation = 0.0
         self.camera_preset = 0
         self.grab_state = {"r": None, "l": None}
         self.cyclo_controller = "movel"
@@ -318,7 +322,7 @@ class TeleopApp:
         self.gizmo_mouse_active = False
 
     # ------------------------------------------------------------------
-    # R/G/C 세 가지 동작 -- 키보드(_handle_edge_keys)와 패널 버튼
+    # R/G/V/C 동작 -- 키보드(_handle_edge_keys)와 패널 버튼
     # (teleop_ui.draw_panel) 양쪽에서 똑같이 호출하는 공용 메서드.
     # ------------------------------------------------------------------
 
@@ -331,6 +335,7 @@ class TeleopApp:
         self.grab_state = {"r": None, "l": None}
         self.cyclo_grasp_captured = False
         self.cyclo_capture_offsets = None
+        self.whole_body_solver.set_rigid_grasp(self.data, False)
         self.cyclo_controller = "movel"
         self.cyclo_status = "ready"
 
@@ -352,6 +357,9 @@ class TeleopApp:
     def cycle_camera(self):
         self.camera_preset = 1 - self.camera_preset
         teleop_render.set_camera_preset(self.cam, self.camera_preset)
+
+    def toggle_collision_visualization(self):
+        self.collision_viz = not self.collision_viz
 
     def set_arm_mode(self, side, mode):
         """이 손을 "ik"(EE 포즈 슬라이더) <-> "fk"(관절각 슬라이더)로 전환한다.
@@ -434,10 +442,12 @@ class TeleopApp:
         the virtual object marker. After this, `virtual_object_pos/rpy` becomes the command
         source and the two hand MoveL targets are derived from the captured offsets."""
         teleop_targets.capture_grasp(self)
+        self.whole_body_solver.set_rigid_grasp(self.data, True)
 
     def release_grasp(self):
         """Cyclo-style `/capture_grasp false`: return to independent hand MoveL targets."""
         teleop_targets.release_grasp(self)
+        self.whole_body_solver.set_rigid_grasp(self.data, False)
 
     def apply_virtual_object_target(self):
         teleop_targets.apply_virtual_object_target(self)
@@ -488,19 +498,20 @@ class TeleopApp:
         teleop_render.shutdown(self)
 
     def _handle_edge_keys(self, io):
-        """눌렀다 뗄 때 한 번만 반응하는 키(R=캔 리셋, G=접촉 시각화 토글,
-        C=카메라 전환) -- 계속 누르고 있어도 반복 발동하지 않는다."""
+        """눌렀다 뗄 때 한 번만 반응하는 R/G/V/C 유틸리티 키."""
         if io.want_capture_keyboard:
             return
         if self.keys.pressed(self.window, glfw.KEY_R):
             self.reset_active_object()
         if self.keys.pressed(self.window, glfw.KEY_G):
             self.contact_viz = not self.contact_viz
+        if self.keys.pressed(self.window, glfw.KEY_V):
+            self.toggle_collision_visualization()
         if self.keys.pressed(self.window, glfw.KEY_C):
             self.cycle_camera()
 
     def _read_drive_and_lift_keys(self, io):
-        """continuous drive/lift keys (level-triggered, not edge-triggered like R/G/C
+        """continuous drive/lift keys (level-triggered, not edge-triggered like R/G/V/C
         above -- driving should keep responding for as long as the key is held).
         (한글) 주행/리프트 키는 누르고 있는 동안 계속 반응해야 하므로(edge-triggered
         아님) 매 프레임 눌림 상태를 그대로 읽는다.
@@ -624,8 +635,13 @@ class TeleopApp:
             active_sides=active_sides,
             arm_nominal={"r": HOME_Q_R, "l": HOME_Q_L},
             lift_nominal=self.targets["lift"],
+            rigid_grasp=(self.cyclo_controller == "bimanual_movel"
+                         and self.cyclo_grasp_captured),
         )
         self.whole_body_base_twist = whole_body_cmd.base_twist
+        self.collision_active_pairs = whole_body_cmd.active_collision_pairs
+        self.collision_min_distance = whole_body_cmd.minimum_collision_distance
+        self.collision_constraint_violation = whole_body_cmd.collision_constraint_violation
         self.lift_cmd = whole_body_cmd.lift_position
         for side in ("r", "l"):
             if side in whole_body_cmd.arm_positions:

@@ -59,7 +59,7 @@ while not glfw.window_should_close(self.window):
 | `cycle_camera()` | 카메라 preset 전환 |
 | `set_arm_mode(side, mode)` | 손별 IK/FK 전환과 target 동기화 |
 | `_draw_ui_panel()` | `teleop_ui.draw_panel(self)` 호출 |
-| `_handle_edge_keys(io)` | `R/G/C` edge key 처리 |
+| `_handle_edge_keys(io)` | `R/G/V/C` edge key 처리 |
 | `_read_drive_and_lift_keys(io)` | 주행/리프트 continuous key 처리 |
 | `_step_physics(drive_keys)` | target smoothing, IK, base/grasp/lift/arm command, `mj_step` |
 | `run()` | 전체 frame loop 실행 |
@@ -75,7 +75,7 @@ flowchart TD
     B --> F["run()<br>종료 전까지 frame loop 실행"]
     F --> G["teleop_render.begin_frame()<br>입력 이벤트와 ImGui frame 시작"]
     G --> H["teleop_render.handle_camera_mouse()<br>카메라 마우스 조작 처리"]
-    H --> I["_handle_edge_keys()<br>R/G/C 같은 edge key 처리"]
+    H --> I["_handle_edge_keys()<br>R/G/V/C 같은 edge key 처리"]
     I --> J["_read_drive_and_lift_keys()<br>주행/리프트 continuous key 읽기"]
     J --> K["_draw_ui_panel()<br>UI 모듈 호출 wrapper"]
     K --> L["teleop_ui.draw_panel()<br>조작 패널을 그리고 target 갱신"]

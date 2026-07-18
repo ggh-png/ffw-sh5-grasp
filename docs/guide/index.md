@@ -39,14 +39,15 @@ graph LR
 | 순서 | 문서 | 내용 | 파일이 분리된 이유 |
 |---|---|---|---|
 | 1 | grasp.py | 손가락 synergy와 grasp 판정 | 손 제어는 팔/베이스와 독립적으로 actuator target과 contact force만 다루기 때문 |
-| 2 | ik.py | 기존 site 기준 단일 팔 6DOF IK | Phase 3/4 회귀와 단일 팔 solver를 독립 검증하기 위해 |
-| 3 | whole_body_ik.py | base/lift/양팔 differential IK | 양손 task와 전신 제한을 한 최적화에서 풀기 위해 |
-| 4 | arm_control.py | 팔 토크 제어 | IK 결과를 실제 torque command로 바꾸는 제어층이기 때문 |
-| 5 | base_teleop.py | body twist와 swerve drive | 입력원과 wheel controller를 분리해 키보드/whole-body가 같은 경로를 쓰기 위해 |
-| 6 | teleop_targets.py | world-fixed target pose와 Bimanual MoveL | UI/gizmo/IK 사이 좌표 변환과 Cyclo 상태가 한곳에 있어야 하기 때문 |
-| 7 | teleop_ui.py | ImGui control panel | 화면 위젯과 상태 변경만 담당하고 physics/render와 분리하기 위해 |
-| 8 | teleop_render.py | 렌더링과 gizmo | GLFW/MuJoCo render/ImGuizmo plumbing이 물리 제어와 독립적이기 때문 |
-| 9 | teleop_app.py | 전체 조립과 main loop | 각 모듈을 순서대로 호출하는 composition root 역할만 남기기 위해 |
+| 2 | kinematics.py | 정규화 pose, world-aligned FK/Jacobian, collision distance gradient | 단일 팔/whole-body IK의 좌표계와 collision geometry 규칙을 하나로 유지하기 위해 |
+| 3 | ik.py | 기존 site 기준 단일 팔 6DOF IK | Phase 3/4 회귀와 단일 팔 solver를 독립 검증하기 위해 |
+| 4 | whole_body_ik.py | base/lift/양팔 differential IK | 양손 task와 전신 제한을 한 최적화에서 풀기 위해 |
+| 5 | arm_control.py | 팔 토크 제어 | IK 결과를 실제 torque command로 바꾸는 제어층이기 때문 |
+| 6 | base_teleop.py | body twist와 swerve drive | 입력원과 wheel controller를 분리해 키보드/whole-body가 같은 경로를 쓰기 위해 |
+| 7 | teleop_targets.py | world-fixed target pose와 Bimanual MoveL | UI/gizmo/IK 사이 좌표 변환과 Cyclo 상태가 한곳에 있어야 하기 때문 |
+| 8 | teleop_ui.py | ImGui control panel | 화면 위젯과 상태 변경만 담당하고 physics/render와 분리하기 위해 |
+| 9 | teleop_render.py | 렌더링과 gizmo | GLFW/MuJoCo render/ImGuizmo plumbing이 물리 제어와 독립적이기 때문 |
+| 10 | teleop_app.py | 전체 조립과 main loop | 각 모듈을 순서대로 호출하는 composition root 역할만 남기기 위해 |
 
 ## 공통 규칙
 

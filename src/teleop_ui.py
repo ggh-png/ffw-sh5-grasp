@@ -235,7 +235,16 @@ def _draw_status_panel(app, data):
     if body_cmd is not None:
         imgui.text(f"Whole-body IK ON  |  body cmd vx={body_cmd.vx:+.2f} "
                    f"vy={body_cmd.vy:+.2f} wz={body_cmd.wz:+.2f}")
-    imgui.text("Keys: arrows drive/yaw, [/] strafe, Q/E lift, R reset, G contacts, C camera")
+    if getattr(app, "collision_viz", False):
+        active = len(getattr(app, "collision_active_pairs", ()))
+        distance = getattr(app, "collision_min_distance", math.inf)
+        buffer_mm = 1000.0 * app.whole_body_solver.collision_buffer
+        distance_text = (f"min {distance*1000:.1f}mm" if math.isfinite(distance)
+                         else f"clear >{buffer_mm:.0f}mm")
+        violation = getattr(app, "collision_constraint_violation", 0.0)
+        imgui.text(f"Collision CBF viz ON  |  active {active}  |  {distance_text}  |  "
+                   f"slack {violation:.4f}m/s")
+    imgui.text("Keys: arrows drive/yaw, [/] strafe, Q/E lift, R reset, G contacts, V collision, C camera")
     imgui.separator()
 
 
@@ -305,6 +314,11 @@ def _draw_lift_utils_panel(app, targets):
     imgui.same_line()
     if imgui.button("Contact Viz (G)"):
         app.contact_viz = not app.contact_viz
+    imgui.same_line()
+    changed, collision_viz = imgui.checkbox(
+        "Collision CBF Viz (V)", getattr(app, "collision_viz", False))
+    if changed:
+        app.collision_viz = collision_viz
     imgui.same_line()
     if imgui.button("Camera (C)"):
         app.cycle_camera()

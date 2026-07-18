@@ -19,6 +19,7 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 MODEL_PATH = REPO_ROOT / "models" / "full_scene.xml"
 
 import teleop_app  # noqa: E402
+import teleop_render  # noqa: E402
 import teleop_ui  # noqa: E402
 
 ARM_R = [f"arm_r_joint{i}" for i in range(1, 8)]
@@ -272,6 +273,57 @@ def run_numeric_target_marker_sync_gate():
     return ok
 
 
+def run_collision_visualization_gate():
+    """The V toggle must expose active CBF points without requiring a GL window."""
+    app = _make_sim_only_app()
+    initially_off = (
+        not app.collision_viz
+        and teleop_render.collision_visualization_data(app) == ())
+    app.toggle_collision_visualization()
+
+    lift_index = app.whole_body_solver.index["lift_joint"]
+    lift_qadr = app.whole_body_solver.qpos_adrs[lift_index]
+    app.data.qpos[lift_qadr] -= 0.035
+    mujoco.mj_forward(app.model, app.data)
+    constraints = teleop_render.collision_visualization_data(app)
+    data_ok = (
+        len(constraints) >= 2
+        and all(constraint.distance <= app.whole_body_solver.collision_buffer + 1e-12
+                for constraint in constraints)
+        and all(np.isfinite(constraint.point_a).all()
+                and np.isfinite(constraint.point_b).all()
+                for constraint in constraints)
+    )
+
+    app.scene = mujoco.MjvScene(app.model, maxgeom=100)
+    teleop_render._append_collision_overlay(app, constraints)
+    overlay_ok = (
+        app.scene.ngeom == 3 * len(constraints)
+        and sum(int(app.scene.geoms[i].type) == int(mujoco.mjtGeom.mjGEOM_LINE)
+                for i in range(app.scene.ngeom)) == len(constraints)
+        and sum(int(app.scene.geoms[i].type) == int(mujoco.mjtGeom.mjGEOM_SPHERE)
+                for i in range(app.scene.ngeom)) == 2 * len(constraints)
+    )
+    safe_distance = app.whole_body_solver.collision_safe_distance
+    buffer_distance = app.whole_body_solver.collision_buffer
+    colors_distinct = (
+        not np.array_equal(teleop_render._collision_color(-0.001, safe_distance),
+                           teleop_render._collision_color(0.5 * safe_distance, safe_distance))
+        and not np.array_equal(
+            teleop_render._collision_color(0.5 * safe_distance, safe_distance),
+            teleop_render._collision_color(
+                0.5 * (safe_distance + buffer_distance), safe_distance))
+    )
+    app.toggle_collision_visualization()
+    toggles_off = not app.collision_viz and not teleop_render.collision_visualization_data(app)
+    ok = initially_off and data_ok and overlay_ok and colors_distinct and toggles_off
+    print(f"Collision visualization gate: initial_off={initially_off} "
+          f"active={len(constraints)} overlay_geoms={app.scene.ngeom} "
+          f"colors={colors_distinct} toggles_off={toggles_off}: "
+          f"{'OK' if ok else 'FAIL'}")
+    return ok
+
+
 def run_manual_xyz_rpy_ik_gate(model):
     data = mujoco.MjData(model)
     key_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, "home")
@@ -321,6 +373,7 @@ def main():
           and run_cyclo_3d_gizmo_pose_gate()
           and run_bimanual_marker_visibility_gate()
           and run_numeric_target_marker_sync_gate()
+          and run_collision_visualization_gate()
           and run_manual_xyz_rpy_ik_gate(model))
     print("PASS" if ok else "FAIL")
     sys.exit(0 if ok else 1)

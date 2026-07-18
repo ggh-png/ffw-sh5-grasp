@@ -1,5 +1,8 @@
 """Phase 3 -- arm_hand scene + 6DOF IK.
 
+Part 0 (FK/Jacobian test): compare the public world-aligned geometric Jacobian against
+central finite differences, including normalized quaternion double-cover handling.
+
 Part 1 (IK unit test): sample 100 random reachable poses via forward kinematics, starting
 from HOME_Q (a "ready" configuration near the table, not an arbitrary all-zero pose) and
 perturbing every joint by up to +-IK_TEST_SPREAD rad -- this is "the reachable workspace"
@@ -33,6 +36,7 @@ MODEL_PATH = REPO_ROOT / "models" / "arm_hand.xml"
 import arm_control  # noqa: E402
 import grasp  # noqa: E402
 import ik  # noqa: E402
+import kinematics  # noqa: E402
 
 ARM_JOINTS = [f"arm_r_joint{i}" for i in range(1, 8)]
 
@@ -69,6 +73,31 @@ LIFT_SPEED = 0.02
 POST_LIFT_HOLD = 3.0
 MIN_NET_LIFT = 0.08
 CAN_NOISE = 0.005
+
+
+def run_fk_jacobian_test(solver):
+    """Public FK and world-aligned Jacobian must agree with finite differences."""
+    state = solver.forward_kinematics(HOME_Q)
+    epsilon = 1e-6
+    numerical = np.zeros_like(state.jacobian)
+    for index in range(len(HOME_Q)):
+        q_plus, q_minus = HOME_Q.copy(), HOME_Q.copy()
+        q_plus[index] += epsilon
+        q_minus[index] -= epsilon
+        plus = solver.forward_kinematics(q_plus)
+        minus = solver.forward_kinematics(q_minus)
+        numerical[:3, index] = (plus.position - minus.position) / (2.0 * epsilon)
+        numerical[3:, index] = kinematics.shortest_orientation_error(
+            plus.quaternion, minus.quaternion) / (2.0 * epsilon)
+
+    max_error = float(np.max(np.abs(state.jacobian - numerical)))
+    quaternion_unit = abs(np.linalg.norm(state.quaternion) - 1.0) < 1e-12
+    double_cover_error = np.linalg.norm(
+        kinematics.shortest_orientation_error(state.quaternion, -state.quaternion))
+    ok = max_error < 1e-5 and quaternion_unit and double_cover_error < 1e-12
+    print(f"FK/Jacobian test: max_fd_error={max_error:.2e} quaternion_unit={quaternion_unit} "
+          f"double_cover={double_cover_error:.1e}: {'OK' if ok else 'FAIL'}")
+    return ok
 
 
 def run_ik_unit_test(model, solver, rng):
@@ -220,10 +249,11 @@ def main():
     controller = arm_control.ArmTorqueController(model, ARM_JOINTS)
     rng = np.random.default_rng(0)
 
+    fk_ok = run_fk_jacobian_test(solver)
     ik_ok = run_ik_unit_test(model, solver, rng)
     pick_ok = run_pick_test(model, solver, controller, rng)
 
-    ok = ik_ok and pick_ok
+    ok = fk_ok and ik_ok and pick_ok
     print("PASS" if ok else "FAIL")
     sys.exit(0 if ok else 1)
 

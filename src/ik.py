@@ -21,6 +21,8 @@ like every other actuated joint in this project.
 import mujoco
 import numpy as np
 
+import kinematics
+
 DEFAULT_DAMPING = 0.05
 DEFAULT_MAX_JOINT_DELTA = 0.05  # rad per solver iteration
 DEFAULT_MAX_ITER = 50
@@ -40,20 +42,35 @@ class InverseKinematics:
     def __init__(self, model, site_name, joint_names, damping=DEFAULT_DAMPING,
                  max_joint_delta=DEFAULT_MAX_JOINT_DELTA):
         self.model = model
-        self.site_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, site_name)
-        self.joint_ids = [mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, n) for n in joint_names]
+        self.kinematics = kinematics.KinematicsSolver(model, site_name, joint_names)
+        self.site_id = self.kinematics.site_id
+        self.joint_ids = self.kinematics.joint_ids.tolist()
         # dof_ids: qvel/Jacobian 열 인덱스용. qpos_adrs: qpos 배열 인덱스용 --
         # 힌지 관절은 둘이 같지만, 자유도(quaternion 등)가 섞인 관절에서는 다를 수 있어
         # 이 프로젝트에서는 항상 명시적으로 구분해서 쓴다.
-        self.dof_ids = [model.jnt_dofadr[j] for j in self.joint_ids]
-        self.qpos_adrs = [model.jnt_qposadr[j] for j in self.joint_ids]
-        self.joint_ranges = np.array([model.jnt_range[j] for j in self.joint_ids])
+        self.dof_ids = self.kinematics.dof_ids.tolist()
+        self.qpos_adrs = self.kinematics.qpos_adrs.tolist()
+        self.joint_ranges = self.kinematics.joint_ranges.copy()
         self.damping = damping
         self.max_joint_delta = max_joint_delta
         self.n = len(joint_names)
         # Scratch kinematics-only buffer -- never the live simulation's MjData.
         # (한글) 이 solver 전용 임시 데이터 -- 실시간 시뮬레이션의 data와는 완전히 별개.
-        self._scratch = mujoco.MjData(model)
+        self._scratch = self.kinematics.data
+
+    def forward_kinematics(self, q, context_qpos=None):
+        """Return normalized world pose + world-aligned Jacobian for ``q``.
+
+        This mirrors Cyclo Control's separate ``computePose``/``computeJacobian`` boundary,
+        while returning both from one MuJoCo forward pass.  The evaluation uses the private
+        scratch state and therefore cannot kinematically override the live robot.
+        """
+        return self.kinematics.forward(q, context_qpos)
+
+    def _initialize_scratch(self, q, context_qpos=None):
+        """Seed and forward the shared scratch kinematics state."""
+        self.kinematics.update(q, context_qpos)
+        return self._scratch
 
     def _read_q(self, scratch):
         """이 솔버가 담당하는 관절들의 현재 각도만 뽑아 배열로 반환."""
@@ -94,15 +111,10 @@ class InverseKinematics:
         moving the whole chain's base to the wrong place. Leave
         None for single-arm models like models/arm_hand.xml where nothing upstream varies.
         """
-        scratch = self._scratch
-        mujoco.mj_resetData(self.model, scratch)
+        q = np.array(q_init, dtype=float)
         # context_qpos로 전체 qpos를 먼저 시드해야, 이 솔버가 담당하지 않는 상위
         # 관절(예: full_scene.xml의 lift_joint)이 0으로 리셋되지 않는다.
-        if context_qpos is not None:
-            scratch.qpos[:] = context_qpos
-        q = np.array(q_init, dtype=float)
-        self._write_q(scratch, q)
-        mujoco.mj_forward(self.model, scratch)
+        scratch = self._initialize_scratch(q, context_qpos)
 
         err_norm = np.inf
         # 위치 오차가 허용치 밑으로 떨어지거나 반복 한도에 도달할 때까지 DLS를 반복.
@@ -120,15 +132,12 @@ class InverseKinematics:
         return q, err_norm
 
     def _pose_error(self, scratch, target_pos, target_quat):
-        """위치 오차(월드 프레임 벡터)와 방향 오차(mju_subQuat, site 로컬 프레임)를
-        각각 계산해서 반환한다. 이 둘의 좌표계가 다르다는 점이 solve_pose에서
-        중요해진다(아래 site_R 회전 참고)."""
+        """Return world-frame position and shortest-path orientation errors."""
         cur_pos = scratch.site_xpos[self.site_id]
         pos_err = target_pos - cur_pos
         cur_quat = np.zeros(4)
         mujoco.mju_mat2Quat(cur_quat, scratch.site_xmat[self.site_id])
-        ori_err = np.zeros(3)
-        mujoco.mju_subQuat(ori_err, target_quat, cur_quat)
+        ori_err = kinematics.shortest_orientation_error(target_quat, cur_quat)
         return pos_err, ori_err
 
     def solve_pose(self, q_init, target_pos, target_quat, max_iter=DEFAULT_MAX_ITER,
@@ -144,7 +153,7 @@ class InverseKinematics:
         made results worse, the signature of overshoot rather than slow convergence. So each
         iteration:
           1. dq_pos  = Jp^T (Jp Jp^T + lam^2 I)^-1 e_pos
-          2. g_ori   = Jr^T e_ori_world   (e_ori rotated site-local -> world first)
+          2. g_ori   = Jr^T e_ori_world   (shortest quaternion error, already world-aligned)
           3. dq_ori  = g_ori - Jp^T (Jp Jp^T + lam^2 I)^-1 (Jp g_ori)   (null-space projected)
           4. dq = dq_pos + dq_ori, clamped
           5. backtrack: halve dq (up to 6x) until pos_err + ori_weight*ori_err actually drops;
@@ -155,13 +164,8 @@ class InverseKinematics:
 
         Returns (q_solution, pos_err_norm, ori_err_norm_rad).
         """
-        scratch = self._scratch
-        mujoco.mj_resetData(self.model, scratch)
-        if context_qpos is not None:
-            scratch.qpos[:] = context_qpos
         q = np.array(q_init, dtype=float)
-        self._write_q(scratch, q)
-        mujoco.mj_forward(self.model, scratch)
+        scratch = self._initialize_scratch(q, context_qpos)
 
         pos_err, ori_err = self._pose_error(scratch, target_pos, target_quat)
         pos_err_norm = float(np.linalg.norm(pos_err))
@@ -172,13 +176,6 @@ class InverseKinematics:
             if pos_err_norm < pos_tol and ori_err_norm < ori_tol:
                 break
 
-            # ori_err는 site 로컬 프레임, jacr(회전 Jacobian)은 월드 프레임이라
-            # 그대로 곱하면 안 된다 -- site_xmat으로 회전시켜 같은 프레임으로 맞춘다
-            # (Phase 3에서 실제로 겪은 버그: 이 변환을 빼먹으면 오차 gradient가
-            # 엉뚱한 관절로 샌다).
-            site_R = scratch.site_xmat[self.site_id].reshape(3, 3)
-            ori_err_world = site_R @ ori_err
-
             jacp, jacr = self._jac(scratch)
             JJt_inv = np.linalg.inv(jacp @ jacp.T + lam2 * np.eye(3))
 
@@ -187,7 +184,7 @@ class InverseKinematics:
             # 2) 방향 보정은 위치 Jacobian의 영공간(null space)에 투영 -- 위치에
             #    영향을 주지 않는 성분만 반영해서, 방향을 맞추려다 위치가 흔들리는
             #    문제를 없앤다(계층형/task-priority IK).
-            g_ori = jacr.T @ ori_err_world
+            g_ori = jacr.T @ ori_err
             dq_ori = g_ori - jacp.T @ (JJt_inv @ (jacp @ g_ori))
             dq_full = np.clip(dq_pos + dq_ori, -self.max_joint_delta, self.max_joint_delta)
 
