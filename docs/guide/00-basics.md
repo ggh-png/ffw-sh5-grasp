@@ -56,5 +56,6 @@
 ## 이 프로젝트의 규칙
 
 - 로봇 관절 live `data.qpos`를 직접 덮어쓰지 않는다.
-- IK는 scratch `MjData`에서만 계산한다.
+- live whole-body IK는 현재 `MjData`의 pose/Jacobian을 읽기만 하고 command를 반환한다.
+- 반복 단일 팔 IK와 테스트 적분은 격리된 scratch `MjData`를 사용한다.
 - 실제 움직임은 actuator command와 `mj_step()`으로 만든다.

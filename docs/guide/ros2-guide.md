@@ -1,13 +1,16 @@
-# ROS2 개발자를 위한 튜토리얼
+# ROS2 개발자를 위한 심화 튜토리얼
 
-> 이 문서 하나만 처음부터 끝까지 읽으면, **ROS2는 알지만 MuJoCo는 처음 보는 학생**이
-> 이 저장소 전체(왜 이렇게 만들었는지, 무엇이 돌아가는지, 코드가 정확히 어떻게
-> 흐르는지, 지금까지 어떤 버그를 어떻게 잡았는지)를 한 번에 이해하는 것을 목표로 한다.
-> 다른 `docs/guide/` 문서들은 "이미 이 프로젝트 구조를 아는 사람"을 위한 빠른
-> 레퍼런스(함수 표, Mermaid 함수 흐름도)에 가깝다. 이 문서는 그 반대다 — 처음
-> 읽는 사람을 위해 개념부터, 비유부터, 순서대로 설명한다. 대신 그만큼 길다.
-> 급하게 레퍼런스만 찾는다면 [`API 치트시트`](cheatsheet.md)나
-> [`체크리스트`](pitfalls.md)가 더 빠르다.
+이 문서는 ROS2/Gazebo 경험을 MuJoCo 기반 단일 프로세스 제어 구조에 대응시키고,
+수학·코드·개발 과정·실제 버그를 깊게 설명한다. **실행을 위해 처음부터 끝까지 읽을
+필요는 없다.** 처음 사용자에게는 다음 짧은 경로가 더 적합하다.
+
+- 실행: [10분 빠른 시작](../getting-started.md)
+- 모드 조합: [제어 모드 선택](../control-modes.md)
+- 전체 mental model: [핵심 개념](../concepts.md)
+- 증상 진단: [문제 해결](../troubleshooting.md)
+
+이 문서는 “왜 이런 알고리즘과 구조인가?”를 이해하거나 ROS2 시스템과 설계를 비교할
+때 사용한다.
 
 ## 이 문서의 사용법
 
@@ -27,6 +30,21 @@
 6. Part 14 맨 끝에 **ROS2 ↔ 이 프로젝트 용어 대조표**가 있다. 읽다가 막히면
    거기로 점프해도 된다.
 
+### 목적별 바로가기
+
+| 궁금한 것 | 바로 갈 곳 |
+|---|---|
+| ROS2 구성요소와 파일 대응 | [Part 1](#part-1) |
+| MuJoCo model/data/actuator/contact | [Part 2](#part-2) |
+| 한 frame의 실제 실행 순서 | [Part 4](#part-4) |
+| 단일 팔 IK 수학 | [Part 6](#part-6) |
+| 팔 torque controller | [Part 7](#part-7) |
+| swerve와 키 해제 제동 | [Part 8](#part-8) |
+| MoveL/Bimanual/marker | [Part 9](#part-9) |
+| target 좌표계 | [Part 10](#part-10) |
+| 테스트 근거 | [Part 11](#part-11) |
+| 실제 버그 사례 | [Part 13](#part-13) |
+
 이 문서의 모든 Part/절은 화면 오른쪽(또는 모바일에서는 상단) **목차** 패널에
 그대로 나열된다 — 특정 절로 바로 건너뛰고 싶으면 본문을 스크롤하는 대신
 그 패널을 쓰면 된다. (다른 문서에서 이 문서의 특정 절로 link를 걸 때도 그
@@ -44,7 +62,7 @@
 
 ```
 입력(마우스/키보드/ImGui) → 목표 pose 갱신(teleop_targets.py)
-  → 역기구학(ik.py, 목표 pose를 관절각으로 변환)
+  → whole-body/arm-only IK(whole_body_ik.py, base/lift/양팔 command 계산)
   → 팔 토크 제어(arm_control.py) + 손가락 synergy(grasp.py) + 바퀴 명령(base_teleop.py)
   → data.ctrl에 기록 → MuJoCo 물리 스텝(mj_step) 실행 → 화면 렌더
 ```

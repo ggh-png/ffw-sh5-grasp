@@ -114,8 +114,8 @@ WINDOW_W, WINDOW_H = 1440, 900
 LOOP_HZ = 25.0
 # Target rate limiting caps how far the effective goal can move in one render frame.
 # the *effective* IK target can move in one frame, independent of how far the raw slider
-# jumped. 0.02m/frame at LOOP_HZ=25 is 0.5 m/s -- a brisk but trackable teleop speed; 5
-# deg/frame is 125 deg/s, generous but bounded.
+# jumped. 0.03m/frame at LOOP_HZ=25 is 0.75 m/s -- brisk but trackable; 8 deg/frame is
+# 200 deg/s, generous but bounded.
 MAX_POS_STEP_PER_FRAME = 0.03
 MAX_RPY_STEP_PER_FRAME_DEG = 8.0
 

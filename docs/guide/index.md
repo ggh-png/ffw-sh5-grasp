@@ -1,30 +1,66 @@
 # 코드 가이드
 
-`src/` 모듈별 역할과 주요 함수/클래스를 정리한다. 함수 표/Mermaid 흐름도 위주의
-빠른 레퍼런스이며, 개념 설명이나 "왜 이렇게 만들었는지"는 다루지 않는다 — 그건
-[ROS2 개발자를 위한 튜토리얼](ros2-guide.md)이 순서대로 설명한다.
+이 섹션은 이미 앱을 한 번 실행하고 [핵심 개념](../concepts.md)을 이해한 뒤, 특정
+함수나 모듈을 수정하려는 사람을 위한 레퍼런스다.
+
+!!! note "사용법을 찾는 중이라면"
+    버튼/키는 [조작과 UI](../run.md), 모드 조합은 [제어 모드 선택](../control-modes.md),
+    증상 진단은 [문제 해결](../troubleshooting.md)이 더 빠르다.
+
+## 목적별 읽기 경로
+
+=== "Whole-body / Collision"
+
+    1. [`kinematics.py`](whole_body_ik.md#weighted-differential-ik)의 pose/Jacobian 전제
+    2. [`whole_body_ik.py`](whole_body_ik.md)
+    3. [`teleop_targets.py`](teleop_targets.md)
+    4. [`teleop_app.py`](teleop_app.md)의 `_step_physics()`
+    5. [테스트와 검증](../testing.md)
+
+=== "Mobile / Wheel"
+
+    1. [`base_teleop.py`](base_teleop.md)
+    2. [`teleop_app.py`](teleop_app.md)의 command arbitration
+    3. [문제 해결의 키 해제 항목](../troubleshooting.md#wheel-keeps-rolling)
+    4. `test_phase_5.py`, `test_whole_body.py`
+
+=== "UI / Marker"
+
+    1. [`teleop_ui.py`](teleop_ui.md)
+    2. [`teleop_targets.py`](teleop_targets.md)
+    3. [`teleop_render.py`](teleop_render.md)
+    4. [`teleop_app.py`](teleop_app.md)
+    5. `test_phase_6.py`
+
+=== "Grasp / Arm"
+
+    1. [`grasp.py`](grasp.md)
+    2. [`ik.py`](ik.md)
+    3. [`arm_control.py`](arm_control.md)
+    4. `test_phase_1.py`~`test_phase_4.py`
 
 ## 모듈 의존 구조
 
 ```mermaid
 graph LR
-    APP["teleop_app.py<br>전체 실행 흐름 조립"]
-    UI["teleop_ui.py<br>ImGui 조작 패널"]
-    RENDER["teleop_render.py<br>렌더링/카메라/gizmo"]
-    TARGETS["teleop_targets.py<br>목표 pose와 Cyclo 상태"]
-    IK["whole_body_ik.py<br>손 목표를 base/lift/양팔로 변환"]
-    LEGACY["ik.py<br>기존 단일 팔 IK 회귀"]
-    ARM["arm_control.py<br>팔 torque 제어"]
-    GRASP["grasp.py<br>손가락 synergy와 grasp 판정"]
-    BASE["base_teleop.py<br>swerve drive 명령 생성"]
+    APP["teleop_app.py<br>조립과 frame loop"]
+    UI["teleop_ui.py<br>widget"]
+    RENDER["teleop_render.py<br>scene/gizmo"]
+    TARGETS["teleop_targets.py<br>pose/state"]
+    KIN["kinematics.py<br>pose/Jacobian/distance"]
+    WBIK["whole_body_ik.py<br>bounded IK/CBF"]
+    LEGACY["ik.py<br>single-arm regression"]
+    ARM["arm_control.py<br>torque"]
+    GRASP["grasp.py<br>finger/contact"]
+    BASE["base_teleop.py<br>swerve"]
     PHYS[(MuJoCo)]
 
-    UI -->|updates app.targets| APP
-    RENDER -->|gizmo world pose| APP
-    APP --> TARGETS
-    TARGETS -->|world target pose| APP
-    APP --> IK
-    IK -->|base twist, lift, arm q_des| APP
+    UI --> APP
+    RENDER --> APP
+    APP <--> TARGETS
+    APP --> WBIK
+    WBIK --> KIN
+    LEGACY --> KIN
     APP --> ARM
     APP --> GRASP
     APP --> BASE
@@ -34,24 +70,33 @@ graph LR
     PHYS --> RENDER
 ```
 
-## 읽는 순서
+## 파일별 질문
 
-| 순서 | 문서 | 내용 | 파일이 분리된 이유 |
-|---|---|---|---|
-| 1 | grasp.py | 손가락 synergy와 grasp 판정 | 손 제어는 팔/베이스와 독립적으로 actuator target과 contact force만 다루기 때문 |
-| 2 | kinematics.py | 정규화 pose, world-aligned FK/Jacobian, collision distance gradient | 단일 팔/whole-body IK의 좌표계와 collision geometry 규칙을 하나로 유지하기 위해 |
-| 3 | ik.py | 기존 site 기준 단일 팔 6DOF IK | Phase 3/4 회귀와 단일 팔 solver를 독립 검증하기 위해 |
-| 4 | whole_body_ik.py | base/lift/양팔 differential IK | 양손 task와 전신 제한을 한 최적화에서 풀기 위해 |
-| 5 | arm_control.py | 팔 토크 제어 | IK 결과를 실제 torque command로 바꾸는 제어층이기 때문 |
-| 6 | base_teleop.py | body twist와 swerve drive | 입력원과 wheel controller를 분리해 키보드/whole-body가 같은 경로를 쓰기 위해 |
-| 7 | teleop_targets.py | world-fixed target pose와 Bimanual MoveL | UI/gizmo/IK 사이 좌표 변환과 Cyclo 상태가 한곳에 있어야 하기 때문 |
-| 8 | teleop_ui.py | ImGui control panel | 화면 위젯과 상태 변경만 담당하고 physics/render와 분리하기 위해 |
-| 9 | teleop_render.py | 렌더링과 gizmo | GLFW/MuJoCo render/ImGuizmo plumbing이 물리 제어와 독립적이기 때문 |
-| 10 | teleop_app.py | 전체 조립과 main loop | 각 모듈을 순서대로 호출하는 composition root 역할만 남기기 위해 |
+| 파일 | 이 파일이 답하는 질문 |
+|---|---|
+| `kinematics.py` | “현재 손 pose/Jacobian과 두 geom의 거리 gradient는 무엇인가?” |
+| `whole_body_ik.py` | “허용된 DOF로 손 오차를 줄이면서 limit/collision을 지키는 속도는?” |
+| `base_teleop.py` | “body twist를 가능한 steer angle과 wheel speed로 어떻게 바꾸나?” |
+| `arm_control.py` | “목표 관절각을 따라갈 motor torque는?” |
+| `grasp.py` | “grasp 값이 finger target으로 어떻게 펼쳐지고 실제로 잡혔나?” |
+| `teleop_targets.py` | “UI 숫자와 world marker pose는 어떻게 왕복 변환되나?” |
+| `teleop_ui.py` | “어떤 widget이 어떤 app 상태를 바꾸나?” |
+| `teleop_render.py` | “scene, camera, gizmo, collision overlay를 어떻게 그리나?” |
+| `teleop_app.py` | “이 계산을 어느 순서로 호출하고 어떤 명령을 최종 선택하나?” |
 
-## 공통 규칙
+## 공통 불변식
 
-- live simulation의 로봇 관절 `qpos`를 직접 덮어쓰지 않는다.
-- UI/gizmo는 target 값을 바꾸고, 물리 반영은 `teleop_app.py`의 step에서 한다.
-- whole-body IK는 live state의 Jacobian을 읽기만 하고, 결과는 actuator command로 적용한다.
-- 렌더/UI/target/control 로직은 분리되어 있고 `TeleopApp`이 조립한다.
+- 초기화/reset 외에 live robot `data.qpos`를 직접 덮어쓰지 않는다.
+- UI와 gizmo는 target/state만 바꾸고 physics command를 직접 만들지 않는다.
+- pose quaternion은 정규화하고 rotational Jacobian/error frame을 일치시킨다.
+- FK arm, Whole-body OFF DOF는 solver bound에서 정확히 고정한다.
+- keyboard와 WBIK base command는 동일한 swerve path를 사용한다.
+- finger-object와 wheel-floor 같은 의도 접촉은 collision CBF 대상에서 제외한다.
+- target frame이나 mode를 바꾸면 world pose 불변성을 테스트한다.
+
+## 보조 레퍼런스
+
+- [MuJoCo 최소 개념 사전](00-basics.md)
+- [개발 체크리스트](pitfalls.md)
+- [API 치트시트](cheatsheet.md)
+- [ROS2 개발자 심화 튜토리얼](ros2-guide.md)

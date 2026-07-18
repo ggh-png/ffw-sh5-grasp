@@ -198,8 +198,8 @@ bounded-variable least squares(BVLS) active set으로 푼다.
 Jacobian 열에서 feasible하지만 최적이 아닌 해를 낼 수 있었다. 새 solver는 bound에
 들어갔다가 나오는 좌표를 자연스럽게 처리한다. 3변수 문제의 모든 active set을
 완전탐색하는 회귀와 비교해 목적함수 차이가 \(10^{-14}\) 미만인지 검사한다.
-BVLS 전환 후 현재 머신의 충돌 비활성 양손 solve는 약 0.7 ms, table collision
-10개가 활성화된 solve는 약 1.3 ms다. 회귀 gate는 5 ms 미만을 요구해 25 Hz 앱의
+BVLS 전환 후 현재 머신의 충돌 비활성 양손 solve는 약 0.7 ms, 현재 table 회귀에서
+workspace constraint 2개가 활성화된 solve는 약 0.95 ms다. 회귀 gate는 5 ms 미만을 요구해 25 Hz 앱의
 40 ms 프레임 예산을 잠식하는 구현 회귀를 막는다.
 
 ## 함수 흐름
@@ -239,7 +239,8 @@ flowchart TD
 - collision pair가 멀 때 기존 solver와 명령이 bit 단위로 같은지
 - collision 시각화 on/off, 색상, 최근접점/연결선 render primitive 생성
 - 충돌하는 양손 명령에서 rigid-grasp 상대 twist 감소
-- virtual object 76.4 mm 이동의 실제 동역학에서 상대 pose drift 0.2 mm/0.02°
+- virtual object 80 mm 명령의 실제 동역학에서 hand midpoint 77.1 mm 이동,
+  상대 pose drift 0.2 mm/0.02°
 - base가 움직여도 hand/virtual-object target이 world에 고정되는지
 - solver가 live qpos를 바꾸지 않고 base/lift/양팔을 모두 쓰는지
 - arm-only solve에서 base/lift 네 속도가 정확히 0이고 양팔 오차는 감소하는지
@@ -249,8 +250,8 @@ flowchart TD
 - 실제 wheel-ground contact에서 longitudinal/lateral/vertical/yaw 양손 target 추종
 
 물리 회귀의 최종 combined pose error 비율은 longitudinal 0.039, lateral 0.049,
-vertical 0.008, yaw 0.165다. yaw 25° 명령의 2초 결과는 base yaw 22.2°, 손 위치
-오차 24.0 mm, 손 자세 오차 1.4°다. 완전한 순간 수렴을 주장하지 않고, 정해진 시간과
+vertical 0.008, yaw 0.164다. yaw 25° 명령의 2초 결과는 base yaw 22.2°, 손 위치
+오차 23.9 mm, 손 자세 오차 1.4°다. 완전한 순간 수렴을 주장하지 않고, 정해진 시간과
 물리 접촉 안에서 오차가 안정적으로 줄어드는지를 gate로 둔다.
 
 수동 주행 중에는 world target frame을 실제 base SE(2) 이동만큼 함께 운반하고,

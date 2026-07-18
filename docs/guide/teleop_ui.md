@@ -82,3 +82,5 @@ FFW-SH5 Teleop
 - 실제 반영은 `teleop_app.py`의 `_step_physics()`에서 한다.
 - **Whole-body Control** 버튼은 `toggle_whole_body_control()`을 호출하고 상태줄에는
   `ON` 또는 `OFF (arm-only)`와 실제 body command가 표시된다.
+- `Move time`은 현재 UI 호환용 상태값이며 trajectory scheduler에는 연결되지 않는다.
+  목표 응답은 `teleop_app.py`의 frame rate limit과 controller gain이 결정한다.
