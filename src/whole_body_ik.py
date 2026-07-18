@@ -184,12 +184,14 @@ class WholeBodyIK:
         }
 
     def solve(self, data, target_poses, dt, *, active_sides=("r", "l"),
-              arm_nominal=None, lift_nominal=None, rigid_grasp=False):
+              arm_nominal=None, lift_nominal=None, rigid_grasp=False,
+              whole_body_enabled=True):
         """Return actuator-level goals for one control frame.
 
         ``target_poses`` maps ``"r"``/``"l"`` to world ``(position, quaternion)``.
-        ``active_sides`` lets FK-mode arms opt out without removing base/lift from the IK of
-        the remaining hand.
+        ``active_sides`` lets FK-mode arms opt out.  With ``whole_body_enabled=False`` the
+        planar base and lift are pinned at zero differential velocity, leaving an arm-only
+        solve that retains the same joint-limit and collision constraints.
         """
         dt = max(float(dt), 1e-5)
         active_sides = tuple(side for side in active_sides if side in self.site_ids)
@@ -241,7 +243,7 @@ class WholeBodyIK:
         # the remaining individual-hand residual.  Relying only on minimum norm allowed
         # fourteen arm columns to change the common error's sign while the swerve base was
         # still steering, producing repeated chassis reversals.
-        if all(side in position_errors for side in ("r", "l")):
+        if whole_body_enabled and all(side in position_errors for side in ("r", "l")):
             reference_centroid = 0.5 * (
                 self._reference_hand_positions["r"] + self._reference_hand_positions["l"])
             target_centroid = 0.5 * (
@@ -294,6 +296,13 @@ class WholeBodyIK:
         vector = np.concatenate(rhs)
         lower, upper = self._velocity_bounds(current_q, dt)
 
+        # The UI whole-body switch is a hard participation gate, not merely a small task
+        # weight.  Pinning all four body DOFs guarantees that numerical compromise,
+        # posture bias or a collision barrier cannot leave a residual chassis/lift command.
+        if not whole_body_enabled:
+            lower[:4] = 0.0
+            upper[:4] = 0.0
+
         # A joint in FK mode must remain under the FK controller.  Pin its differential IK
         # velocity to zero while still allowing the other arm, lift and base to cooperate.
         for side in ("r", "l"):
@@ -307,8 +316,13 @@ class WholeBodyIK:
             # the residual consistently; copying the three base components prevents small
             # numerical compromises from becoming large swerve heading changes.
             qdot[:3] = dual_base_request
-        qdot = self._shape_base_velocity(
-            qdot, position_errors, orientation_errors, dt, float(data.time))
+        if whole_body_enabled:
+            qdot = self._shape_base_velocity(
+                qdot, position_errors, orientation_errors, dt, float(data.time))
+        else:
+            qdot[:3] = 0.0
+            self._previous_base_velocity_world[:] = 0.0
+            self._last_solve_time = None
         collision_constraints = self._collision_constraints(data, dt)
         if collision_constraints:
             barrier_matrix = np.vstack([

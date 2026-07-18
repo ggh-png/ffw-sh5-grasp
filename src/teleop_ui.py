@@ -233,7 +233,8 @@ def _draw_status_panel(app, data):
                f"yaw={math.degrees(data.qpos[app.base_yaw_qadr]):+.1f}deg")
     body_cmd = getattr(app, "commanded_base_twist", None)
     if body_cmd is not None:
-        imgui.text(f"Whole-body IK ON  |  body cmd vx={body_cmd.vx:+.2f} "
+        whole_body_state = "ON" if getattr(app, "whole_body_enabled", True) else "OFF (arm-only)"
+        imgui.text(f"Whole-body IK {whole_body_state}  |  body cmd vx={body_cmd.vx:+.2f} "
                    f"vy={body_cmd.vy:+.2f} wz={body_cmd.wz:+.2f}")
     if getattr(app, "collision_viz", False):
         active = len(getattr(app, "collision_active_pairs", ()))
@@ -307,8 +308,15 @@ def _draw_can_grasp_panel(app, targets):
 def _draw_lift_utils_panel(app, targets):
     if not _section("Lift / Utilities"):
         return
+    whole_body_enabled = getattr(app, "whole_body_enabled", True)
+    button_label = ("Whole-body Control: ON##wholebody"
+                    if whole_body_enabled else "Whole-body Control: OFF (arm-only)##wholebody")
+    if imgui.button(button_label):
+        app.toggle_whole_body_control()
+    imgui.same_line()
+    imgui.text("base + lift join IK" if whole_body_enabled else "base + lift excluded from IK")
     _, targets["lift"] = _slider_float_clamped(
-        "Lift target (whole-body)", targets["lift"], app.lift_range[0], app.lift_range[1], "%.3f m")
+        "Lift target", targets["lift"], app.lift_range[0], app.lift_range[1], "%.3f m")
     if imgui.button("Reset Can (R)"):
         app.reset_active_object()
     imgui.same_line()

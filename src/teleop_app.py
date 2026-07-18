@@ -434,6 +434,60 @@ class TeleopApp:
     def _virtual_object_world_pose(self):
         return teleop_targets.virtual_object_world_pose(self)
 
+    def set_whole_body_enabled(self, enabled):
+        """Switch between whole-body and arm-only IK without moving a world target.
+
+        The two modes deliberately use different UI frames: whole-body targets stay at the
+        startup world anchor, while arm-only targets ride with the current chassis.  The
+        numerical target values therefore have to be re-expressed at the transition.  We
+        also clear every cached base command so OFF is an immediate stop request rather
+        than a delayed weight change.
+        """
+        enabled = bool(enabled)
+        if enabled == self.whole_body_enabled:
+            return
+
+        hand_world_poses = {
+            side: tuple(value.copy() for value in self._target_world_pose(side))
+            for side in ("r", "l")
+        }
+        virtual_world_pose = tuple(value.copy() for value in self._virtual_object_world_pose())
+        self.whole_body_enabled = enabled
+
+        virtual_pos, virtual_quat = virtual_world_pose
+        if enabled:
+            self.targets["virtual_object_pos"] = teleop_targets.world_to_anchor_local_pos(
+                self, virtual_pos).tolist()
+        else:
+            self.targets["virtual_object_pos"] = self._world_to_base_pos(virtual_pos).tolist()
+        self.targets["virtual_object_rpy"] = list(
+            self._world_quat_to_virtual_rpy(virtual_quat))
+
+        if self.cyclo_grasp_captured:
+            # The captured virtual object is authoritative in bimanual MoveL mode.
+            self.apply_virtual_object_target()
+        else:
+            for side, (world_pos, world_quat) in hand_world_poses.items():
+                self.targets[f"pos_{side}"] = self._world_to_target_pos(
+                    side, world_pos)
+                self.targets[f"rpy_{side}"] = list(
+                    self._world_quat_to_target_rpy(side, world_quat))
+
+        for side in ("r", "l"):
+            self.smoothed_pos[side] = np.asarray(
+                self.targets[f"pos_{side}"], dtype=float).copy()
+            self.smoothed_rpy[side] = np.asarray(
+                self.targets[f"rpy_{side}"], dtype=float).copy()
+
+        rebased_targets = {side: self._target_world_pose(side) for side in ("r", "l")}
+        self.whole_body_solver.rebase(self.data, rebased_targets)
+        self.whole_body_base_twist = base_teleop.BodyTwist()
+        self.commanded_base_twist = base_teleop.BodyTwist()
+        self._sync_ik_mocaps_from_targets()
+
+    def toggle_whole_body_control(self):
+        self.set_whole_body_enabled(not self.whole_body_enabled)
+
     def sync_virtual_object_to_hand_targets(self):
         teleop_targets.sync_virtual_object_to_hand_targets(self)
 
@@ -618,10 +672,8 @@ class TeleopApp:
         for side in ("r", "l"):
             target_pos = teleop_targets.target_pos_to_world_pos(
                 self, side, self.smoothed_pos[side])
-            target_quat = np.zeros(4)
-            mujoco.mju_mulQuat(
-                target_quat, self.home_quat_world[side],
-                rpy_deg_to_quat(self.smoothed_rpy[side]))
+            target_quat = teleop_targets.target_rpy_to_world_quat(
+                self, side, self.smoothed_rpy[side])
             target_poses[side] = (target_pos, target_quat)
 
         if carry_manual_targets:
@@ -637,12 +689,14 @@ class TeleopApp:
             lift_nominal=self.targets["lift"],
             rigid_grasp=(self.cyclo_controller == "bimanual_movel"
                          and self.cyclo_grasp_captured),
+            whole_body_enabled=self.whole_body_enabled,
         )
         self.whole_body_base_twist = whole_body_cmd.base_twist
         self.collision_active_pairs = whole_body_cmd.active_collision_pairs
         self.collision_min_distance = whole_body_cmd.minimum_collision_distance
         self.collision_constraint_violation = whole_body_cmd.collision_constraint_violation
-        self.lift_cmd = whole_body_cmd.lift_position
+        self.lift_cmd = (whole_body_cmd.lift_position if self.whole_body_enabled
+                         else self.targets["lift"])
         for side in ("r", "l"):
             if side in whole_body_cmd.arm_positions:
                 if side == "r":
@@ -662,8 +716,10 @@ class TeleopApp:
             self.commanded_base_twist = manual_twist
         elif self._manual_override_active:
             self.commanded_base_twist = base_teleop.BodyTwist()
-        else:
+        elif self.whole_body_enabled:
             self.commanded_base_twist = self.whole_body_base_twist
+        else:
+            self.commanded_base_twist = base_teleop.BodyTwist()
         previous_manual_override = self._manual_override_active
         wheel_cmds = self.base_drive.update_twist(
             self.commanded_base_twist, self.frame_dt,

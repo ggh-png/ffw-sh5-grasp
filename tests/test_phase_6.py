@@ -273,6 +273,100 @@ def run_numeric_target_marker_sync_gate():
     return ok
 
 
+def run_whole_body_toggle_gate():
+    """Mode changes preserve world goals and clear stale chassis commands."""
+    app = _make_sim_only_app()
+    app.targets["pos_r"] = [0.025, -0.018, 0.012]
+    app.targets["rpy_r"] = [7.0, -4.0, 5.0]
+    app.targets["pos_l"] = [-0.020, 0.014, 0.018]
+    app.targets["rpy_l"] = [-6.0, 3.0, -4.0]
+    app.targets["virtual_object_pos"] = [0.31, -0.02, 0.87]
+    app.targets["virtual_object_rpy"] = [2.0, -3.0, 8.0]
+    hand_before = {side: app._target_world_pose(side) for side in ("r", "l")}
+    virtual_before = app._virtual_object_world_pose()
+    app.whole_body_base_twist = teleop_app.base_teleop.BodyTwist(0.2, -0.1, 0.3)
+    app.commanded_base_twist = teleop_app.base_teleop.BodyTwist(0.2, -0.1, 0.3)
+
+    app.toggle_whole_body_control()
+    off_mode = not app.whole_body_enabled
+    hand_off = {side: app._target_world_pose(side) for side in ("r", "l")}
+    virtual_off = app._virtual_object_world_pose()
+    off_pose_preserved = all(
+        np.allclose(hand_before[side][0], hand_off[side][0], atol=1e-10)
+        and abs(np.dot(hand_before[side][1], hand_off[side][1])) > 1.0 - 1e-10
+        for side in ("r", "l"))
+    off_pose_preserved &= (
+        np.allclose(virtual_before[0], virtual_off[0], atol=1e-10)
+        and abs(np.dot(virtual_before[1], virtual_off[1])) > 1.0 - 1e-10)
+    stale_command_cleared = (
+        app.commanded_base_twist == teleop_app.base_teleop.BodyTwist()
+        and app.whole_body_base_twist == teleop_app.base_teleop.BodyTwist())
+    smoothed_synced = all(
+        np.allclose(app.smoothed_pos[side], app.targets[f"pos_{side}"])
+        and np.allclose(app.smoothed_rpy[side], app.targets[f"rpy_{side}"])
+        for side in ("r", "l"))
+
+    app.toggle_whole_body_control()
+    hand_on = {side: app._target_world_pose(side) for side in ("r", "l")}
+    virtual_on = app._virtual_object_world_pose()
+    round_trip = app.whole_body_enabled and all(
+        np.allclose(hand_before[side][0], hand_on[side][0], atol=1e-10)
+        and abs(np.dot(hand_before[side][1], hand_on[side][1])) > 1.0 - 1e-10
+        for side in ("r", "l"))
+    round_trip &= (
+        np.allclose(virtual_before[0], virtual_on[0], atol=1e-10)
+        and abs(np.dot(virtual_before[1], virtual_on[1])) > 1.0 - 1e-10)
+
+    captured_app = _make_sim_only_app()
+    captured_app.capture_grasp()
+    captured_app.targets["virtual_object_pos"][0] += 0.035
+    captured_app.targets["virtual_object_rpy"][2] = 6.0
+    captured_app.apply_virtual_object_target()
+    captured_before = {
+        side: captured_app._target_world_pose(side) for side in ("r", "l")}
+    captured_virtual_before = captured_app._virtual_object_world_pose()
+    captured_app.toggle_whole_body_control()
+    captured_app.toggle_whole_body_control()
+    captured_round_trip = all(
+        np.allclose(captured_before[side][0], captured_app._target_world_pose(side)[0],
+                    atol=1e-10)
+        and abs(np.dot(captured_before[side][1],
+                       captured_app._target_world_pose(side)[1])) > 1.0 - 1e-10
+        for side in ("r", "l"))
+    captured_virtual_after = captured_app._virtual_object_world_pose()
+    captured_round_trip &= (
+        np.allclose(captured_virtual_before[0], captured_virtual_after[0], atol=1e-10)
+        and abs(np.dot(captured_virtual_before[1], captured_virtual_after[1])) > 1.0 - 1e-10)
+
+    integration_app = _make_sim_only_app()
+    integration_app.q_des_r = teleop_app.HOME_Q_R.copy()
+    integration_app.q_des_l = teleop_app.HOME_Q_L.copy()
+    integration_app.arm_mode = {"r": "ik", "l": "ik"}
+    integration_app.fk_q_deg = {
+        "r": np.degrees(integration_app.q_des_r).tolist(),
+        "l": np.degrees(integration_app.q_des_l).tolist(),
+    }
+    integration_app.frame_dt = 1.0 / teleop_app.LOOP_HZ
+    integration_app.steps_per_frame = max(
+        1, round(integration_app.frame_dt / integration_app.model.opt.timestep))
+    integration_app.ik_err_mm = {"r": 0.0, "l": 0.0}
+    integration_app.toggle_whole_body_control()
+    integration_app.targets["lift"] += 0.02
+    integration_app._step_physics(
+        {key: False for key in ("w", "a", "s", "d", "left", "right")})
+    off_integration = (
+        integration_app.lift_cmd == integration_app.targets["lift"]
+        and integration_app.commanded_base_twist == teleop_app.base_teleop.BodyTwist())
+
+    ok = (off_mode and off_pose_preserved and stale_command_cleared and smoothed_synced
+          and round_trip and captured_round_trip and off_integration)
+    print(f"Whole-body toggle gate: off={off_mode} off_pose={off_pose_preserved} "
+          f"stale_zero={stale_command_cleared} smoothing={smoothed_synced} "
+          f"round_trip={round_trip} captured={captured_round_trip} "
+          f"integration={off_integration}: {'OK' if ok else 'FAIL'}")
+    return ok
+
+
 def run_collision_visualization_gate():
     """The V toggle must expose active CBF points without requiring a GL window."""
     app = _make_sim_only_app()
@@ -373,6 +467,7 @@ def main():
           and run_cyclo_3d_gizmo_pose_gate()
           and run_bimanual_marker_visibility_gate()
           and run_numeric_target_marker_sync_gate()
+          and run_whole_body_toggle_gate()
           and run_collision_visualization_gate()
           and run_manual_xyz_rpy_ik_gate(model))
     print("PASS" if ok else "FAIL")

@@ -163,18 +163,23 @@ def world_to_target_pos(app, side, world_pos):
     return (world_to_base_pos(app, world_pos) - app.home_pos_local[side]).tolist()
 
 
-def target_world_quat(app, side):
+def target_rpy_to_world_quat(app, side, rpy_deg):
+    """Convert a hand's home-relative RPY value using the active target frame."""
     if getattr(app, "whole_body_enabled", False):
         quat = np.zeros(4)
         mujoco.mju_mulQuat(
-            quat, app.home_quat_world[side], rpy_deg_to_quat(app.targets[f"rpy_{side}"]))
+            quat, app.home_quat_world[side], rpy_deg_to_quat(rpy_deg))
         return quat
     *_unused, base_quat = base_pose(app)
     home_quat = app.home_quat_r if side == "r" else app.home_quat_l
     quat = np.zeros(4)
-    mujoco.mju_mulQuat(quat, home_quat, rpy_deg_to_quat(app.targets[f"rpy_{side}"]))
+    mujoco.mju_mulQuat(quat, home_quat, rpy_deg_to_quat(rpy_deg))
     mujoco.mju_mulQuat(quat, base_quat, quat)
     return quat
+
+
+def target_world_quat(app, side):
+    return target_rpy_to_world_quat(app, side, app.targets[f"rpy_{side}"])
 
 
 def world_quat_to_target_rpy(app, side, world_quat):

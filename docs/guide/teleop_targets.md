@@ -4,12 +4,15 @@ UI target, 3D marker/gizmo pose, IK world pose 사이의 변환을 담당한다.
 
 ## Target 의미
 
-| 값 | 의미 |
-|---|---|
-| `pos_r`, `pos_l` | 각 손의 시작 world pose 기준 XYZ offset(startup base 축) |
-| `rpy_r`, `rpy_l` | 각 손의 시작 world 자세 기준 RPY delta |
-| `virtual_object_pos` | startup base frame의 virtual object 위치 |
-| `virtual_object_rpy` | startup base frame 기준 virtual object RPY |
+| 값 | Whole-body ON | Whole-body OFF (arm-only) |
+|---|---|---|
+| `pos_r`, `pos_l` | 시작 world pose 기준 XYZ offset | live base 기준 home-relative offset |
+| `rpy_r`, `rpy_l` | 시작 world 자세 기준 RPY delta | live base 기준 home-relative RPY delta |
+| `virtual_object_pos/rpy` | startup anchor frame | live base frame |
+
+모드 전환 함수는 먼저 현재 world pose를 저장하고 새 표현으로 역변환하므로 같은
+숫자를 억지로 재사용하지 않는다. 따라서 ON/OFF 버튼을 눌러도 marker 목표는 이동하지
+않는다.
 
 ## 수식
 
@@ -64,6 +67,7 @@ p_{hand} = p_{obj} + R_{obj}\,p_{\text{offset}}, \quad R_{hand} = R_{obj}\,R_{\t
 | `target_pos_to_world_pos(app, side, pos_target)` | 손별 target 위치를 world 위치로 변환 |
 | `world_to_target_pos(app, side, world_pos)` | world 위치를 손별 target offset으로 변환 |
 | `target_world_quat(app, side)` | 손별 RPY target을 world quaternion으로 변환 |
+| `target_rpy_to_world_quat(app, side, rpy)` | raw/smoothed RPY를 활성 target frame의 world quaternion으로 변환 |
 | `world_quat_to_target_rpy(app, side, world_quat)` | world quaternion을 손별 RPY target으로 변환 |
 | `world_quat_to_virtual_rpy(app, world_quat)` | world quaternion을 virtual object RPY로 변환 |
 | `quat_to_mat(quat)` | quaternion을 3x3 rotation matrix로 변환 |

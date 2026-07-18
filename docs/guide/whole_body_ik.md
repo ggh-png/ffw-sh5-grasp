@@ -21,6 +21,24 @@
 solver는 live `data.qpos`를 쓰지 않는다. MuJoCo Jacobian과 현재 pose를 읽어 다음
 명령만 반환한다.
 
+## Whole-body ON/OFF
+
+UI의 **Whole-body Control** 버튼은 같은 solver를 두 참여 범위로 실행한다.
+
+| 모드 | differential IK 변수 | 동작 |
+|---|---|---|
+| ON | base x/y/yaw + lift + IK 모드 팔 | 양손 공통 이동은 base hierarchy도 사용 |
+| OFF (arm-only) | IK 모드 팔 | base/lift 네 속도 bound를 `[0, 0]`으로 고정 |
+
+OFF는 task weight를 낮추는 방식이 아니므로 damping, nominal posture, collision slack의
+수치 절충으로 잔류 base/lift 속도가 생길 수 없다. Joint-limit CBF와 collision CBF는
+동일하게 남아 있으며, OFF에서는 허용된 팔 관절만으로 제약을 만족시킨다. 리프트
+slider와 키보드 base 주행은 IK 밖의 독립 수동 명령이므로 계속 사용할 수 있다.
+
+전환 시 앱은 양손/virtual-object의 world pose를 먼저 저장한 뒤 새 모드 좌표계로
+target 값을 역변환한다. smoothing 값도 함께 맞추고 solver reference를 `rebase()`하며
+cached base twist를 0으로 지워 marker jump나 과거 명령 재생을 막는다.
+
 구조는 ROBOTIS의
 [`cyclo_motion_controller_core`](https://github.com/ROBOTIS-GIT/cyclo_control/tree/ceffbd7562028f6b317e462911e2a0991b9ba735/cyclo_motion_controller_core)가
 pose/Jacobian을 한 kinematics 계층에서 계산하고 weighted task QP에 속도·관절 한계·
@@ -224,6 +242,8 @@ flowchart TD
 - virtual object 76.4 mm 이동의 실제 동역학에서 상대 pose drift 0.2 mm/0.02°
 - base가 움직여도 hand/virtual-object target이 world에 고정되는지
 - solver가 live qpos를 바꾸지 않고 base/lift/양팔을 모두 쓰는지
+- arm-only solve에서 base/lift 네 속도가 정확히 0이고 양팔 오차는 감소하는지
+- UI ON/OFF 왕복에서 손/virtual-object world pose가 보존되고 cached twist가 0인지
 - 양손 whole-body solve 평균 latency가 5 ms 미만인지
 - 무작위 XYZ/yaw target 40개 모두에서 한 step 뒤 오차 감소, read-only, 속도 bound
 - 실제 wheel-ground contact에서 longitudinal/lateral/vertical/yaw 양손 target 추종

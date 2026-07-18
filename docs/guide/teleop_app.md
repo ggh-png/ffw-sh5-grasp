@@ -58,6 +58,8 @@ while not glfw.window_should_close(self.window):
 | `_disable_legacy_box_asset()` | XML에 남은 box asset 비활성화 |
 | `cycle_camera()` | 카메라 preset 전환 |
 | `set_arm_mode(side, mode)` | 손별 IK/FK 전환과 target 동기화 |
+| `set_whole_body_enabled(enabled)` | world target을 보존하며 whole-body/arm-only 전환 |
+| `toggle_whole_body_control()` | UI 버튼용 전신 제어 토글 |
 | `_draw_ui_panel()` | `teleop_ui.draw_panel(self)` 호출 |
 | `_handle_edge_keys(io)` | `R/G/V/C` edge key 처리 |
 | `_read_drive_and_lift_keys(io)` | 주행/리프트 continuous key 처리 |
@@ -126,9 +128,11 @@ flowchart TD
 3. raw target을 `smoothed_pos`, `smoothed_rpy`로 rate-limit한다.
 4. startup anchor 기준 값에서 world-fixed 양손 target pose를 만든다. 수동 베이스
    주행 중에는 target frame도 측정된 base SE(2) 이동만큼 함께 운반한다.
-5. `whole_body_ik.solve()`가 base x/y/yaw, lift, IK 모드 양팔을 한 문제로 푼다.
+5. `whole_body_ik.solve()`가 ON이면 base x/y/yaw, lift, IK 모드 양팔을 한 문제로
+   풀고, OFF면 base/lift 속도를 0으로 고정해 팔만 푼다.
 6. FK 모드인 손은 FK slider 값을 사용하고 whole-body arm 변수는 0속도로 고정한다.
-7. 키보드 base 명령이 있으면 우선하고, 없으면 whole-body base twist를 선택한다.
+7. 키보드 base 명령이 있으면 우선한다. 키가 없을 때 ON은 whole-body twist, OFF는
+   zero twist를 선택한다.
 8. `base_teleop.SwerveDrive.update_twist()`로 wheel command를 계산한다.
 9. 물리 substep마다 arm torque, lift, wheel, hand command를 `data.ctrl`에 쓴다.
 10. `mujoco.mj_step()`을 호출한다.

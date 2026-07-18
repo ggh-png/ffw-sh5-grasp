@@ -652,6 +652,46 @@ def run_whole_body_solver_gate(model):
     return ok
 
 
+def run_arm_only_solver_gate(model):
+    """OFF must be a hard base/lift gate while preserving useful arm IK."""
+    data = mujoco.MjData(model)
+    _reset(model, data)
+    sites = _sites(model)
+    solver = whole_body_ik.WholeBodyIK(
+        model, {side: f"grasp_target_{side}" for side in ("r", "l")}, ARMS)
+    targets = _target_poses(data, sites, [0.04, 0.0, 0.02])
+    qpos_before = data.qpos.copy()
+    command = solver.solve(
+        data, targets, 0.04,
+        arm_nominal={"r": HOME, "l": HOME},
+        lift_nominal=float(data.qpos[solver.qpos_adrs[3]] + 0.15),
+        whole_body_enabled=False,
+    )
+    qdot = command.generalized_velocity
+    body_pinned = np.array_equal(qdot[:4], np.zeros(4))
+    twist_zero = (command.base_twist.vx == 0.0 and command.base_twist.vy == 0.0
+                  and command.base_twist.wz == 0.0)
+    both_arms_used = all(
+        np.linalg.norm(qdot[solver.side_indices[side]]) > 1e-4 for side in ("r", "l"))
+
+    scratch = mujoco.MjData(model)
+    scratch.qpos[:] = data.qpos
+    velocity = np.zeros(model.nv)
+    velocity[solver.dof_ids] = qdot
+    before_error = _pose_error_metric(data, targets, sites)
+    mujoco.mj_integratePos(model, scratch.qpos, velocity, 0.04)
+    mujoco.mj_forward(model, scratch)
+    after_error = _pose_error_metric(scratch, targets, sites)
+    read_only = np.array_equal(data.qpos, qpos_before)
+    descent = after_error < before_error
+    ok = body_pinned and twist_zero and both_arms_used and read_only and descent
+    print(f"Arm-only solver gate: body_qdot_zero={body_pinned} twist_zero={twist_zero} "
+          f"both_arms={both_arms_used} read_only={read_only} "
+          f"error={before_error*1000:.1f}->{after_error*1000:.1f}mm: "
+          f"{'OK' if ok else 'FAIL'}")
+    return ok
+
+
 def run_solver_latency_gate(model, solve_count=200):
     """Keep the bounded QP comfortably below the 25 Hz application's frame budget."""
     data = mujoco.MjData(model)
@@ -886,6 +926,7 @@ def main():
           and run_manual_handover_gate()
           and run_manual_release_physical_gate()
           and run_whole_body_solver_gate(model)
+          and run_arm_only_solver_gate(model)
           and run_solver_latency_gate(model)
           and run_randomized_whole_body_gate(model)
           and run_physical_whole_body_gate(model))

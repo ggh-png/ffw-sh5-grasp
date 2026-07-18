@@ -35,7 +35,7 @@ ImGui 기반 텔레옵 패널을 그린다.
 | `_draw_fk_joint_controls(app, side)` | 손별 FK joint slider |
 | `_draw_arm_panel(app, targets, side)` | 오른팔/왼팔 IK/FK 패널 |
 | `_draw_can_grasp_panel(app, targets)` | grasp/thumb synergy 패널 |
-| `_draw_lift_utils_panel(app, targets)` | lift/reset/contact/camera 패널 |
+| `_draw_lift_utils_panel(app, targets)` | 전신 ON/OFF, lift/reset/contact/collision/camera 패널 |
 | `_draw_joint_monitor(app, data)` | 관절 위치 monitor |
 | `draw_panel(app)` | 전체 UI 패널 entry point |
 
@@ -71,7 +71,7 @@ FFW-SH5 Teleop
 ├── Right Arm
 ├── Left Arm
 ├── Can Grasp
-├── Lift / Utilities
+├── Lift / Utilities (Whole-body Control ON/OFF)
 └── Joint Monitor
 ```
 
@@ -80,3 +80,5 @@ FFW-SH5 Teleop
 - UI는 `app.targets`와 app 상태만 바꾼다.
 - `mj_step`, IK solve, actuator command는 수행하지 않는다.
 - 실제 반영은 `teleop_app.py`의 `_step_physics()`에서 한다.
+- **Whole-body Control** 버튼은 `toggle_whole_body_control()`을 호출하고 상태줄에는
+  `ON` 또는 `OFF (arm-only)`와 실제 body command가 표시된다.

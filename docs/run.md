@@ -44,8 +44,22 @@ python3 src/teleop_app.py
 | Cyclo / Marker Control | `MoveL`, `Bimanual MoveL`, marker jog, capture/release |
 | Right Arm / Left Arm | 손별 IK pose 또는 FK joint target |
 | Can Grasp | 손별 grasp/thumb synergy |
-| Lift / Utilities | lift, reset, contact/collision 표시, camera |
+| Lift / Utilities | 전신 제어 ON/OFF, lift, reset, contact/collision 표시, camera |
 | Joint Monitor | 주요 관절 위치 표시 |
+
+### 전신 제어 버튼
+
+`Lift / Utilities`의 **Whole-body Control** 버튼으로 모드를 바꾼다.
+
+| 표시 | IK에 참여하는 축 | 별도 수동 조작 |
+|---|---|---|
+| `ON` | base x/y/yaw + lift + IK 모드 팔 | 키보드 base 명령이 우선 |
+| `OFF (arm-only)` | IK 모드 팔만 | 화살표/`[/]` base와 `Q/E`·lift slider 사용 가능 |
+
+OFF는 base/lift task weight만 낮추는 옵션이 아니라 해당 네 속도를 solver bound에서
+0으로 고정한다. 전환 직전 손과 virtual-object world pose를 새 좌표계로 다시 표현해
+marker가 튀지 않으며, 남아 있던 whole-body base twist도 0으로 지운다. Collision CBF는
+계속 활성화되어 OFF에서는 팔 자유도만으로 안전한 명령을 찾는다.
 
 ## 테스트
 
