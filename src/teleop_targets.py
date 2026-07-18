@@ -4,7 +4,7 @@ This module owns the math that connects three views of the same command:
 
 - UI values: home-relative XYZ/RPY targets in ``app.targets``.
 - Render values: world-space marker/gizmo poses.
-- IK values: world-space site goals passed into ``ik.InverseKinematics``.
+- IK values: world-space site goals passed into ``whole_body_ik.WholeBodyIK``.
 
 It deliberately duck-types on ``app`` instead of importing ``teleop_app`` so the main app
 can remain the only composition point.
@@ -46,6 +46,56 @@ def set_home_references(app):
         "r": world_to_base_pos(app, app.data.site_xpos[app.site_r]),
         "l": world_to_base_pos(app, app.data.site_xpos[app.site_l]),
     }
+    base_x, base_y, base_yaw, _cy, _sy, base_quat = base_pose(app)
+    app.target_anchor_xy = np.array([base_x, base_y], dtype=float)
+    app.target_anchor_yaw = float(base_yaw)
+    app.target_anchor_quat = base_quat.copy()
+    app.home_pos_world = {
+        "r": app.data.site_xpos[app.site_r].copy(),
+        "l": app.data.site_xpos[app.site_l].copy(),
+    }
+    app.home_quat_world = {
+        "r": app.home_quat_r.copy(),
+        "l": app.home_quat_l.copy(),
+    }
+
+
+def carry_world_targets_with_base(app, previous_base_pose, current_base_pose):
+    """Apply measured manual-base SE(2) motion to every world target reference.
+
+    Whole-body targets normally stay fixed in world space so IK-driven base motion reduces
+    their error.  Manual driving has different semantics: it repositions the whole robot,
+    so its targets must ride with the chassis.  Transforming the references (rather than
+    changing UI offsets) also preserves independent and captured-bimanual commands.
+    """
+    old_x, old_y, old_yaw = (float(v) for v in previous_base_pose)
+    new_x, new_y, new_yaw = (float(v) for v in current_base_pose)
+    delta_yaw = (new_yaw - old_yaw + math.pi) % (2.0 * math.pi) - math.pi
+    c, s = math.cos(delta_yaw), math.sin(delta_yaw)
+    old_xy = np.array([old_x, old_y])
+    new_xy = np.array([new_x, new_y])
+
+    def transform_position(position):
+        result = np.asarray(position, dtype=float).copy()
+        relative = result[:2] - old_xy
+        result[:2] = new_xy + np.array([
+            c * relative[0] - s * relative[1],
+            s * relative[0] + c * relative[1],
+        ])
+        return result
+
+    delta_quat = np.array([math.cos(delta_yaw / 2.0), 0.0, 0.0,
+                           math.sin(delta_yaw / 2.0)])
+    app.target_anchor_xy = transform_position(app.target_anchor_xy)[:2]
+    app.target_anchor_yaw += delta_yaw
+    anchor_quat = np.zeros(4)
+    mujoco.mju_mulQuat(anchor_quat, delta_quat, app.target_anchor_quat)
+    app.target_anchor_quat = anchor_quat
+    for side in ("r", "l"):
+        app.home_pos_world[side] = transform_position(app.home_pos_world[side])
+        carried_quat = np.zeros(4)
+        mujoco.mju_mulQuat(carried_quat, delta_quat, app.home_quat_world[side])
+        app.home_quat_world[side] = carried_quat
 
 
 def base_pose(app):
@@ -69,19 +119,56 @@ def world_to_base_pos(app, p_world):
     return np.array([cy * dx + sy * dy, -sy * dx + cy * dy, p_world[2]])
 
 
+def anchor_local_to_world_pos(app, p_local):
+    """Transform through the startup base pose, not the moving live base pose."""
+    cy, sy = math.cos(app.target_anchor_yaw), math.sin(app.target_anchor_yaw)
+    x, y, z = p_local
+    return np.array([
+        app.target_anchor_xy[0] + cy * x - sy * y,
+        app.target_anchor_xy[1] + sy * x + cy * y,
+        z,
+    ])
+
+
+def world_to_anchor_local_pos(app, p_world):
+    cy, sy = math.cos(app.target_anchor_yaw), math.sin(app.target_anchor_yaw)
+    dx = p_world[0] - app.target_anchor_xy[0]
+    dy = p_world[1] - app.target_anchor_xy[1]
+    return np.array([cy * dx + sy * dy, -sy * dx + cy * dy, p_world[2]])
+
+
 def target_pos_to_base_pos(app, side, pos_target):
     return app.home_pos_local[side] + np.array(pos_target)
 
 
 def target_pos_to_world_pos(app, side, pos_target):
+    if getattr(app, "whole_body_enabled", False):
+        offset = np.asarray(pos_target, dtype=float)
+        cy, sy = math.cos(app.target_anchor_yaw), math.sin(app.target_anchor_yaw)
+        rotated = np.array([
+            cy * offset[0] - sy * offset[1],
+            sy * offset[0] + cy * offset[1],
+            offset[2],
+        ])
+        return app.home_pos_world[side] + rotated
     return local_to_world_pos(app, target_pos_to_base_pos(app, side, pos_target))
 
 
 def world_to_target_pos(app, side, world_pos):
+    if getattr(app, "whole_body_enabled", False):
+        delta = np.asarray(world_pos, dtype=float) - app.home_pos_world[side]
+        cy, sy = math.cos(app.target_anchor_yaw), math.sin(app.target_anchor_yaw)
+        return [cy * delta[0] + sy * delta[1],
+                -sy * delta[0] + cy * delta[1], float(delta[2])]
     return (world_to_base_pos(app, world_pos) - app.home_pos_local[side]).tolist()
 
 
 def target_world_quat(app, side):
+    if getattr(app, "whole_body_enabled", False):
+        quat = np.zeros(4)
+        mujoco.mju_mulQuat(
+            quat, app.home_quat_world[side], rpy_deg_to_quat(app.targets[f"rpy_{side}"]))
+        return quat
     *_unused, base_quat = base_pose(app)
     home_quat = app.home_quat_r if side == "r" else app.home_quat_l
     quat = np.zeros(4)
@@ -91,6 +178,12 @@ def target_world_quat(app, side):
 
 
 def world_quat_to_target_rpy(app, side, world_quat):
+    if getattr(app, "whole_body_enabled", False):
+        home_quat_inv = np.zeros(4)
+        mujoco.mju_negQuat(home_quat_inv, app.home_quat_world[side])
+        delta = np.zeros(4)
+        mujoco.mju_mulQuat(delta, home_quat_inv, world_quat)
+        return quat_to_rpy_deg(delta)
     home_quat = app.home_quat_r if side == "r" else app.home_quat_l
     *_unused, base_quat = base_pose(app)
     base_quat_inv, home_quat_inv = np.zeros(4), np.zeros(4)
@@ -104,7 +197,10 @@ def world_quat_to_target_rpy(app, side, world_quat):
 
 
 def world_quat_to_virtual_rpy(app, world_quat):
-    *_unused, base_quat = base_pose(app)
+    if getattr(app, "whole_body_enabled", False):
+        base_quat = app.target_anchor_quat
+    else:
+        *_unused, base_quat = base_pose(app)
     base_quat_inv = np.zeros(4)
     mujoco.mju_negQuat(base_quat_inv, base_quat)
     rpy_delta_quat = np.zeros(4)
@@ -129,8 +225,12 @@ def target_world_pose(app, side):
 
 
 def virtual_object_world_pose(app):
-    pos = local_to_world_pos(app, app.targets["virtual_object_pos"])
-    *_unused, base_quat = base_pose(app)
+    if getattr(app, "whole_body_enabled", False):
+        pos = anchor_local_to_world_pos(app, app.targets["virtual_object_pos"])
+        base_quat = app.target_anchor_quat
+    else:
+        pos = local_to_world_pos(app, app.targets["virtual_object_pos"])
+        *_unused, base_quat = base_pose(app)
     quat = np.zeros(4)
     mujoco.mju_mulQuat(quat, base_quat, rpy_deg_to_quat(app.targets["virtual_object_rpy"]))
     return pos, quat
@@ -139,7 +239,11 @@ def virtual_object_world_pose(app):
 def sync_virtual_object_to_hand_targets(app):
     pos_r, _quat_r = target_world_pose(app, "r")
     pos_l, _quat_l = target_world_pose(app, "l")
-    app.targets["virtual_object_pos"] = world_to_base_pos(app, 0.5 * (pos_r + pos_l)).tolist()
+    midpoint = 0.5 * (pos_r + pos_l)
+    if getattr(app, "whole_body_enabled", False):
+        app.targets["virtual_object_pos"] = world_to_anchor_local_pos(app, midpoint).tolist()
+    else:
+        app.targets["virtual_object_pos"] = world_to_base_pos(app, midpoint).tolist()
     app.targets["virtual_object_rpy"] = [0.0, 0.0, 0.0]
 
 
@@ -211,7 +315,10 @@ def gizmo_target_world_pose(app, target):
 
 def set_gizmo_target_world_pose(app, target, world_pos, world_quat):
     if target == "virtual":
-        app.targets["virtual_object_pos"] = world_to_base_pos(app, world_pos).tolist()
+        if getattr(app, "whole_body_enabled", False):
+            app.targets["virtual_object_pos"] = world_to_anchor_local_pos(app, world_pos).tolist()
+        else:
+            app.targets["virtual_object_pos"] = world_to_base_pos(app, world_pos).tolist()
         app.targets["virtual_object_rpy"] = world_quat_to_virtual_rpy(app, world_quat)
         apply_virtual_object_target(app)
     else:

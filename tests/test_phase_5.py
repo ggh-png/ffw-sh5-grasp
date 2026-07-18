@@ -11,7 +11,8 @@ Phase 5 design) to genuine wheel-ground friction propulsion per user request: ba
 base_yaw are no longer directly actuated, only reacted through the wheels' steer/drive
 joints and their real contact with the floor. See src/base_teleop.py's `SwerveDrive` for the
 per-wheel steer-angle + drive-speed kinematics (needed because the vendored wheel_steer
-joints only have ~+-90.5deg of range, not a full rotation).
+joints support the official approximately +/-2pi range; an injected narrow-range solver is
+covered separately in ``test_whole_body.py``.
 
 Part 1 (unit, no MuJoCo): BaseTeleop's smoothing math (unchanged) plus ROBOTIS-style
 SwerveDrive behavior in isolation (pure forward/turn/strafe cases, checked against the
@@ -67,6 +68,21 @@ def run_unit_tests():
           f"(target {base_teleop.K_SPEED}): {'OK' if ok_a else 'FAIL'}")
     ok &= ok_a
 
+    responsive = base_teleop.BaseTeleop()
+    for _ in range(round(0.6 / 0.01)):
+        combined = responsive.update_body({"w": True, "left": True}, 0.01)
+    combined_ok = combined.vx > 0.90 * base_teleop.K_SPEED and combined.wz > 1.4
+    release_time = None
+    for step in range(1, round(1.2 / 0.01) + 1):
+        released = responsive.update_body({}, 0.01)
+        if released.is_zero():
+            release_time = step * 0.01
+            break
+    response_ok = combined_ok and release_time is not None and release_time < 1.0
+    print(f"  (a2) combined+response: vx={combined.vx:.3f} wz={combined.wz:.3f} "
+          f"release_zero={release_time}s: {'OK' if response_ok else 'FAIL'}")
+    ok &= response_ok
+
     # SwerveDrive: pure forward -> every wheel faces forward (steer=0), same drive speed.
     sd = base_teleop.SwerveDrive()
     for _ in range(300):
@@ -104,10 +120,12 @@ def run_unit_tests():
     ok &= ok_d
 
     sd4 = base_teleop.SwerveDrive()
-    sd4.base.v_local[:] = [0.5, 0.0]
-    sd4.update({}, 0.01, yaw=0.0)
-    sd4.base.v_local[:] = [-0.5, 0.0]
-    reverse_cmd = sd4.update({}, 0.01, yaw=0.0)
+    feedback_steer = {wheel: 0.0 for wheel in WHEELS}
+    moving_wheels = {wheel: 5.0 for wheel in WHEELS}
+    sd4.update_twist(base_teleop.BodyTwist(0.5, 0.0, 0.0), 0.01,
+                     feedback_steer, moving_wheels)
+    reverse_cmd = sd4.update_twist(base_teleop.BodyTwist(-0.5, 0.0, 0.0), 0.01,
+                                   feedback_steer, moving_wheels)
     ok_e = (
         sd4.reversal_phase["left_wheel"] == base_teleop.ReversalPhase.DECELERATING
         and sd4.wheel_speed_scale["left_wheel"] < 1.0
@@ -117,6 +135,25 @@ def run_unit_tests():
           f"scale={sd4.wheel_speed_scale['left_wheel']:.2f} "
           f"wheel_cmd={reverse_cmd['left_wheel'][1]:.3f}: {'OK' if ok_e else 'FAIL'}")
     ok &= ok_e
+
+    stopped = base_teleop.SwerveDrive()
+    stopped_reverse = stopped.update_twist(
+        base_teleop.BodyTwist(-0.5, 0.0, 0.0), 0.01,
+        feedback_steer, {wheel: 0.0 for wheel in WHEELS})
+    stopped_ok = (all(stopped.reversal_phase[w] == base_teleop.ReversalPhase.NORMAL for w in WHEELS)
+                  and all(stopped_reverse[w][1] < 0.0 for w in WHEELS))
+
+    stalled = base_teleop.SwerveDrive()
+    for _ in range(30):
+        stalled_cmd = stalled.update_twist(
+            base_teleop.BodyTwist(0.0, 0.5, 0.0), 0.01,
+            feedback_steer, {wheel: 0.0 for wheel in WHEELS})
+    command_progress_ok = all(stalled_cmd[w][0] > 1.45 for w in WHEELS)
+    ok_f = stopped_ok and command_progress_ok
+    print(f"  (f) stopped reversal + lagging-feedback steering command: "
+          f"direct_reverse={stopped_ok} steer_cmd="
+          f"{[round(stalled_cmd[w][0], 2) for w in WHEELS]}: {'OK' if ok_f else 'FAIL'}")
+    ok &= ok_f
 
     return ok
 
@@ -140,11 +177,15 @@ def _make_rig(model):
                   for w in WHEELS}
     base_yaw_qadr = model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "base_yaw")]
     base_x_qadr = model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "base_x")]
+    base_y_qadr = model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "base_y")]
     base_x_dof = model.jnt_dofadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "base_x")]
+    base_y_dof = model.jnt_dofadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "base_y")]
+    base_yaw_dof = model.jnt_dofadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "base_yaw")]
     return dict(ctrl_r=ctrl_r, ctrl_l=ctrl_l, steer_aids=steer_aids, drive_aids=drive_aids,
                 steer_qadrs=steer_qadrs,
                 drive_dofs=drive_dofs, base_yaw_qadr=base_yaw_qadr, base_x_qadr=base_x_qadr,
-                base_x_dof=base_x_dof)
+                base_y_qadr=base_y_qadr, base_x_dof=base_x_dof, base_y_dof=base_y_dof,
+                base_yaw_dof=base_yaw_dof)
 
 
 def _step(model, data, rig, drive, keys, frame_dt):
@@ -165,6 +206,95 @@ def _step(model, data, rig, drive, keys, frame_dt):
         mujoco.mj_step(model, data)
         max_qacc = max(max_qacc, float(np.max(np.abs(data.qacc))))
     return max_qacc
+
+
+def _step_twist(model, data, rig, drive, twist, frame_dt):
+    steering_positions = {w: float(data.qpos[qadr]) for w, qadr in rig["steer_qadrs"].items()}
+    wheel_velocities = {w: float(data.qvel[dof]) for w, dof in rig["drive_dofs"].items()}
+    cmds = drive.update_twist(twist, frame_dt, steering_positions, wheel_velocities)
+    max_qacc = 0.0
+    for _ in range(max(1, round(frame_dt / model.opt.timestep))):
+        rig["ctrl_r"].apply(data, HOME_Q_R)
+        rig["ctrl_l"].apply(data, HOME_Q_L)
+        for wheel, (angle, speed) in cmds.items():
+            data.ctrl[rig["steer_aids"][wheel]] = angle
+            data.ctrl[rig["drive_aids"][wheel]] = speed
+        grasp.apply_grasp(model, data, grasp=0.0, thumb=0.0, side="r")
+        grasp.apply_grasp(model, data, grasp=0.0, thumb=0.0, side="l")
+        mujoco.mj_step(model, data)
+        max_qacc = max(max_qacc, float(np.max(np.abs(data.qacc))))
+    return max_qacc
+
+
+def _run_twist_trial(model, twist, duration):
+    data = mujoco.MjData(model)
+    _reset_home(model, data)
+    rig = _make_rig(model)
+    drive = base_teleop.SwerveDrive()
+    initial = np.array([
+        data.qpos[rig["base_x_qadr"]], data.qpos[rig["base_y_qadr"]],
+        data.qpos[rig["base_yaw_qadr"]]])
+    max_qacc = 0.0
+    for _ in range(round(duration / 0.04)):
+        max_qacc = max(max_qacc, _step_twist(model, data, rig, drive, twist, 0.04))
+    final = np.array([
+        data.qpos[rig["base_x_qadr"]], data.qpos[rig["base_y_qadr"]],
+        data.qpos[rig["base_yaw_qadr"]]])
+    return final - initial, max_qacc, data, rig, drive
+
+
+def run_omnidirectional_regression(model):
+    """Physical strafe, yaw, combined twist, reversal, and internal-collision gates."""
+    audit = mujoco.MjData(model)
+    _reset_home(model, audit)
+    rig = _make_rig(model)
+    for wheel in WHEELS:
+        audit.qpos[rig["steer_qadrs"][wheel]] = np.pi / 2
+    mujoco.mj_forward(model, audit)
+    wheel_geoms = {mujoco.mj_name2id(
+        model, mujoco.mjtObj.mjOBJ_GEOM, f"{wheel}_collision") for wheel in WHEELS}
+    floor = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "floor")
+    internal_contacts = [contact for contact in audit.contact
+                         if (contact.geom1 in wheel_geoms or contact.geom2 in wheel_geoms)
+                         and floor not in (contact.geom1, contact.geom2)]
+
+    strafe, strafe_acc, *_ = _run_twist_trial(
+        model, base_teleop.BodyTwist(0.0, 0.5, 0.0), 2.0)
+    strafe_ok = (strafe[1] > 0.55 and abs(strafe[0]) < 0.12
+                 and abs(strafe[2]) < 0.15 and strafe_acc < QACC_LIMIT)
+
+    yaw, yaw_acc, *_ = _run_twist_trial(
+        model, base_teleop.BodyTwist(0.0, 0.0, 1.0), 2.0)
+    yaw_ok = (yaw[2] > 0.8 and np.linalg.norm(yaw[:2]) < 0.10 and yaw_acc < QACC_LIMIT)
+
+    combined, combined_acc, *_ = _run_twist_trial(
+        model, base_teleop.BodyTwist(-0.4, 0.0, 0.6), 2.0)
+    combined_ok = (np.linalg.norm(combined[:2]) > 0.35 and combined[2] > 0.45
+                   and combined_acc < QACC_LIMIT)
+
+    data = mujoco.MjData(model)
+    _reset_home(model, data)
+    rig = _make_rig(model)
+    drive = base_teleop.SwerveDrive()
+    max_acc = 0.0
+    for _ in range(round(1.2 / 0.04)):
+        max_acc = max(max_acc, _step_twist(
+            model, data, rig, drive, base_teleop.BodyTwist(0.0, 0.45, 0.0), 0.04))
+    positive_y = float(data.qpos[rig["base_y_qadr"]])
+    for _ in range(round(1.2 / 0.04)):
+        max_acc = max(max_acc, _step_twist(
+            model, data, rig, drive, base_teleop.BodyTwist(0.0, -0.45, 0.0), 0.04))
+    reversed_y = float(data.qpos[rig["base_y_qadr"]])
+    reversal_ok = positive_y > 0.25 and reversed_y < positive_y - 0.18 and max_acc < QACC_LIMIT
+
+    ok = (not internal_contacts and strafe_ok and yaw_ok and combined_ok and reversal_ok)
+    print(f"  Omnidirectional: internal_contacts={len(internal_contacts)} "
+          f"strafe=({strafe[0]:+.3f},{strafe[1]:+.3f},{np.degrees(strafe[2]):+.1f}deg) "
+          f"yaw=({yaw[0]:+.3f},{yaw[1]:+.3f},{np.degrees(yaw[2]):+.1f}deg) "
+          f"combined_dist={np.linalg.norm(combined[:2]):.3f}m/"
+          f"{np.degrees(combined[2]):.1f}deg reverse_y={positive_y:.3f}->{reversed_y:.3f}: "
+          f"{'OK' if ok else 'FAIL'}")
+    return ok
 
 
 def run_idle_regression(model):
@@ -267,7 +397,10 @@ def main():
     print("Part 2c: drive into the table (collision should stop it, not tunnel through)")
     collision_ok = run_collision_test(model)
 
-    ok = unit_ok and idle_ok and drive_ok and collision_ok
+    print("Part 2d: physical omnidirectional/reversal/self-collision regression")
+    omni_ok = run_omnidirectional_regression(model)
+
+    ok = unit_ok and idle_ok and drive_ok and collision_ok and omni_ok
     print("PASS" if ok else "FAIL")
     sys.exit(0 if ok else 1)
 

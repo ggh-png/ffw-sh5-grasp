@@ -6,34 +6,32 @@ UI target, 3D marker/gizmo pose, IK world pose 사이의 변환을 담당한다.
 
 | 값 | 의미 |
 |---|---|
-| `pos_r`, `pos_l` | 각 손의 시작 위치 기준 XYZ offset |
-| `rpy_r`, `rpy_l` | 각 손의 시작 자세 기준 RPY delta |
-| `virtual_object_pos` | base frame의 virtual object 위치 |
-| `virtual_object_rpy` | base frame 기준 virtual object RPY |
+| `pos_r`, `pos_l` | 각 손의 시작 world pose 기준 XYZ offset(startup base 축) |
+| `rpy_r`, `rpy_l` | 각 손의 시작 world 자세 기준 RPY delta |
+| `virtual_object_pos` | startup base frame의 virtual object 위치 |
+| `virtual_object_rpy` | startup base frame 기준 virtual object RPY |
 
 ## 수식
 
-> **왜 base-local 좌표가 필요한가**: IK는 world 좌표 기준 목표를 받지만, 손
-> target 슬라이더는 "로봇 기준 앞/옆/위"를 조작하려는 것이다 — 베이스가 주행
-> 중에 움직여도 슬라이더 값 자체는 그대로 두고 싶으므로, 매 프레임 베이스의
-> 현재 pose로 변환해서 IK에 넘긴다. 자세한 이유는
+> **왜 startup anchor가 필요한가**: 입력 축은 로봇 시작 방향의 앞/옆/위를
+> 유지하되 최종 target world pose는 고정돼야 한다. 현재 base pose에 target을 붙이면
+> whole-body IK가 베이스를 움직일 때 goal도 똑같이 움직여 오차가 줄지 않는다. 자세한 이유는
 > [ROS2 개발자를 위한 튜토리얼 Part 10.3](ros2-guide.md#part-10-3) 참고.
 
-base-local 위치 \((x,y,z)\) → world 위치, 베이스 pose \((x_b,y_b,\theta_b)\)만큼
-2D 회전 후 평행이동(`local_to_world_pos`; 역변환 `world_to_base_pos`는 반대 순서로
-뺀 뒤 \(R^{T}\)를 곱한다):
+startup-anchor 위치 \((x,y,z)\) → world 위치, 앱 시작 시 캡처한 베이스 pose
+\((x_{b0},y_{b0},\theta_{b0})\)만큼 2D 회전 후 평행이동한다:
 
 \[
 \begin{pmatrix} X\\Y\\Z \end{pmatrix} =
-\begin{pmatrix} x_b\\y_b\\0 \end{pmatrix} +
-\begin{pmatrix} \cos\theta_b & -\sin\theta_b & 0\\ \sin\theta_b & \cos\theta_b & 0\\ 0&0&1 \end{pmatrix}
+\begin{pmatrix} x_{b0}\\y_{b0}\\0 \end{pmatrix} +
+\begin{pmatrix} \cos\theta_{b0} & -\sin\theta_{b0} & 0\\ \sin\theta_{b0} & \cos\theta_{b0} & 0\\ 0&0&1 \end{pmatrix}
 \begin{pmatrix} x\\y\\z \end{pmatrix}
 \]
 
 손 target의 world quaternion(`target_world_quat`)은 세 쿼터니언의 곱:
 
 \[
-q_{world} = q_{base\_yaw} \otimes q_{home} \otimes q_{rpy\_delta}
+q_{world} = q_{home\_world} \otimes q_{rpy\_delta}
 \]
 
 양손으로 물건을 함께 드는 건 두 손이 서로에 대한 상대 pose를 유지한 채(보이지
@@ -59,6 +57,9 @@ p_{hand} = p_{obj} + R_{obj}\,p_{\text{offset}}, \quad R_{hand} = R_{obj}\,R_{\t
 | `base_pose(app)` | base x/y/yaw, sin/cos, yaw quaternion 반환 |
 | `local_to_world_pos(app, p_local)` | base-local 위치를 world 위치로 변환 |
 | `world_to_base_pos(app, p_world)` | world 위치를 base-local 위치로 변환 |
+| `anchor_local_to_world_pos(app, p_local)` | startup base anchor 위치를 world로 변환 |
+| `world_to_anchor_local_pos(app, p_world)` | world 위치를 startup anchor로 역변환 |
+| `carry_world_targets_with_base(app, previous, current)` | 수동 주행 SE(2) 변환을 hand/virtual target frame에 적용 |
 | `target_pos_to_base_pos(app, side, pos_target)` | 손별 home-relative offset을 base-local 위치로 변환 |
 | `target_pos_to_world_pos(app, side, pos_target)` | 손별 target 위치를 world 위치로 변환 |
 | `world_to_target_pos(app, side, world_pos)` | world 위치를 손별 target offset으로 변환 |
@@ -88,11 +89,11 @@ flowchart TD
     C["ImGuizmo drag world pose<br>3D marker를 world 좌표에서 조작"] --> D["set_gizmo_target_world_pose()<br>gizmo 결과를 app target 좌표계로 변환"]
     D --> B
     B --> E["target_world_pose(side)<br>손별 IK 목표 world pose 계산"]
-    E --> F["target_pos_to_world_pos()<br>home-relative 위치를 world 위치로 변환"]
+    E --> F["target_pos_to_world_pos()<br>startup anchor 기준 offset을 고정 world 위치로 변환"]
     E --> G["target_world_quat()<br>target RPY를 world quaternion으로 변환"]
     F --> H["IK target world pose<br>IK solver에 넘길 최종 목표"]
     G --> H
-    H --> I["teleop_app -> ik.solve_pose()<br>world pose를 관절 목표로 변환"]
+    H --> I["teleop_app -> whole_body_ik.solve()<br>world pose를 base/lift/양팔 명령으로 변환"]
 
     J["Capture Grasp<br>양손 상대 관계 저장 시작"] --> K["capture_grasp()<br>현재 양손 pose를 virtual object 기준으로 캡처"]
     K --> L["sync_virtual_object_to_hand_targets()<br>virtual object를 양손 중앙에 배치"]

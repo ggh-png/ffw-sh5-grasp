@@ -2,6 +2,11 @@
 
 MuJoCo site의 목표 위치/자세를 만족하는 팔 관절각을 계산한다.
 
+!!! note "현재 텔레옵 런타임은 whole-body IK 사용"
+    이 모듈은 이전 단일 팔 solver와 회귀 테스트를 보존하기 위한 legacy 경로다.
+    현재 `teleop_app.py`는 base, lift, 양팔을 한 번에 푸는
+    [`src/whole_body_ik.py`](whole_body_ik.md)를 사용한다.
+
 ## 역할
 
 | 항목 | 내용 |
@@ -86,9 +91,10 @@ flowchart TD
 `full_scene.xml`에서는 lift/base 등 solver가 직접 제어하지 않는 관절도 site pose에 영향을 준다.
 `context_qpos`는 그런 관절의 현재 값을 scratch data에 복사하기 위한 입력이다.
 
-## 사용 위치
+## legacy 사용 위치
 
-`teleop_app.py`의 `_step_physics()`에서 손별 target world pose를 `solve_pose()`에 넘긴다.
+기존 단일 팔 회귀 테스트와 독립적인 알고리즘 실험에서 사용한다. 현재
+`teleop_app.py`의 `_step_physics()`는 아래 호출 대신 `WholeBodyIK.solve()`를 사용한다.
 
 ```python
 q_des, pos_err, ori_err = solver.solve_pose(

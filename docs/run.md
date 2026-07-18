@@ -52,6 +52,7 @@ python3 src/teleop_app.py
 
 ```bash
 for p in 0 1 2 3 4 5 6; do python3 tests/test_phase_$p.py; done
+python3 tests/test_whole_body.py
 ```
 
 자주 쓰는 테스트:
@@ -59,6 +60,7 @@ for p in 0 1 2 3 4 5 6; do python3 tests/test_phase_$p.py; done
 ```bash
 python3 tests/test_phase_5.py  # swerve drive/base
 python3 tests/test_phase_6.py  # Cyclo marker/XYZ/RPY target
+python3 tests/test_whole_body.py  # ROS-free whole-body IK + 물리 이동
 ```
 
 ## 문서 빌드

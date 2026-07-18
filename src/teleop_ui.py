@@ -231,6 +231,10 @@ def _draw_status_panel(app, data):
     imgui.text(f"IK err  L: {_ik_err_text(app, 'l')}   R: {_ik_err_text(app, 'r')}")
     imgui.text(f"Base x={data.qpos[app.base_x_qadr]:+.2f}m y={data.qpos[app.base_y_qadr]:+.2f}m "
                f"yaw={math.degrees(data.qpos[app.base_yaw_qadr]):+.1f}deg")
+    body_cmd = getattr(app, "commanded_base_twist", None)
+    if body_cmd is not None:
+        imgui.text(f"Whole-body IK ON  |  body cmd vx={body_cmd.vx:+.2f} "
+                   f"vy={body_cmd.vy:+.2f} wz={body_cmd.wz:+.2f}")
     imgui.text("Keys: arrows drive/yaw, [/] strafe, Q/E lift, R reset, G contacts, C camera")
     imgui.separator()
 
@@ -238,7 +242,7 @@ def _draw_status_panel(app, data):
 def _draw_ik_pose_controls(app, targets, side):
     pos = targets[f"pos_{side}"]
     rpy = targets[f"rpy_{side}"]
-    imgui.text("Position offset from home (base frame)")
+    imgui.text("Position offset from home (startup/world anchor)")
     _draw_vector_sliders(f"{side}_pos", pos, POS_AXES,
                          HAND_POS_OFFSET_RANGE[0], HAND_POS_OFFSET_RANGE[1], "%.3f m",
                          lambda: _note_manual_pose_edit(app))
@@ -295,7 +299,7 @@ def _draw_lift_utils_panel(app, targets):
     if not _section("Lift / Utilities"):
         return
     _, targets["lift"] = _slider_float_clamped(
-        "Lift", targets["lift"], app.lift_range[0], app.lift_range[1], "%.3f m")
+        "Lift target (whole-body)", targets["lift"], app.lift_range[0], app.lift_range[1], "%.3f m")
     if imgui.button("Reset Can (R)"):
         app.reset_active_object()
     imgui.same_line()

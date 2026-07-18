@@ -1,10 +1,8 @@
 """Phase 4 -- slider teleop app for models/full_scene.xml, single native window.
 
 Reproduces the reference video's interface directly in the same window as the 3D view:
-EE pose target sliders (home-relative X/Y/Z/Roll/Pitch/Yaw) per hand driving the Phase 3 IK
-(src/ik.py) + Phase 3 arm torque control (src/arm_control.py), grasp/thumb sliders per
-hand driving the Phase 2 synergy (src/grasp.py), a joint position monitor, and an HUD
-(ik_err, sim/wall time, loop freq).
+EE pose target sliders (home-relative X/Y/Z/Roll/Pitch/Yaw) drive ROS-free whole-body IK
+(base/lift/both arms), arm torque control, grasp/thumb synergy, a joint monitor, and an HUD.
 
 **Rendering note**: this does NOT use mujoco.viewer.launch_passive, because that owns its
 own window with no hook for drawing custom widgets inside it. Instead it opens one GLFW
@@ -42,19 +40,13 @@ mathematically cannot, for any 3-parameter Euler triple) remove *all* axis coupl
 two sliders far from zero simultaneously and some residual coupling reappears -- but it fixes
 the coupling that was previously present even at the resting/default slider position.
 
-**Mobile base (Phase 5, src/base_teleop.py)**: EE pose sliders are home-relative offsets in
-the base frame, not world-fixed -- every frame the current pos_r/pos_l offset is added to
-that hand's startup base-local home position and then rotated+translated by the base's live
-`(base_x, base_y, base_yaw)` qpos before being handed to IK, so the arm doesn't have to
-fight the base moving/turning under it.
-Driving itself never touches qpos -- arrow keys go through `base_teleop.SwerveDrive`
-(accel/brake smoothing ported from the sibling ffw-sh5-teleoperation repo's reference feel,
-then converted to per-wheel steer angle + drive speed) into the three wheels' real steer/
-drive actuators. Motion is genuinely wheel-friction-driven now (Session 8 후속): the
-base_x/base_y/base_yaw joints are still there so base_link can't tip over, but nothing
-actuates them directly any more -- ground contact under the spinning wheels is what pushes
-base_link along them. Deliberately arrow-keys-only, not WASD -- WASD collides with the
-keybindings a MuJoCo user already expects from other tools.
+**Whole-body + mobile base**: EE targets are home-relative UI values anchored to their
+startup world poses.  `whole_body_ik.py` solves base x/y/yaw, lift and both 7-DOF arms in one
+bounded weighted differential-IK problem.  Its base velocity is converted to a body-frame
+`BodyTwist` and sent through `base_teleop.SwerveDrive`; only real steer/drive actuators are
+commanded, so wheel-ground friction still produces all base motion.  Keyboard body velocity
+has priority while held and uses the exact same swerve path.  No ROS/MoveIt dependency and
+no robot qpos override are introduced.
 
 Run: `python3 src/teleop_app.py`.
 Mouse: left-drag orbit, right-drag pan, scroll zoom (standard MuJoCo camera controls).
@@ -98,6 +90,7 @@ import ik  # noqa: E402
 import teleop_render  # noqa: E402
 import teleop_targets  # noqa: E402
 import teleop_ui  # noqa: E402
+import whole_body_ik  # noqa: E402
 
 # 양팔 관절 이름 목록 (IK solver / 토크 제어기에 그대로 넘겨진다).
 ARM_R = [f"arm_r_joint{i}" for i in range(1, 8)]
@@ -119,44 +112,12 @@ MONITOR_JOINTS = (
 
 WINDOW_W, WINDOW_H = 1440, 900
 LOOP_HZ = 25.0
-# Session 8 (Phase 5 후속): each solve_pose outer iteration costs several mj_forward calls
-# on this full-robot model (~71us each, measured directly) via its backtracking line
-# search. Once an RPY target goes past the reachable orientation workspace from the new
-# (folded-elbow) home pose, position converges but orientation never does, so the loop
-# spends every iteration up to max_iter re-discovering the same non-improving result --
-# measured directly: dragging Pitch from 0 to 90 deg (warm-started frame to frame, as the
-# live UI does) cost ~20ms/frame once stuck past ~63 deg at max_iter=30, vs ~9.6ms at
-# max_iter=15 with *no measurable convergence-quality loss* in the reachable range (checked
-# at 30/45/60/63 deg -- pos/ori error identical to 2 decimal places). Two hands stuck at
-# once could otherwise burn ~40ms alone, the entire frame budget at LOOP_HZ=25.
-IK_MAX_ITER = 15
-# See "IK target rate limiting" note near `smoothed_pos`/`smoothed_rpy` below: caps how far
+# Target rate limiting caps how far the effective goal can move in one render frame.
 # the *effective* IK target can move in one frame, independent of how far the raw slider
 # jumped. 0.02m/frame at LOOP_HZ=25 is 0.5 m/s -- a brisk but trackable teleop speed; 5
 # deg/frame is 125 deg/s, generous but bounded.
-MAX_POS_STEP_PER_FRAME = 0.02
-MAX_RPY_STEP_PER_FRAME_DEG = 5.0
-# Session 8 후속 3 -- rate-limiting the target (above) fixed *literally unreachable* jumps
-# (e.g. a slider yanked to a corner of its range) but not every real case: some in-range
-# position+RPY combinations land solve_pose in a genuine local-minimum/joint-limit lockup
-# where the per-frame error stops shrinking and plateaus tens of cm off target -- measured
-# directly (pos+rpy target home+(0.2,0.15,-0.1)m / (30,20,15)deg plateaus at ~130mm error
-# even at the full IK_MAX_ITER=15, forever, ~11ms/frame/hand the whole time it's held).
-# That's the same cost profile as the fixed corner-case bug, just reached by an ordinary
-# slider drag instead of an extreme one, so rate-limiting alone doesn't catch it. Fix: track
-# each hand's per-frame solve error; once it's stayed above STUCK_POS_TOL for
-# STUCK_FRAMES_THRESHOLD consecutive frames (a real lockup, not a normal multi-frame
-# convergence -- legitimate reachable targets converge under 5mm within 1-2 frames given the
-# warm start, per direct measurement), drop that hand's iteration budget to STUCK_MAX_ITER
-# until it recovers. This changes nothing about *whether* a target converges (a target stuck
-# at max_iter=15 was never going to converge at 15 either -- confirmed the same plateau value
-# is reached either way) or the accuracy of any target that does converge -- convergent
-# tracking always still gets the full IK_MAX_ITER budget every frame. It only stops paying
-# full price to keep re-discovering the same non-improving result once that's already been
-# established.
-STUCK_POS_TOL = 0.03
-STUCK_FRAMES_THRESHOLD = 5
-STUCK_MAX_ITER = 4
+MAX_POS_STEP_PER_FRAME = 0.03
+MAX_RPY_STEP_PER_FRAME_DEG = 8.0
 
 
 def rpy_deg_to_quat(rpy_deg):
@@ -224,11 +185,15 @@ class TeleopApp:
         self.model = model
         self.data = data
 
-        # 손별 IK 솔버 + 팔 토크 제어기 (양팔 각각 독립).
-        self.solver_r = ik.InverseKinematics(model, "grasp_target_r", ARM_R)
-        self.solver_l = ik.InverseKinematics(model, "grasp_target_l", ARM_L)
+        # Whole-body solver + 팔 토크 제어기. 기존 ik.py는 Phase 3/4 독립 회귀에 유지한다.
         self.ctrl_r = arm_control.ArmTorqueController(model, ARM_R)
         self.ctrl_l = arm_control.ArmTorqueController(model, ARM_L)
+        self.whole_body_enabled = True
+        self.whole_body_solver = whole_body_ik.WholeBodyIK(
+            model,
+            {"r": "grasp_target_r", "l": "grasp_target_l"},
+            {"r": ARM_R, "l": ARM_L},
+        )
         # FK(관절각 직접 제어) 모드에서 패널 슬라이더의 최소/최대값으로 쓸, 각 팔
         # 관절의 range를 도(degree) 단위로 미리 계산해둔다.
         self.arm_joint_ranges_deg = {
@@ -240,6 +205,9 @@ class TeleopApp:
         self.base_x_qadr = model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "base_x")]
         self.base_y_qadr = model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "base_y")]
         self.base_yaw_qadr = model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "base_yaw")]
+        self.base_x_dof = model.jnt_dofadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "base_x")]
+        self.base_y_dof = model.jnt_dofadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "base_y")]
+        self.base_yaw_dof = model.jnt_dofadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "base_yaw")]
         # Real per-wheel steer (position) + drive (velocity) actuators -- see
         # src/base_teleop.py's SwerveDrive and the module docstring's "Mobile base" note. Base
         # motion is now a *consequence* of wheel-ground friction, not a direct actuator on
@@ -297,20 +265,18 @@ class TeleopApp:
             "virtual_object_rpy": [0.0, 0.0, 0.0],
             "lift": float(data.qpos[model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "lift_joint")]]),
         }
-        # IK actually chases these smoothed copies, not the raw slider values directly (see
-        # module docstring's "IK target rate limiting" note) -- a slider yanked/typed to a
-        # distant value in one frame otherwise sends solve_pose a target it can't reach within
-        # max_joint_delta's per-iteration step size, burning the full IK_MAX_ITER budget on a
-        # jump that will take several frames to close anyway (measured directly: ~11ms/frame for
-        # a 0.3m single-frame position jump). Capping how far the effective target itself can
-        # move per frame keeps every solve_pose call cheap AND produces smoother motion than a
-        # teleport-style jump.
+        # Whole-body IK chases smoothed copies so a typed/dragged target cannot jump abruptly.
         self.smoothed_pos = {"r": np.array(self.targets["pos_r"]), "l": np.array(self.targets["pos_l"])}
         self.smoothed_rpy = {"r": np.array(self.targets["rpy_r"]), "l": np.array(self.targets["rpy_l"])}
+        self.lift_cmd = self.targets["lift"]
+        self.whole_body_base_twist = base_teleop.BodyTwist()
+        self.commanded_base_twist = base_teleop.BodyTwist()
+        self._manual_override_active = False
+        self._manual_reference_base_pose = np.array([
+            data.qpos[self.base_x_qadr], data.qpos[self.base_y_qadr],
+            data.qpos[self.base_yaw_qadr],
+        ], dtype=float)
         self._sync_ik_mocaps_from_targets()
-        # See STUCK_POS_TOL note above -- counts consecutive frames each hand's solve_pose has
-        # failed to converge, so a genuine lockup can be throttled to STUCK_MAX_ITER.
-        self.stuck_counter = {"r": 0, "l": 0}
         self.contact_viz = False
         self.camera_preset = 0
         self.grab_state = {"r": None, "l": None}
@@ -333,7 +299,7 @@ class TeleopApp:
         """메인 루프에서만 쓰는 상태(IK 웜스타트 값, 타이밍, 입력 헬퍼)."""
         self.q_des_r = HOME_Q_R.copy()
         self.q_des_l = HOME_Q_L.copy()
-        # 손별 제어 모드: "ik"(EE 포즈 슬라이더 -> solve_pose, 기존 동작) 또는
+        # 손별 제어 모드: "ik"(EE 포즈 슬라이더 -> whole-body solver) 또는
         # "fk"(관절각 슬라이더를 그대로 토크 제어기 목표로 사용, IK 자체를 건너뜀).
         # 리프트를 움직이는 동안 IK가 매 프레임에서만 어깨 높이를 다시 읽어들여서
         # 생기는 출렁임(리프트가 프레임 사이에도 계속 움직이는데 IK는 프레임당
@@ -408,37 +374,16 @@ class TeleopApp:
             self.fk_q_deg[side] = [math.degrees(v) for v in q_des]
         else:
             site_id = self.site_r if side == "r" else self.site_l
-            home_quat = self.home_quat_r if side == "r" else self.home_quat_l
-            base_x = self.data.qpos[self.base_x_qadr]
-            base_y = self.data.qpos[self.base_y_qadr]
-            base_yaw = self.data.qpos[self.base_yaw_qadr]
-            cy, sy = math.cos(base_yaw), math.sin(base_yaw)
-
-            # 월드 위치 -> 손별 홈 기준 offset (target_pos_to_world_pos의 역변환).
             world_pos = self.data.site_xpos[site_id]
-            dx, dy = world_pos[0] - base_x, world_pos[1] - base_y
-            local_pos = np.array([cy * dx + sy * dy, -sy * dx + cy * dy, float(world_pos[2])])
-            target_pos = (local_pos - self.home_pos_local[side]).tolist()
-
-            # 월드 방향 -> "홈 포즈 기준 로컬 회전" RPY (quat_r = base_quat * home_quat * rpy_delta
-            # 조립의 역산, _step_physics 참고).
-            base_quat = np.array([math.cos(base_yaw / 2), 0.0, 0.0, math.sin(base_yaw / 2)])
-            base_quat_inv, home_quat_inv = np.zeros(4), np.zeros(4)
-            mujoco.mju_negQuat(base_quat_inv, base_quat)
-            mujoco.mju_negQuat(home_quat_inv, home_quat)
             world_quat = np.zeros(4)
             mujoco.mju_mat2Quat(world_quat, self.data.site_xmat[site_id])
-            tmp = np.zeros(4)
-            mujoco.mju_mulQuat(tmp, base_quat_inv, world_quat)
-            rpy_delta_quat = np.zeros(4)
-            mujoco.mju_mulQuat(rpy_delta_quat, home_quat_inv, tmp)
-            rpy_deg = quat_to_rpy_deg(rpy_delta_quat)
+            target_pos = self._world_to_target_pos(side, world_pos)
+            rpy_deg = self._world_quat_to_target_rpy(side, world_quat)
 
             self.targets[f"pos_{side}"] = target_pos
             self.targets[f"rpy_{side}"] = rpy_deg
             self.smoothed_pos[side] = np.array(target_pos)
             self.smoothed_rpy[side] = np.array(rpy_deg)
-            self.stuck_counter[side] = 0
 
         self.arm_mode[side] = mode
 
@@ -592,22 +537,46 @@ class TeleopApp:
         teleop_ui.draw_panel(self)
 
     def _step_physics(self, drive_keys):
-        """(한글) 여기서부터 실제 물리 반영: 슬라이더 목표값을 rate-limit -> 베이스
-        로컬->월드 변환 -> IK로 관절각 계산 -> 토크 제어기/grasp/바퀴 ctrl 기록 ->
-        mj_step. context_qpos는 IK가 담당하지 않는 다른 관절(리프트 등)을 지금
-        상태로 시드하기 위함(ik.py 참고). 여기 말고는 qpos에 손대는 곳이 없다
-        (캔 리셋의 명시적 예외 제외)."""
+        """실제 물리 반영: target rate-limit -> world-fixed pose -> whole-body solve ->
+        팔 torque/lift position/swerve/grasp actuator ctrl -> ``mj_step``. Solver는 live
+        qpos를 읽기만 하며, robot qpos를 직접 쓰는 kinematic override는 없다."""
         model, data = self.model, self.data
-        ctx_qpos = data.qpos.copy()
 
-        base_x, base_y, base_yaw = (data.qpos[self.base_x_qadr], data.qpos[self.base_y_qadr],
-                                     data.qpos[self.base_yaw_qadr])
-        base_quat = np.array([math.cos(base_yaw / 2), 0.0, 0.0, math.sin(base_yaw / 2)])
+        steering_positions = {
+            w: float(data.qpos[qadr]) for w, qadr in self.wheel_steer_qadrs.items()}
+        wheel_velocities = {
+            w: float(data.qvel[dof]) for w, dof in self.wheel_drive_dofs.items()}
+        base_yaw = float(data.qpos[self.base_yaw_qadr])
         cy, sy = math.cos(base_yaw), math.sin(base_yaw)
-
-        def local_to_world_pos(p_local):
-            x, y, z = p_local
-            return np.array([base_x + cy * x - sy * y, base_y + sy * x + cy * y, z])
+        vx_world = float(data.qvel[self.base_x_dof])
+        vy_world = float(data.qvel[self.base_y_dof])
+        # Use chassis feedback for the manual-to-WBIK stop handover. During active braking,
+        # temporary tire slip makes wheel-only odometry a worse stop detector than the
+        # model's directly observable planar base velocity.
+        measured_body_twist = base_teleop.BodyTwist(
+            cy * vx_world + sy * vy_world,
+            -sy * vx_world + cy * vy_world,
+            float(data.qvel[self.base_yaw_dof]),
+        )
+        manual_twist = self.base_drive.base.update_body(
+            drive_keys, self.frame_dt, measured_body_twist)
+        manual_keys_active = any(drive_keys.values())
+        measured_motion_active = (
+            math.hypot(measured_body_twist.vx, measured_body_twist.vy) > 0.01
+            or abs(measured_body_twist.wz) > 0.02)
+        current_base_pose = np.array([
+            data.qpos[self.base_x_qadr], data.qpos[self.base_y_qadr],
+            data.qpos[self.base_yaw_qadr],
+        ], dtype=float)
+        if manual_keys_active and not self._manual_override_active:
+            # Rising edge: do not mistake any preceding WBIK motion for manual motion.
+            self._manual_reference_base_pose = current_base_pose.copy()
+        carry_manual_targets = manual_keys_active or self._manual_override_active
+        if carry_manual_targets:
+            # Includes the falling edge so the last frame of physical braking is captured.
+            teleop_targets.carry_world_targets_with_base(
+                self, self._manual_reference_base_pose, current_base_pose)
+        self._manual_reference_base_pose = current_base_pose.copy()
 
         if self.cyclo_grasp_captured:
             self.apply_virtual_object_target()
@@ -631,59 +600,64 @@ class TeleopApp:
                                  -MAX_RPY_STEP_PER_FRAME_DEG, MAX_RPY_STEP_PER_FRAME_DEG)
             self.smoothed_rpy[side] = self.smoothed_rpy[side] + delta_rpy
 
-        # EE position targets are home-relative offsets in the base frame (see module
-        # docstring's "Mobile base" note): first add the offset to each hand's startup
-        # base-local home position, then rotate+translate by the base's CURRENT pose so
-        # driving/turning the base carries the target along with it instead of the arm having
-        # to chase a world-fixed point.
-        # RPY sliders are a LOCAL rotation on top of the hand's own home orientation (see
-        # module docstring), not raw world-frame Euler angles -- composing quat_mul(home,
-        # delta) keeps roll/pitch/yaw = 0 at the natural grasp pose and each axis meaning
-        # "rotate about the hand's own current X/Y/Z" near that pose, instead of the
-        # scrambled axes an absolute-Euler encoding gives once home is far from identity.
-        # base_quat is then applied on the left so the whole hand-relative-to-base target
-        # turns together with the base, same reasoning as the position transform above.
-        #
-        # (한글) 이 IK 계산은 arm_mode가 "ik"인 손에만 수행한다 -- "fk"인 손은 관절각
-        # 슬라이더 값을 그대로 목표로 쓰고 IK를 아예 건너뛴다. 관절각으로 직접 고정해
-        # 두면 팔이 리프트(어깨 높이)와 강체로 함께 움직일 뿐이라, 리프트가 프레임 중간
-        # 에도 계속 움직이는데 IK는 프레임당 한 번만 그 순간의 어깨 높이를 반영해서
-        # 생기는 출렁임 자체가 원천적으로 없다.
-        if self.arm_mode["r"] == "ik":
-            quat_r = np.zeros(4)
-            mujoco.mju_mulQuat(quat_r, self.home_quat_r, rpy_deg_to_quat(self.smoothed_rpy["r"]))
-            mujoco.mju_mulQuat(quat_r, base_quat, quat_r)
-            pos_r_world = local_to_world_pos(self._target_pos_to_base_pos("r", self.smoothed_pos["r"]))
-            # See STUCK_POS_TOL note above -- a hand that's been stuck (unconverged) for
-            # several frames in a row gets thrown into a cheap iteration budget instead of
-            # repeatedly paying full price to re-discover the same non-improving result.
-            iter_r = STUCK_MAX_ITER if self.stuck_counter["r"] >= STUCK_FRAMES_THRESHOLD else IK_MAX_ITER
-            self.q_des_r, perr_r, _ = self.solver_r.solve_pose(self.q_des_r, pos_r_world, quat_r,
-                                                                max_iter=iter_r, context_qpos=ctx_qpos)
-            self.stuck_counter["r"] = self.stuck_counter["r"] + 1 if perr_r > STUCK_POS_TOL else 0
-            self.ik_err_mm["r"] = perr_r * 1000.0
-        else:
-            self.q_des_r = np.radians(self.fk_q_deg["r"])
-            self.stuck_counter["r"] = 0
+        # World-anchored targets are essential for whole-body IK: if a target were rebuilt
+        # from the *current* base pose each frame, moving the base would move the goal by the
+        # same amount and could never reduce task error.
+        target_poses = {}
+        for side in ("r", "l"):
+            target_pos = teleop_targets.target_pos_to_world_pos(
+                self, side, self.smoothed_pos[side])
+            target_quat = np.zeros(4)
+            mujoco.mju_mulQuat(
+                target_quat, self.home_quat_world[side],
+                rpy_deg_to_quat(self.smoothed_rpy[side]))
+            target_poses[side] = (target_pos, target_quat)
 
-        if self.arm_mode["l"] == "ik":
-            quat_l = np.zeros(4)
-            mujoco.mju_mulQuat(quat_l, self.home_quat_l, rpy_deg_to_quat(self.smoothed_rpy["l"]))
-            mujoco.mju_mulQuat(quat_l, base_quat, quat_l)
-            pos_l_world = local_to_world_pos(self._target_pos_to_base_pos("l", self.smoothed_pos["l"]))
-            iter_l = STUCK_MAX_ITER if self.stuck_counter["l"] >= STUCK_FRAMES_THRESHOLD else IK_MAX_ITER
-            self.q_des_l, perr_l, _ = self.solver_l.solve_pose(self.q_des_l, pos_l_world, quat_l,
-                                                                max_iter=iter_l, context_qpos=ctx_qpos)
-            self.stuck_counter["l"] = self.stuck_counter["l"] + 1 if perr_l > STUCK_POS_TOL else 0
-            self.ik_err_mm["l"] = perr_l * 1000.0
-        else:
-            self.q_des_l = np.radians(self.fk_q_deg["l"])
-            self.stuck_counter["l"] = 0
+        if carry_manual_targets:
+            # Handover must redefine zero common motion at the new chassis pose; otherwise
+            # startup references make WBIK issue a reverse command that feels like inertia.
+            self.whole_body_solver.rebase(data, target_poses)
 
-        steering_positions = {w: float(data.qpos[qadr]) for w, qadr in self.wheel_steer_qadrs.items()}
-        wheel_velocities = {w: float(data.qvel[dof]) for w, dof in self.wheel_drive_dofs.items()}
-        wheel_cmds = self.base_drive.update(
-            drive_keys, self.frame_dt, base_yaw, steering_positions, wheel_velocities)
+        active_sides = tuple(side for side in ("r", "l") if self.arm_mode[side] == "ik")
+        whole_body_cmd = self.whole_body_solver.solve(
+            data, target_poses, self.frame_dt,
+            active_sides=active_sides,
+            arm_nominal={"r": HOME_Q_R, "l": HOME_Q_L},
+            lift_nominal=self.targets["lift"],
+        )
+        self.whole_body_base_twist = whole_body_cmd.base_twist
+        self.lift_cmd = whole_body_cmd.lift_position
+        for side in ("r", "l"):
+            if side in whole_body_cmd.arm_positions:
+                if side == "r":
+                    self.q_des_r = whole_body_cmd.arm_positions[side]
+                else:
+                    self.q_des_l = whole_body_cmd.arm_positions[side]
+                self.ik_err_mm[side] = whole_body_cmd.position_errors[side] * 1000.0
+            else:
+                if side == "r":
+                    self.q_des_r = np.radians(self.fk_q_deg[side])
+                else:
+                    self.q_des_l = np.radians(self.fk_q_deg[side])
+
+        # Explicit keyboard motion has priority. Release commands zero until chassis feedback
+        # confirms a stop; only then may whole-body IK resume through the same swerve path.
+        if manual_keys_active:
+            self.commanded_base_twist = manual_twist
+        elif self._manual_override_active:
+            self.commanded_base_twist = base_teleop.BodyTwist()
+        else:
+            self.commanded_base_twist = self.whole_body_base_twist
+        previous_manual_override = self._manual_override_active
+        wheel_cmds = self.base_drive.update_twist(
+            self.commanded_base_twist, self.frame_dt,
+            steering_positions, wheel_velocities)
+        self._manual_override_active = bool(
+            manual_keys_active
+            or (previous_manual_override
+                and measured_motion_active))
+        if previous_manual_override and not self._manual_override_active:
+            self.base_drive.base.reset_motion()
 
         # 렌더 프레임 하나(frame_dt)당 물리 스텝을 여러 번(steps_per_frame) 돌린다 --
         # 렌더링은 25Hz면 충분하지만 물리는 훨씬 촘촘한 timestep이 필요하기 때문.
@@ -692,7 +666,7 @@ class TeleopApp:
         for _ in range(self.steps_per_frame):
             self.ctrl_r.apply(data, self.q_des_r)
             self.ctrl_l.apply(data, self.q_des_l)
-            data.ctrl[self.lift_aid] = self.targets["lift"]
+            data.ctrl[self.lift_aid] = self.lift_cmd
             for wheel, (steer_angle, drive_angvel) in wheel_cmds.items():
                 data.ctrl[self.wheel_steer_aids[wheel]] = steer_angle
                 data.ctrl[self.wheel_drive_aids[wheel]] = drive_angvel

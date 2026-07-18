@@ -7,7 +7,7 @@
 
 | 구분 | 내용 |
 |---|---|
-| 초기화 | model/data, IK solver, arm controller, actuator/site/joint id 준비 |
+| 초기화 | model/data, whole-body IK, arm/swerve controller, actuator/site/joint id 준비 |
 | 입력 | 키보드 edge 입력, 주행/리프트 continuous 입력 |
 | 상태 | `app.targets`, arm mode, grab state, Cyclo state |
 | 물리 step | target smoothing, IK solve, actuator command, `mj_step` |
@@ -81,8 +81,8 @@ flowchart TD
     K --> L["teleop_ui.draw_panel()<br>조작 패널을 그리고 target 갱신"]
     L --> M["_step_physics()<br>target을 actuator 명령으로 변환하고 physics 진행"]
     M --> N["teleop_targets.apply_virtual_object_target()<br>Bimanual MoveL 양손 target 갱신"]
-    M --> O["ik.solve_pose()<br>손 목표 pose를 팔 관절각으로 변환"]
-    M --> P["base_teleop.SwerveDrive.update()<br>swerve base 바퀴 명령 생성"]
+    M --> O["whole_body_ik.solve()<br>손 목표 pose를 base/lift/양팔 명령으로 변환"]
+    M --> P["base_teleop.SwerveDrive.update_twist()<br>base body twist를 바퀴 명령으로 변환"]
     M --> Q["arm_control.apply()<br>팔 관절 목표를 torque로 적용"]
     M --> R["grasp.apply_grasp()<br>손가락 synergy를 actuator에 적용"]
     Q --> S["mujoco.mj_step()<br>최종 ctrl로 물리 step 진행"]
@@ -121,15 +121,17 @@ flowchart TD
 
 ## `_step_physics()` 내부 순서
 
-1. 현재 `data.qpos`를 IK `context_qpos`로 복사한다.
-2. Bimanual MoveL capture 상태면 virtual object target을 양손 target으로 적용한다.
-3. grab/release button 상태를 grasp/thumb slider 값으로 ramp한다.
-4. raw target을 `smoothed_pos`, `smoothed_rpy`로 rate-limit한다.
-5. IK 모드인 손은 `ik.solve_pose()`로 `q_des`를 계산한다.
-6. FK 모드인 손은 FK slider 값을 `q_des`로 사용한다.
-7. `base_teleop.SwerveDrive.update()`로 wheel command를 계산한다.
-8. 물리 substep마다 arm torque, lift, wheel, hand command를 `data.ctrl`에 쓴다.
-9. `mujoco.mj_step()`을 호출한다.
+1. Bimanual MoveL capture 상태면 virtual object target을 양손 target으로 적용한다.
+2. grab/release button 상태를 grasp/thumb slider 값으로 ramp한다.
+3. raw target을 `smoothed_pos`, `smoothed_rpy`로 rate-limit한다.
+4. startup anchor 기준 값에서 world-fixed 양손 target pose를 만든다. 수동 베이스
+   주행 중에는 target frame도 측정된 base SE(2) 이동만큼 함께 운반한다.
+5. `whole_body_ik.solve()`가 base x/y/yaw, lift, IK 모드 양팔을 한 문제로 푼다.
+6. FK 모드인 손은 FK slider 값을 사용하고 whole-body arm 변수는 0속도로 고정한다.
+7. 키보드 base 명령이 있으면 우선하고, 없으면 whole-body base twist를 선택한다.
+8. `base_teleop.SwerveDrive.update_twist()`로 wheel command를 계산한다.
+9. 물리 substep마다 arm torque, lift, wheel, hand command를 `data.ctrl`에 쓴다.
+10. `mujoco.mj_step()`을 호출한다.
 
 ## 직접 쓰는 `data`
 
@@ -140,3 +142,6 @@ flowchart TD
 | `_step_physics()` | actuator command 기록과 `mj_step` |
 
 로봇 관절 위치를 live `data.qpos`로 직접 덮어쓰지 않는다.
+
+ROS/MoveIt/Pinocchio/OSQP를 import하지 않는다. 공식 AIWorker/Cyclo에서 참고한 것은
+body-twist 스워브 제어와 weighted differential IK 알고리즘 구조뿐이다.
