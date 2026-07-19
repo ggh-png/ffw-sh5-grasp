@@ -82,6 +82,18 @@ subject to:
 \dot q_{min}\le\dot q\le\dot q_{max}
 \]
 
+```mermaid
+flowchart TD
+    TASKS["soft task rows<br>오른손 · 왼손 pose<br>base hierarchy · damping · home posture"] --> STACK["least-squares 행렬에<br>task row를 세로로 쌓기"]
+    STACK --> BVLS["bounded least squares"]
+    BOUNDS["속도 한계 · joint-limit CBF<br>FK/OFF hard pin"] --> BVLS
+    BVLS --> QDOT["18-DOF q_dot"]
+```
+
+그림에서 세로로 쌓인 각 row는 “이 요구를 얼마나 잘 맞출 것인가”를 뜻한다. 반면
+아래쪽 bound는 절충 대상이 아니라 해가 반드시 머물러야 하는 범위다. 그래서
+Whole-body OFF와 FK 팔은 작은 weight가 아니라 lower=upper=0으로 고정한다.
+
 관절 위치 한계는 Cyclo와 같은 control-barrier velocity bound를 box에 교차한다.
 
 \[

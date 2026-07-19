@@ -77,8 +77,14 @@ flowchart LR
 \nabla d = n^T(J_B-J_A)
 \]
 
+<figure markdown>
+  ![두 geometry의 최근접점과 법선, 점 속도로부터 거리 변화율을 계산하는 관계](../assets/collision-distance-gradient.svg)
+  <figcaption>두 최근접점의 상대 속도 중 법선 방향 성분만 distance 변화에 기여한다.</figcaption>
+</figure>
+
 이 값은 “제어 속도 `qdot`이 현재 거리를 얼마나 빠르게 바꾸는가”를 뜻한다.
-`whole_body_ik.py`는 이를 collision CBF의 한 행으로 사용한다.
+그림의 \(\dot d>0\)은 분리, \(\dot d<0\)은 접근을 의미한다. `whole_body_ik.py`는
+이 gradient를 collision CBF의 한 행으로 사용한다.
 
 ### 특수 거리 mode
 

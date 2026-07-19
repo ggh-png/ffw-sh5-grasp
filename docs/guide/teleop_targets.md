@@ -31,6 +31,14 @@ startup-anchor 위치 \((x,y,z)\) → world 위치, 앱 시작 시 캡처한 베
 \begin{pmatrix} x\\y\\z \end{pmatrix}
 \]
 
+<figure markdown>
+  ![World, startup anchor, 이동한 live base와 world-fixed 손 target의 관계](../assets/target-frames.svg)
+  <figcaption>Whole-body ON에서는 local offset을 startup anchor로 변환해 world target을 만든다. 이후 live base가 움직여도 target은 따라 움직이지 않는다.</figcaption>
+</figure>
+
+그림의 파란 벡터가 회전된 local offset이다. 평행이동은 anchor 원점을 옮기고,
+회전행렬은 local 축을 world 축으로 돌린다. 두 연산을 더한 끝점이 최종 target이다.
+
 손 target의 world quaternion(`target_world_quat`)은 세 쿼터니언의 곱:
 
 \[

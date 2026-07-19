@@ -37,6 +37,14 @@ s_i = \sqrt{v_{i,x}^2+v_{i,y}^2}, \quad
 \dot\phi_i = s_i / r
 \]
 
+<figure markdown>
+  ![차체 병진 속도와 회전 접선 속도를 합쳐 스워브 모듈 속도를 만드는 기하](../assets/swerve-velocity.svg)
+  <figcaption>빨강은 모든 모듈에 같은 병진 속도, 주황은 모듈 위치에 따른 회전 접선 속도, 초록은 두 벡터를 더한 최종 모듈 속도다.</figcaption>
+</figure>
+
+그림에서 초록 벡터의 방향이 조향각이고 길이가 바퀴의 선속도다. 같은 차체 회전
+명령이라도 중심에서의 위치 \(r_i\)가 다르므로 모듈마다 주황 벡터가 달라진다.
+
 이 극좌표 변환이 필요한 이유는 스워브 모듈이 "방향(조향각) + 그 방향으로의
 속력(구동)"이라는 두 액추에이터로만 이 속도 벡터를 낼 수 있기 때문이다 —
 180도 반전 최적화, 정렬 게이팅, 반전 시퀀스(FSM)의 물리적 근거까지 포함한 전체
@@ -108,7 +116,7 @@ flowchart TD
     H --> I["_limit_steering_rate()<br>조향 모터 회전 속도 제한"]
     I --> J["alignment gating<br>조향 정렬 전 과한 구동 억제"]
     J --> L["{wheel: steer_angle, drive_angvel}<br>바퀴별 최종 명령 반환"]
-    L --> M["teleop_app writes data.ctrl<br>반환 명령을 actuator에 기록"]
+    L --> M["teleop_app._step_actuators<br>반환 명령을 data.ctrl에 기록"]
 ```
 
 ## 출력 형식

@@ -17,6 +17,22 @@
 \tau = h(q, \dot q) + K_p\,(q_{des} - q) - K_d\,\dot q
 \]
 
+```mermaid
+flowchart TD
+    QD["목표각 q_des"] --> ERR["위치 오차<br>q_des - q"]
+    Q["현재각 q"] --> ERR
+    ERR --> KP["Kp × error<br>목표로 당기는 토크"]
+    QV["현재속도 q_dot"] --> KD["-Kd × q_dot<br>진동을 줄이는 토크"]
+    BIAS["qfrc_bias<br>중력·코리올리 보상"] --> SUM["토크 합산"]
+    KP --> SUM
+    KD --> SUM
+    SUM --> LIMIT["actuator ctrlrange clamp"]
+    LIMIT --> TAU["최종 torque τ"]
+```
+
+`Kp` 경로는 목표로 끌어당기고, `Kd` 경로는 움직임을 감쇠하며, bias 경로는 로봇을
+현재 자세에 그대로 두어도 필요한 토크를 미리 보탠다.
+
 \(h(q,\dot q)\)는 MuJoCo가 매 스텝 계산해주는 `qfrc_bias`(중력+코리올리+원심력을
 정확히 상쇄하는 feedforward 항 — 코리올리/원심력은 관절 속도들의 곱에 비례하는
 힘이라 관절이 멈추면 0이 된다), \(K_p\)/\(K_d\)는 스칼라 게인(`kp=600.0`,
@@ -44,7 +60,7 @@ clamp한 뒤 `data.ctrl`에 쓴다.
 
 ```mermaid
 flowchart TD
-    A["teleop_app._step_physics<br>IK 결과를 실제 팔 토크로 변환"] --> B["ArmTorqueController.apply(data, q_des)<br>목표 관절각을 actuator torque로 계산"]
+    A["teleop_app._step_actuators<br>물리 substep마다 팔 명령 적용"] --> B["ArmTorqueController.apply(data, q_des)<br>목표 관절각을 actuator torque로 계산"]
     B --> C["read q from data.qpos<br>현재 관절 위치 읽기"]
     B --> D["read qd from data.qvel<br>현재 관절 속도 읽기"]
     B --> E["read qfrc_bias<br>중력/관성 bias 보상값 읽기"]
@@ -58,7 +74,8 @@ flowchart TD
 
 ## 사용 위치
 
-`teleop_app.py`의 `_step_physics()`에서 양팔에 대해 매 물리 substep 호출된다.
+`teleop_app.py`의 `_step_physics()`가 계산한 목표를 `_step_actuators()`가 양팔에 대해
+매 물리 substep 적용한다.
 
 ```python
 self.ctrl_r.apply(data, self.q_des_r)
