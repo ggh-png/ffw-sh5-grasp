@@ -81,30 +81,31 @@ extra_javascript:
 
 nav:
     - 홈: index.md
-    - 시작하기:
-        - 10분 빠른 시작: getting-started.md
-        - 조작과 UI: run.md
-        - 제어 모드 선택: control-modes.md
+    - 처음 사용하기:
+        - 빠른 시작: getting-started.md
+        - 화면과 조작: run.md
+        - 모드 선택: control-modes.md
         - 문제 해결: troubleshooting.md
-    - 이해하기:
-        - 핵심 개념: concepts.md
-        - 프로젝트 구조: overview.md
-        - 전신 IK와 충돌 회피: guide/whole_body_ik.md
-        - 모바일 스워브 제어: guide/base_teleop.md
+    - 시스템 이해:
+        - 동작 원리: concepts.md
+        - 아키텍처와 데이터 흐름: overview.md
         - 테스트와 검증: testing.md
-    - ROS2 개발자 심화 튜토리얼: guide/ros2-guide.md
-    - 코드 가이드:
-        - guide/index.md
-        - MuJoCo 최소 개념 사전: guide/00-basics.md
-        - src/grasp.py: guide/grasp.md
-        - src/ik.py: guide/ik.md
-        - src/arm_control.py: guide/arm_control.md
-        - src/base_teleop.py: guide/base_teleop.md
-        - src/whole_body_ik.py: guide/whole_body_ik.md
-        - src/teleop_app.py: guide/teleop_app.md
-        - src/teleop_targets.py: guide/teleop_targets.md
-        - src/teleop_ui.py: guide/teleop_ui.md
-        - src/teleop_render.py: guide/teleop_render.md
-        - 체크리스트: guide/pitfalls.md
+    - 개발자 가이드:
+        - 코드 읽기 시작: guide/index.md
+        - MuJoCo 기본 용어: guide/00-basics.md
+        - 핵심 알고리즘:
+            - 기구학과 충돌 거리: guide/kinematics.md
+            - 전신 IK와 충돌 회피: guide/whole_body_ik.md
+            - 모바일 스워브 제어: guide/base_teleop.md
+            - 단일 팔 IK: guide/ik.md
+            - 팔 토크 제어: guide/arm_control.md
+            - 손 파지와 접촉 판정: guide/grasp.md
+        - 애플리케이션 계층:
+            - 앱 조립과 물리 루프: guide/teleop_app.md
+            - 목표와 좌표 변환: guide/teleop_targets.md
+            - UI 패널: guide/teleop_ui.md
+            - 렌더링과 Gizmo: guide/teleop_render.md
+        - 개발 체크리스트: guide/pitfalls.md
         - API 치트시트: guide/cheatsheet.md
+    - ROS2 개발자용 대응표: guide/ros2-guide.md
     - 릴리스 기록: releases.md

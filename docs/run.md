@@ -1,4 +1,4 @@
-# 조작과 UI
+# 화면과 조작
 
 앱을 설치하고 처음 실행하는 단계는 [10분 빠른 시작](getting-started.md)에 있다. 이
 문서는 실행 중 어떤 입력이 어떤 상태를 바꾸는지 찾아보는 운영 매뉴얼이다.
@@ -69,7 +69,7 @@
 | MoveL | 오른손/왼손을 독립적으로 선택하고 이동 |
 | Bimanual MoveL | Capture 뒤 virtual object를 움직여 양손을 함께 이동 |
 
-모드 조합의 전체 의미는 [제어 모드 선택](control-modes.md)에 있다.
+모드 조합의 전체 의미는 [모드 선택](control-modes.md)에 있다.
 
 `Move time` slider는 현재 Cyclo UI 호환 상태값만 보관하며 trajectory duration을
 재계산하지 않는다. 실제 목표 응답 속도는 frame target rate limit과 controller gain이
@@ -117,7 +117,7 @@ marker에서 translation 화살표 또는 rotation ring을 drag한다. gizmo는 
 오른손과 왼손 각각:
 
 - `Grab`/`Release`: grasp와 thumb target을 시간에 따라 ramp
-- grasp slider: 네 손가락 flexion synergy
+- grasp slider: 검지/중지의 주 파지 curl과 약지/새끼의 작은 cosmetic curl
 - thumb slider: 엄지 preshape/flexion synergy
 
 캔은 손에 강제로 붙지 않는다. finger-can contact force가 임계값을 만족하고 실제

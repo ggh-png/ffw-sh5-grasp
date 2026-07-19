@@ -21,6 +21,10 @@
 solver는 live `data.qpos`를 쓰지 않는다. MuJoCo Jacobian과 현재 pose를 읽어 다음
 명령만 반환한다.
 
+site pose, world-aligned Jacobian, signed-distance gradient가 만들어지는 과정은
+[기구학과 충돌 거리](kinematics.md)에 분리해 설명한다. 이 문서는 그 결과를 어떻게
+전신 task와 safety constraint로 조립하는지에 집중한다.
+
 ## Whole-body ON/OFF
 
 UI의 **Whole-body Control** 버튼은 같은 solver를 두 참여 범위로 실행한다.
