@@ -1,21 +1,8 @@
-"""Phase 3 -- 6DOF damped least-squares (DLS) IK for the right arm.
+"""Damped least-squares inverse kinematics for a MuJoCo site.
 
-Targets a MuJoCo *site* (`grasp_target`, defined on hx5_r_base in models/arm_hand.xml at
-the exact palm-relative offset validated in Phase 1/2) rather than a body origin, so
-`mj_jacSite` gives the position+rotation Jacobian of that offset point directly -- no manual
-offset correction needed the way a raw `mj_jacBody` would require.
-
-Developed in two stages:
-  1. `solve_position` -- position-only, 3DOF, verify convergence first.
-  2. `solve_pose` -- adds orientation on top of the same DLS core.
-
-**Kinematic override boundary**: this solver never touches the live simulation's `data`. It
-iterates on its own scratch `mujoco.MjData` (kinematics only -- `mj_forward`, no contacts,
-no dynamics), seeded from a starting joint configuration, and returns the solved joint
-angles as a plain array. The caller is responsible for feeding that array into
-`data.ctrl[...]` (position actuator targets) on the real simulation, never `data.qpos[...]`
--- the actual arm motion is then produced by the physics-driven position actuators, exactly
-like every other actuated joint in this project.
+The solver evaluates position and orientation in a private scratch ``MjData`` and returns
+joint targets.  It never mutates live simulation state; callers apply the result through
+the robot's actuators.
 """
 
 import mujoco
@@ -31,13 +18,7 @@ ORI_TOL = 1e-3
 
 
 class InverseKinematics:
-    """6DOF 역기구학(IK) 솔버 -- 목표 site 위치/자세를 만족하는 관절각을 구한다.
-
-    실시간 시뮬레이션(data)에는 전혀 손대지 않고, 오직 자기 소유의 scratch MjData
-    안에서만 mj_forward를 반복 호출해 기구학을 계산한다(아래 self._scratch). 결과로
-    나온 관절각은 호출부가 액추에이터 목표값(ctrl)으로 넘겨야 하고, qpos를 직접
-    쓰는 일은 없다 -- "kinematic override 금지" 규칙이 IK 안에서도 그대로 지켜진다.
-    """
+    """Find joint angles that satisfy a target site position or pose."""
 
     def __init__(self, model, site_name, joint_names, damping=DEFAULT_DAMPING,
                  max_joint_delta=DEFAULT_MAX_JOINT_DELTA):
@@ -72,14 +53,9 @@ class InverseKinematics:
         self.kinematics.update(q, context_qpos)
         return self._scratch
 
-    def _read_q(self, scratch):
-        """이 솔버가 담당하는 관절들의 현재 각도만 뽑아 배열로 반환."""
-        return np.array([scratch.qpos[a] for a in self.qpos_adrs])
-
     def _write_q(self, scratch, q):
         """관절각 배열을 scratch의 해당 qpos 슬롯에 써넣는다(역시 scratch에만 씀)."""
-        for qadr, val in zip(self.qpos_adrs, q):
-            scratch.qpos[qadr] = val
+        scratch.qpos[self.qpos_adrs] = q
 
     def _clamp_to_limits(self, q):
         """관절 range를 벗어나지 않도록 클램프 -- 매 반복(iteration)마다 호출된다."""
@@ -177,15 +153,16 @@ class InverseKinematics:
                 break
 
             jacp, jacr = self._jac(scratch)
-            JJt_inv = np.linalg.inv(jacp @ jacp.T + lam2 * np.eye(3))
+            position_system = jacp @ jacp.T + lam2 * np.eye(3)
 
             # 1) 위치 오차를 DLS로 우선 풀고
-            dq_pos = jacp.T @ (JJt_inv @ pos_err)
+            dq_pos = jacp.T @ np.linalg.solve(position_system, pos_err)
             # 2) 방향 보정은 위치 Jacobian의 영공간(null space)에 투영 -- 위치에
             #    영향을 주지 않는 성분만 반영해서, 방향을 맞추려다 위치가 흔들리는
             #    문제를 없앤다(계층형/task-priority IK).
             g_ori = jacr.T @ ori_err
-            dq_ori = g_ori - jacp.T @ (JJt_inv @ (jacp @ g_ori))
+            projected_gradient = np.linalg.solve(position_system, jacp @ g_ori)
+            dq_ori = g_ori - jacp.T @ projected_gradient
             dq_full = np.clip(dq_pos + dq_ori, -self.max_joint_delta, self.max_joint_delta)
 
             # 3) backtracking line search: 전체 스텝을 그대로 쓰지 않고, 실제로
@@ -229,7 +206,10 @@ class InverseKinematics:
         # 이후는 관절 range 안에서 무작위로 뽑은 후보들 -- 국소해/lockup에 빠졌을 때
         # 다른 자세에서 다시 시도해볼 기회를 준다.
         candidates = [np.array(q_init, dtype=float)]
-        candidates += [rng.uniform(self.joint_ranges[:, 0], self.joint_ranges[:, 1]) for _ in range(n_restarts)]
+        candidates.extend(
+            rng.uniform(self.joint_ranges[:, 0], self.joint_ranges[:, 1])
+            for _ in range(n_restarts)
+        )
         for q0 in candidates:
             q, pe, oe = self.solve_pose(q0, target_pos, target_quat, max_iter=max_iter,
                                         context_qpos=context_qpos)

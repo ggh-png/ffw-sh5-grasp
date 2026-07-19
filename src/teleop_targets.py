@@ -15,6 +15,24 @@ import math
 import mujoco
 import numpy as np
 
+SIDES = ("r", "l")
+
+
+def _multiply_quaternions(*quaternions):
+    """Multiply MuJoCo-format quaternions from left to right."""
+    result = np.array([1.0, 0.0, 0.0, 0.0])
+    for quaternion in quaternions:
+        product = np.zeros(4)
+        mujoco.mju_mulQuat(product, result, quaternion)
+        result = product
+    return result
+
+
+def _inverse_quaternion(quaternion):
+    result = np.zeros(4)
+    mujoco.mju_negQuat(result, quaternion)
+    return result
+
 
 def rpy_deg_to_quat(rpy_deg):
     r, p, y = (math.radians(v) for v in rpy_deg)
@@ -38,10 +56,11 @@ def quat_to_rpy_deg(q):
 
 
 def set_home_references(app):
-    app.home_quat_r = np.zeros(4)
-    mujoco.mju_mat2Quat(app.home_quat_r, app.data.site_xmat[app.site_r])
-    app.home_quat_l = np.zeros(4)
-    mujoco.mju_mat2Quat(app.home_quat_l, app.data.site_xmat[app.site_l])
+    for side in SIDES:
+        quaternion = np.zeros(4)
+        site_id = getattr(app, f"site_{side}")
+        mujoco.mju_mat2Quat(quaternion, app.data.site_xmat[site_id])
+        setattr(app, f"home_quat_{side}", quaternion)
     app.home_pos_local = {
         "r": world_to_base_pos(app, app.data.site_xpos[app.site_r]),
         "l": world_to_base_pos(app, app.data.site_xpos[app.site_l]),
@@ -91,11 +110,11 @@ def carry_world_targets_with_base(app, previous_base_pose, current_base_pose):
     anchor_quat = np.zeros(4)
     mujoco.mju_mulQuat(anchor_quat, delta_quat, app.target_anchor_quat)
     app.target_anchor_quat = anchor_quat
-    for side in ("r", "l"):
+    for side in SIDES:
         app.home_pos_world[side] = transform_position(app.home_pos_world[side])
-        carried_quat = np.zeros(4)
-        mujoco.mju_mulQuat(carried_quat, delta_quat, app.home_quat_world[side])
-        app.home_quat_world[side] = carried_quat
+        app.home_quat_world[side] = _multiply_quaternions(
+            delta_quat, app.home_quat_world[side]
+        )
 
 
 def base_pose(app):
@@ -165,17 +184,12 @@ def world_to_target_pos(app, side, world_pos):
 
 def target_rpy_to_world_quat(app, side, rpy_deg):
     """Convert a hand's home-relative RPY value using the active target frame."""
+    delta_quat = rpy_deg_to_quat(rpy_deg)
     if getattr(app, "whole_body_enabled", False):
-        quat = np.zeros(4)
-        mujoco.mju_mulQuat(
-            quat, app.home_quat_world[side], rpy_deg_to_quat(rpy_deg))
-        return quat
+        return _multiply_quaternions(app.home_quat_world[side], delta_quat)
     *_unused, base_quat = base_pose(app)
-    home_quat = app.home_quat_r if side == "r" else app.home_quat_l
-    quat = np.zeros(4)
-    mujoco.mju_mulQuat(quat, home_quat, rpy_deg_to_quat(rpy_deg))
-    mujoco.mju_mulQuat(quat, base_quat, quat)
-    return quat
+    home_quat = getattr(app, f"home_quat_{side}")
+    return _multiply_quaternions(base_quat, home_quat, delta_quat)
 
 
 def target_world_quat(app, side):
@@ -184,20 +198,17 @@ def target_world_quat(app, side):
 
 def world_quat_to_target_rpy(app, side, world_quat):
     if getattr(app, "whole_body_enabled", False):
-        home_quat_inv = np.zeros(4)
-        mujoco.mju_negQuat(home_quat_inv, app.home_quat_world[side])
-        delta = np.zeros(4)
-        mujoco.mju_mulQuat(delta, home_quat_inv, world_quat)
+        delta = _multiply_quaternions(
+            _inverse_quaternion(app.home_quat_world[side]), world_quat
+        )
         return quat_to_rpy_deg(delta)
-    home_quat = app.home_quat_r if side == "r" else app.home_quat_l
+    home_quat = getattr(app, f"home_quat_{side}")
     *_unused, base_quat = base_pose(app)
-    base_quat_inv, home_quat_inv = np.zeros(4), np.zeros(4)
-    mujoco.mju_negQuat(base_quat_inv, base_quat)
-    mujoco.mju_negQuat(home_quat_inv, home_quat)
-    tmp = np.zeros(4)
-    mujoco.mju_mulQuat(tmp, base_quat_inv, world_quat)
-    rpy_delta_quat = np.zeros(4)
-    mujoco.mju_mulQuat(rpy_delta_quat, home_quat_inv, tmp)
+    rpy_delta_quat = _multiply_quaternions(
+        _inverse_quaternion(home_quat),
+        _inverse_quaternion(base_quat),
+        world_quat,
+    )
     return quat_to_rpy_deg(rpy_delta_quat)
 
 
@@ -206,10 +217,9 @@ def world_quat_to_virtual_rpy(app, world_quat):
         base_quat = app.target_anchor_quat
     else:
         *_unused, base_quat = base_pose(app)
-    base_quat_inv = np.zeros(4)
-    mujoco.mju_negQuat(base_quat_inv, base_quat)
-    rpy_delta_quat = np.zeros(4)
-    mujoco.mju_mulQuat(rpy_delta_quat, base_quat_inv, world_quat)
+    rpy_delta_quat = _multiply_quaternions(
+        _inverse_quaternion(base_quat), world_quat
+    )
     return quat_to_rpy_deg(rpy_delta_quat)
 
 
@@ -221,7 +231,7 @@ def quat_to_mat(quat):
 
 def mat_to_quat(mat):
     quat = np.zeros(4)
-    mujoco.mju_mat2Quat(quat, mat.reshape(9))
+    mujoco.mju_mat2Quat(quat, np.asarray(mat).reshape(9))
     return quat
 
 
@@ -236,8 +246,9 @@ def virtual_object_world_pose(app):
     else:
         pos = local_to_world_pos(app, app.targets["virtual_object_pos"])
         *_unused, base_quat = base_pose(app)
-    quat = np.zeros(4)
-    mujoco.mju_mulQuat(quat, base_quat, rpy_deg_to_quat(app.targets["virtual_object_rpy"]))
+    quat = _multiply_quaternions(
+        base_quat, rpy_deg_to_quat(app.targets["virtual_object_rpy"])
+    )
     return pos, quat
 
 
@@ -258,7 +269,7 @@ def capture_grasp(app):
     obj_pos, obj_quat = virtual_object_world_pose(app)
     obj_R = quat_to_mat(obj_quat)
     offsets = {}
-    for side in ("r", "l"):
+    for side in SIDES:
         hand_pos, hand_quat = target_world_pose(app, side)
         offsets[side] = {
             "pos": obj_R.T @ (hand_pos - obj_pos),

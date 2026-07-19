@@ -1,94 +1,20 @@
-"""Phase 2 -- grasp synergy mapping + contact-based grasp verification.
-Phase 4 -- generalized to either hand via a `side` ('l'/'r') parameter; default stays 'r'
-so every Phase 1-3 call site (single-hand models, right hand only) is unchanged.
+"""Hand-synergy commands and contact-force grasp detection.
 
-Two independent scalars, matching the reference video's "Right grasp / Right thumb"
-sliders:
-  - `grasp` (0..1): index + middle finger curl (pip/dip/tip).
-  - `thumb` (0..1): thumb curl (mcp_pitch, ip) *and* (this session) thumb MCP-yaw, ramped
-    from a safe rest angle to a wider "folds toward the palm" angle -- see
-    THUMB_YAW_REST/THUMB_YAW_CURL below for why yaw is no longer a flat constant. Thumb
-    CMC (abduction) is still a genuinely fixed pre-shape, independent of either scalar --
-    found by FK sweep in Phase 2 so the thumb opposes the index/middle
-    convergence zone around the can.
+``grasp`` curls the index and middle fingers, while ``thumb`` controls thumb curl and
+yaw.  Ring and pinky joints receive only a small cosmetic curl.  Both hands share this
+mapping, with explicit interpolation direction for the mirrored left-thumb ranges.
 
-Ring and pinky mcp (spread) stay locked at range=0 (3-point grasp fallback), so this
-module never actively grasps with them. Their pip/dip/tip *do* get a
-small cosmetic curl here (Session 8 후속 4), scaled by the same `grasp` scalar as index/
-middle but capped at RING_PINKY_MAX_FRAC (0.35, not 1.0) of their own range -- purely so the
-hand doesn't look like two fingers are frozen open while the other three visibly close.
-0.35 is not an arbitrary cosmetic choice: it's the exact ceiling found by sweeping this
-fraction against tests/test_phase_4.py's pick success --
-20-40% all held 10/10, 45%+ dropped to 0/10 (ring/pinky start interfering with the real
-3-point grasp past that point). Scaling by `grasp` (0 at rest, 0.35 at grasp=1.0) rather than
-holding 0.35 as a flat constant regardless of `grasp` was a deliberate change from the
-previous session's approach: a *constant* curl meant ring/pinky started the session already
-curled even at grasp=0/rest, which looked wrong and differed from every other digit's
-fully-extended rest pose.
-
-Both scalars map to a *sub-range* of each joint's travel, not [lo, hi]: starting fully
-extended left ~10cm of empty travel before any contact, which meant the freely-falling can
-(hand_only has no table) dropped out of reach before the gentle force-limited actuators
-could close far enough to catch it. OPEN_FRAC is tuned (empirically, via fingertip-to-can
-gap) so `grasp=0`/`thumb=0` sits ~20mm short of the can surface -- see models/hand_only.xml's
-"pregrasp" keyframe, which encodes this exact pose.
-
-Widened from an initial ~2mm margin once Phase 3 started chaining IK + a real (imperfect)
-arm servo in front of it: the arm settles with a real but small (~15-20mm) residual site
-error (a torque/kinematics limitation of the specific reach configuration, not a bug), and
-a razor-thin capture margin that only worked with millimeter-perfect hand placement just
-knocked the can away instead of wrapping around it.
-The wider start still closes fully within Phase 2's own ramp+settle timing, so this doesn't
-regress Phase 2's fixed-hand grasp (still 10/10).
-
-Left-hand thumb pre-shape (Phase 4, models/full_scene.xml): mirrored from the right's
-FK-sweep result, not independently re-swept -- thumb_l_cmc's range is symmetric with
-thumb_r_cmc's so the CMC value carries over unchanged (now -0.131, see below), but
-thumb_l_mcp_yaw's range is the mirror image of thumb_r_mcp_yaw's ([0, pi] vs [-pi, 0]) so
-THUMB_YAW_REST/THUMB_YAW_CURL negate the right hand's values for "l". The left hand has
-no can of its own in this project (single shared can, right-hand regression only) so
-this mirror hasn't been independently validated against real
-contact-force grasp success the way the right hand's has -- it's provided for teleop
-completeness, not claimed to be as thoroughly tuned.
-
-Thumb pre-shape was revisited twice this session after visual inspection showed the thumb
-folding out to the side rather than toward the palm at thumb=1.0. First pass: CMC
-abduction negated (0.131 -> -0.131 rad -- confirmed by direct render comparison to barely
-affect the overall thumb direction, since CMC only adjusts spread, not which way the thumb
-faces) and MCP yaw -- the joint that actually sets which way the thumb's curl plane faces --
-moved from a flat -1.309 rad first to -1.5708 (the midpoint of thumb_r_mcp_yaw's [-pi, 0]
-range, found by rendering a sweep across the full range at grasp=0/thumb=1 and picking the
-point where the curled thumb visibly swings in to meet the index/middle convergence zone),
-then nudged further to -2.0326 rad once that direction was confirmed to look right. That
-landed as a flat constant in THUMB_PRESHAPE, same as CMC -- and every fixed constant in
-THUMB_PRESHAPE is applied on *every* apply_grasp call regardless of `thumb`'s value,
-including during a pregrasp approach where `thumb=0`.
-
-That turned out to be a real bug, not just a style choice: tests/test_phase_4.py's
-integration pick success dropped from ~80-90% to 20% because the wider MCP-yaw angle is
-now wide enough that the thumb physically clips the can while the arm swings from its
-folded home pose to the pregrasp hover position -- confirmed by instrumenting a single
-pick trial (contact registers on the thumb ~47% through that swing, can drifts up to
-85mm by the time the arm arrives at pregrasp; reverting just this one joint back to
--1.309 for that same swing drops the drift back to a normal ~4.5mm). hand_only.xml's own
-tests never move the arm at all, so they couldn't have caught this.
-
-Fix: MCP yaw is no longer a flat constant. THUMB_YAW_REST is the original, collision-safe
-angle (identical to the value used for years before this session); THUMB_YAW_CURL is the
-wide angle confirmed to look right at thumb=1. apply_grasp ramps linearly between them by
-the `thumb` scalar itself, the same one that already drives the curl joints -- so the
-angle stays safe while `thumb=0` (i.e. while the arm is still approaching, in every call
-site in this codebase), and only swings out to the wide angle once the caller actually
-starts closing the thumb, by which point the arm has already stopped moving next to the
-can. Re-verified tests/test_phase_2.py (10/10, unchanged -- hand_only never moves the arm
-so it was never exposed to begin with) and tests/test_phase_4.py (back to 9/10, matching
-the pre-regression baseline).
+The tuned open fractions keep the fingers near the object without starting in contact.
+The thumb yaw remains collision-safe during approach and rotates toward the palm only as
+the thumb closes.  Grasp detection uses MuJoCo contact forces rather than object pose.
 """
 
 import mujoco
 import numpy as np
 
 import mj_util
+
+SIDES = ("l", "r")
 
 # 검지/중지 각 손가락의 pip/dip/tip 관절 이름 (좌/우 손 각각). grasp 스칼라 하나가
 # 이 여섯 관절 전부의 목표 각도로 동시에 퍼진다.
@@ -107,22 +33,8 @@ THUMB_CURL_JOINTS = {
     "l": ("finger_l_joint3", "finger_l_joint4"),
     "r": ("finger_r_joint3", "finger_r_joint4"),
 }
-# Session 8 후속 6 -- unlike FINGER_CURL_JOINTS (index/middle curl the same physical
-# direction on both hands, so both hands' ranges start at 0 = extended), the thumb's
-# mcp_pitch/ip joints are mirrored: finger_r_joint3/4's range is [0, 1.5708] (lo=extended,
-# hi=curled) but finger_l_joint3/4's is the geometric mirror [-1.5708, 0] (so *hi*=extended,
-# lo=curled -- the sign convention flips, it isn't just relabeled). apply_grasp used to
-# always take `lo` as the open end regardless of side, which for the left hand commanded
-# the thumb toward its curled extreme even at thumb=0 -- self-colliding finger_l_link3/4
-# into the palm (measured ~40N contact, actuator pinned at its force limit, ~26 deg short of
-# target) instead of reaching a clean, contact-free extended pose the way the right hand
-# does. This also silently inverted the left thumb's curl *direction* (thumb=1 commanded it
-# toward 0 = MORE extended, not more curled) -- a real behavioral bug, not just a rest-pose
-# cosmetic one, though never exercised since the left hand's grasp has no can of its own to
-# test against (see module docstring).
-# 손별 보간 방향 플래그: 오른손은 range의 lo가 "편 상태", 왼손은 range 자체가
-# 부호까지 미러링돼 있어 hi가 "편 상태"다 -- 이걸 안 나누면 왼손 엄지가 항상
-# 반대 방향(펴야 할 때 굽힘)으로 명령을 받는다.
+# Right-thumb ranges open at their lower bound; mirrored left-thumb ranges open at their
+# upper bound.  Keep the interpolation direction explicit instead of relying on signs.
 THUMB_CURL_OPEN_AT_HI = {"l": True, "r": False}
 # 약지/새끼의 pip/dip/tip (mcp는 range=0으로 잠겨 있어 여기 없음) -- 실제 grasp에는
 # 참여하지 않고, grasp 스칼라에 비례해 보기 좋으라고만 살짝 굽힌다(아래 apply_grasp
@@ -141,17 +53,8 @@ THUMB_PRESHAPE = {
     "l": {"finger_l_joint1": -0.131},  # CMC abduction (symmetric range, same value as right)
     "r": {"finger_r_joint1": -0.131},  # CMC abduction
 }
-# MCP yaw(엄지가 어느 방향을 "바라보는지")는 한때 THUMB_PRESHAPE 안에서 완전히
-# 고정값이었다 -- 그런데 그 고정값을 -1.309 -> -2.0326으로 넓혀 thumb=1일 때
-# 손바닥 쪽으로 보기 좋게 접히도록 만들었더니, 이 값이 "고정"이라 grasp/thumb=0인
-# 접근(pregrasp) 단계에서도 그대로 적용돼 팔이 홈 자세에서 캔 쪽으로 스윙하는 동안
-# 엄지가 캔을 미리 쳐서 날려버렸다(실측: full_scene.xml 통합 pick 테스트에서 캔이
-# pregrasp 이동 중 최대 85mm 밀려나 pick 성공률 20%로 급락, hand_only 단독 테스트
-# 에서는 팔이 안 움직이므로 이 문제가 안 드러남). 그래서 MCP yaw는 이제 CMC처럼
-# 완전히 고정이 아니라 thumb 스칼라로 THUMB_YAW_REST(접근 중 안전하게 검증된 각도,
-# 과거의 고정값과 동일) -> THUMB_YAW_CURL(사용자가 보기 좋다고 확인한 넓은 각도)로
-# 램프한다 -- thumb=0(아직 쥐기 전, 팔이 움직이는 동안)에는 안전한 각도를 유지하고,
-# thumb이 실제로 올라갈 때(팔은 이미 멈춰 캔 옆에 있을 때)만 넓은 각도로 돌아간다.
+# MCP yaw stays at a collision-safe angle during approach, then rotates toward the palm as
+# the thumb closes.  Left-hand values mirror the tuned right-hand values.
 THUMB_YAW_REST = {"l": 1.309, "r": -1.309}
 THUMB_YAW_CURL = {"l": 2.0326, "r": -2.0326}
 
@@ -177,6 +80,14 @@ FINGER_BODY_GROUPS = {
         "middle": ("finger_r_link9", "finger_r_link10", "finger_r_link11", "finger_r_link12"),
     },
 }
+BODY_TO_FINGER_GROUP = {
+    side: {
+        body: group
+        for group, bodies in groups.items()
+        for body in bodies
+    }
+    for side, groups in FINGER_BODY_GROUPS.items()
+}
 
 CAN_GEOM_NAME = "can_geom"
 BOX_GEOM_NAME = "box_geom"
@@ -194,6 +105,11 @@ BOX_HAND_BODIES = {
 # first time it's resolved removes the repeat cost without changing any behavior -- keyed by
 # id(model) since tests construct a fresh MjModel per test file.
 _JOINT_ACTUATOR_CACHE = {}
+
+
+def _validate_side(side):
+    if side not in SIDES:
+        raise ValueError(f"side must be one of {SIDES}, got {side!r}")
 
 
 def _resolve_joint_actuator(model, joint_name):
@@ -241,17 +157,27 @@ def _set_joint_ctrl(model, data, joint_name, value):
     data.ctrl[aid] = value
 
 
+def _set_joint_fraction(model, data, joint_name, fraction, *, open_at_hi=False):
+    """Interpolate an actuated joint across its configured range."""
+    joint_id, actuator_id = _resolve_joint_actuator(model, joint_name)
+    lo, hi = model.jnt_range[joint_id]
+    data.ctrl[actuator_id] = _ramp_value(lo, hi, fraction, open_at_hi)
+
+
 def apply_grasp(model, data, grasp: float, thumb: float, side: str = "r"):
     """Map the two synergy scalars (each clamped to [0, 1]) to actuator ctrl targets.
 
     grasp -> index + middle pip/dip/tip, ramped over [FINGER_OPEN_FRAC, 1.0] of each
              joint's range.
     thumb -> thumb mcp_pitch/ip, ramped over [THUMB_OPEN_FRAC, 1.0] of each joint's range.
-    Thumb CMC/yaw are always held at the fixed pre-shape regardless of either scalar.
+    Thumb CMC is fixed; thumb yaw interpolates between safe approach and curled poses.
     side selects which hand ('l' or 'r'); default 'r' matches every pre-Phase-4 call site.
     """
+    _validate_side(side)
     grasp = float(np.clip(grasp, 0.0, 1.0))
     thumb = float(np.clip(thumb, 0.0, 1.0))
+    finger_fraction = FINGER_OPEN_FRAC + grasp * (1.0 - FINGER_OPEN_FRAC)
+    thumb_fraction = THUMB_OPEN_FRAC + thumb * (1.0 - THUMB_OPEN_FRAC)
 
     # 1) 엄지 CMC는 항상 고정 pre-shape (grasp/thumb 스칼라와 무관).
     for name, value in THUMB_PRESHAPE[side].items():
@@ -267,19 +193,19 @@ def apply_grasp(model, data, grasp: float, thumb: float, side: str = "r"):
     #    손별로 range의 "편 상태"가 lo/hi 중 어느 쪽인지 다르므로(THUMB_CURL_OPEN_AT_HI)
     #    보간 방향을 뒤집어준다.
     for joint_name in THUMB_CURL_JOINTS[side]:
-        jid, aid = _resolve_joint_actuator(model, joint_name)
-        lo, hi = model.jnt_range[jid]
-        frac = THUMB_OPEN_FRAC + thumb * (1.0 - THUMB_OPEN_FRAC)
-        data.ctrl[aid] = _ramp_value(lo, hi, frac, open_at_hi=THUMB_CURL_OPEN_AT_HI[side])
+        _set_joint_fraction(
+            model,
+            data,
+            joint_name,
+            thumb_fraction,
+            open_at_hi=THUMB_CURL_OPEN_AT_HI[side],
+        )
 
     # 3) 검지/중지 pip/dip/tip -- grasp 스칼라를 [FINGER_OPEN_FRAC, 1.0] 구간에 매핑.
     #    실제로 캔을 쥐는 3점 파지(엄지+검지+중지)의 핵심 구동부.
     for finger_joints in FINGER_CURL_JOINTS[side].values():
         for joint_name in finger_joints:
-            jid, aid = _resolve_joint_actuator(model, joint_name)
-            lo, hi = model.jnt_range[jid]
-            frac = FINGER_OPEN_FRAC + grasp * (1.0 - FINGER_OPEN_FRAC)
-            data.ctrl[aid] = _ramp_value(lo, hi, frac)
+            _set_joint_fraction(model, data, joint_name, finger_fraction)
 
     # 4) 약지/새끼 pip/dip/tip -- 실제 grasp에는 참여하지 않고, grasp 스칼라에 비례해
     #    자기 range의 RING_PINKY_MAX_FRAC까지만 코스메틱하게 굽는다(0=rest에서 완전히
@@ -302,6 +228,7 @@ def apply_grasp(model, data, grasp: float, thumb: float, side: str = "r"):
 
 def apply_open_hand(model, data, side: str = "r"):
     """Command every actuated finger joint to the fully-open neutral pose."""
+    _validate_side(side)
     for i in range(1, 21):
         joint_name = f"finger_{side}_joint{i}"
         jid, aid = _resolve_joint_actuator(model, joint_name)
@@ -317,12 +244,9 @@ def get_finger_can_contacts(model, data, side: str = "r"):
     Normal force is the contact-frame normal component magnitude, summed over every
     contact point belonging to that finger group this step.
     """
+    _validate_side(side)
     can_gid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, CAN_GEOM_NAME)
-    # body 이름 -> "thumb"/"index"/"middle" 그룹 이름 역방향 조회 테이블.
-    body_to_group = {}
-    for group, bodies in FINGER_BODY_GROUPS[side].items():
-        for b in bodies:
-            body_to_group[b] = group
+    body_to_group = BODY_TO_FINGER_GROUP[side]
 
     forces = {}
     force_vec = np.zeros(6)

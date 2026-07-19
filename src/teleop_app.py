@@ -1,44 +1,15 @@
-"""Phase 4 -- slider teleop app for models/full_scene.xml, single native window.
+"""Single-window teleoperation app for ``models/full_scene.xml``.
 
 Reproduces the reference video's interface directly in the same window as the 3D view:
 EE pose target sliders (home-relative X/Y/Z/Roll/Pitch/Yaw) drive ROS-free whole-body IK
 (base/lift/both arms), arm torque control, grasp/thumb synergy, a joint monitor, and an HUD.
 
-**Rendering note**: this does NOT use mujoco.viewer.launch_passive, because that owns its
-own window with no hook for drawing custom widgets inside it. Instead it opens one GLFW
-window and drives MuJoCo's own low-level render API (MjrContext/MjvScene/mjr_render)
-directly, with Dear ImGui (via imgui-bundle) drawn on top in the same framebuffer each
-frame -- the same approach MuJoCo's own C++ "simulate" app uses internally. Earlier
-attempts at this in this sandboxed environment (Python 3.14, Wayland session) hit
-`OpenGL.error.Error: Attempt to retrieve context when no valid context` from imgui-bundle's
-PyOpenGL-based renderer; the fix is `glfw.init_hint(glfw.PLATFORM, glfw.PLATFORM_X11)`
-before `glfw.init()`, which makes GLFW create an XWayland (GLX) window instead of a native
-Wayland (EGL) one, matching the platform PyOpenGL's context tracking expects
-(imgui_bundle's own glfw_backend.py has a related PYOPENGL_PLATFORM workaround, but it
-only takes effect if applied before `OpenGL` is imported anywhere in the process --
-forcing GLFW's own platform sidesteps that ordering requirement entirely).
+Rendering uses MuJoCo's low-level API with ImGui in the same GLFW window.  GLFW must use
+the X11 backend so the ImGui OpenGL renderer receives a compatible GLX context.  The UI,
+control, physics, and rendering stages all execute on one thread.
 
-Since everything now runs in one thread/one loop (no more GUI-thread-writes-targets /
-physics-thread-reads split), the one-way-data-flow this project relies on is trivially
-true: there's only one flow, target sliders read by the physics update each frame, no
-concurrent access at all.
-
-**RPY control note (Session 8)**: the Roll/Pitch/Yaw sliders are a rotation *relative to
-each hand's home-pose orientation* (`home_quat_r`/`home_quat_l`, captured once at startup),
-composed in the hand's own local frame (`quat_mul(home, rpy_delta)`), not raw absolute
-world-frame Euler angles. Originally they were absolute (slider shown value = world-Euler
-decomposition of the actual site quat), which meant the sliders started at the oddly large
-values (90, 0, 90) -- the home pose isn't at identity -- and, because Tait-Bryan Euler angles
-compose about progressively-rotated axes, "Roll" and "Pitch" at that operating point actually
-rotated the hand about world Y and world -X respectively (verified numerically, not just
-felt), not the world/local X/Y one would guess from the labels; only "Yaw" (the outermost
-term) ever stayed clean. Composing a local delta onto a fixed home reference instead makes
-(0,0,0) the natural pose and pins each slider to its own hand-local axis exactly at that
-point (verified: Roll/Pitch/Yaw deltas from home rotate about local X/Y/Z exactly), which is
-what most of a teleop session's small-to-moderate adjustments stay near. This does not (and
-mathematically cannot, for any 3-parameter Euler triple) remove *all* axis coupling -- push
-two sliders far from zero simultaneously and some residual coupling reappears -- but it fixes
-the coupling that was previously present even at the resting/default slider position.
+RPY sliders express local offsets from each hand's startup orientation.  Whole-body pose
+targets remain world-anchored, while manual driving carries those targets with the chassis.
 
 **Whole-body + mobile base**: EE targets are home-relative UI values anchored to their
 startup world poses.  `whole_body_ik.py` solves base x/y/yaw, lift and both 7-DOF arms in one
@@ -56,14 +27,6 @@ G = toggle contact force/point visualization, V = toggle collision geometry/CBF 
 C = cycle camera preset (overview / right-hand close-up). R/G/V/C also have
 buttons in the on-screen panel.
 
-**코드 구조 (가독성 정리)**: 이 파일의 핵심 실행 로직은 `TeleopApp` 클래스 하나에
-모여 있다. `__init__`이 (1) 모델/솔버/제어기 (2) 렌더 컨텍스트 (3) 루프 타이밍 상태를
-순서대로 구성하고, `run()`의 메인 루프는 매 프레임 아래 단계를 호출한다:
-마우스 카메라 → 엣지 트리거 키(R/G/V/C) → 연속 입력 키(주행/리프트) → UI 패널 →
-물리 스텝(IK+제어+mj_step) → 렌더링 → 프레임 타이밍. 위젯 배치는
-`src/teleop_ui.py`, target pose/Cyclo-style bimanual 변환은 `src/teleop_targets.py`,
-GLFW/ImGui/MuJoCo 렌더링과 ImGuizmo 처리는 `src/teleop_render.py`로 분리했다. 이
-파일은 이들을 호출해서 앱 상태와 물리 루프를 이어주는 허브 역할만 한다.
 """
 
 import argparse
@@ -95,6 +58,9 @@ import whole_body_ik  # noqa: E402
 # 양팔 관절 이름 목록 (IK solver / 토크 제어기에 그대로 넘겨진다).
 ARM_R = [f"arm_r_joint{i}" for i in range(1, 8)]
 ARM_L = [f"arm_l_joint{i}" for i in range(1, 8)]
+SIDES = ("r", "l")
+ARM_JOINTS = {"r": ARM_R, "l": ARM_L}
+WHEELS = base_teleop.WHEELS
 # Matches models/full_scene.xml's "home" keyframe, which as of Session 8 (Phase 5 follow-up)
 # matches the sibling ffw-sh5-mujoco repo's rest pose (only the elbow/joint4 bent -90 deg,
 # everything else 0).
@@ -118,6 +84,19 @@ LOOP_HZ = 25.0
 # 200 deg/s, generous but bounded.
 MAX_POS_STEP_PER_FRAME = 0.03
 MAX_RPY_STEP_PER_FRAME_DEG = 8.0
+
+
+def _named_id(model, object_type, name):
+    """Resolve a required MuJoCo object name and fail with useful context."""
+    object_id = mujoco.mj_name2id(model, object_type, name)
+    if object_id < 0:
+        raise ValueError(f"MuJoCo object not found: {name!r}")
+    return object_id
+
+
+def _joint_address(model, name, addresses):
+    joint_id = _named_id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
+    return int(addresses[joint_id])
 
 
 def rpy_deg_to_quat(rpy_deg):
@@ -192,65 +171,109 @@ class TeleopApp:
         self.whole_body_solver = whole_body_ik.WholeBodyIK(
             model,
             {"r": "grasp_target_r", "l": "grasp_target_l"},
-            {"r": ARM_R, "l": ARM_L},
+            ARM_JOINTS,
         )
         # FK(관절각 직접 제어) 모드에서 패널 슬라이더의 최소/최대값으로 쓸, 각 팔
         # 관절의 range를 도(degree) 단위로 미리 계산해둔다.
         self.arm_joint_ranges_deg = {
-            side: [tuple(math.degrees(v) for v in model.jnt_range[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, n)])
-                   for n in joints]
-            for side, joints in (("r", ARM_R), ("l", ARM_L))
+            side: [
+                tuple(
+                    math.degrees(value)
+                    for value in model.jnt_range[
+                        _named_id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
+                    ]
+                )
+                for name in joints
+            ]
+            for side, joints in ARM_JOINTS.items()
         }
-        self.lift_aid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, "lift_joint")
-        self.base_x_qadr = model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "base_x")]
-        self.base_y_qadr = model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "base_y")]
-        self.base_yaw_qadr = model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "base_yaw")]
-        self.base_x_dof = model.jnt_dofadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "base_x")]
-        self.base_y_dof = model.jnt_dofadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "base_y")]
-        self.base_yaw_dof = model.jnt_dofadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "base_yaw")]
+        self.lift_aid = _named_id(
+            model, mujoco.mjtObj.mjOBJ_ACTUATOR, "lift_joint"
+        )
+        self.base_x_qadr = _joint_address(model, "base_x", model.jnt_qposadr)
+        self.base_y_qadr = _joint_address(model, "base_y", model.jnt_qposadr)
+        self.base_yaw_qadr = _joint_address(model, "base_yaw", model.jnt_qposadr)
+        self.base_x_dof = _joint_address(model, "base_x", model.jnt_dofadr)
+        self.base_y_dof = _joint_address(model, "base_y", model.jnt_dofadr)
+        self.base_yaw_dof = _joint_address(model, "base_yaw", model.jnt_dofadr)
         # Real per-wheel steer (position) + drive (velocity) actuators -- see
         # src/base_teleop.py's SwerveDrive and the module docstring's "Mobile base" note. Base
         # motion is now a *consequence* of wheel-ground friction, not a direct actuator on
         # base_x/base_y/base_yaw (those joints still exist so base_link can't tip, but nothing
         # actuates them directly any more).
-        self.wheel_steer_aids = {w: mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, f"{w}_steer")
-                                  for w in ("left_wheel", "right_wheel", "rear_wheel")}
-        self.wheel_drive_aids = {w: mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, f"{w}_drive")
-                                  for w in ("left_wheel", "right_wheel", "rear_wheel")}
+        self.wheel_steer_aids = {
+            wheel: _named_id(
+                model, mujoco.mjtObj.mjOBJ_ACTUATOR, f"{wheel}_steer"
+            )
+            for wheel in WHEELS
+        }
+        self.wheel_drive_aids = {
+            wheel: _named_id(
+                model, mujoco.mjtObj.mjOBJ_ACTUATOR, f"{wheel}_drive"
+            )
+            for wheel in WHEELS
+        }
         self.wheel_steer_qadrs = {
-            w: model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, f"{w}_steer_joint")]
-            for w in ("left_wheel", "right_wheel", "rear_wheel")
+            wheel: _joint_address(
+                model, f"{wheel}_steer_joint", model.jnt_qposadr
+            )
+            for wheel in WHEELS
         }
         self.wheel_drive_dofs = {
-            w: model.jnt_dofadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, f"{w}_drive_joint")]
-            for w in ("left_wheel", "right_wheel", "rear_wheel")
+            wheel: _joint_address(
+                model, f"{wheel}_drive_joint", model.jnt_dofadr
+            )
+            for wheel in WHEELS
         }
         # 모바일 베이스: SwerveDrive가 키 입력을 바퀴별 조향각+구동속도로 변환.
         self.base_drive = base_teleop.SwerveDrive()
-        self.monitor_qposadr = {n: model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, n)]
-                                 for n in MONITOR_JOINTS}
-        self.monitor_ranges = {n: model.jnt_range[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, n)]
-                                for n in MONITOR_JOINTS}
+        monitor_joint_ids = {
+            name: _named_id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
+            for name in MONITOR_JOINTS
+        }
+        self.monitor_qposadr = {
+            name: int(model.jnt_qposadr[joint_id])
+            for name, joint_id in monitor_joint_ids.items()
+        }
+        self.monitor_ranges = {
+            name: model.jnt_range[joint_id]
+            for name, joint_id in monitor_joint_ids.items()
+        }
         self.rng = np.random.default_rng()
 
-        self.site_r = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "grasp_target_r")
-        self.site_l = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "grasp_target_l")
+        self.site_r = _named_id(
+            model, mujoco.mjtObj.mjOBJ_SITE, "grasp_target_r"
+        )
+        self.site_l = _named_id(
+            model, mujoco.mjtObj.mjOBJ_SITE, "grasp_target_l"
+        )
         self.ik_target_mocap_ids = {
-            side: model.body_mocapid[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, f"ik_target_{side}")]
-            for side in ("l", "r")
+            side: model.body_mocapid[
+                _named_id(
+                    model, mujoco.mjtObj.mjOBJ_BODY, f"ik_target_{side}"
+                )
+            ]
+            for side in SIDES
         }
         self.virtual_object_mocap_id = model.body_mocapid[
-            mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "virtual_object_marker")]
-        self.virtual_object_marker_geom_id = mujoco.mj_name2id(
+            _named_id(
+                model, mujoco.mjtObj.mjOBJ_BODY, "virtual_object_marker"
+            )
+        ]
+        self.virtual_object_marker_geom_id = _named_id(
             model, mujoco.mjtObj.mjOBJ_GEOM, "virtual_object_marker_geom")
-        self.virtual_object_marker_site_id = mujoco.mj_name2id(
+        self.virtual_object_marker_site_id = _named_id(
             model, mujoco.mjtObj.mjOBJ_SITE, "virtual_object_marker_site")
         self.virtual_object_marker_rgba = {
             "geom": model.geom_rgba[self.virtual_object_marker_geom_id].copy(),
             "site": model.site_rgba[self.virtual_object_marker_site_id].copy(),
         }
-        self.can_jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "can_free")
-        self.can_geom_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "can_geom")
+        self.can_jid = _named_id(
+            model, mujoco.mjtObj.mjOBJ_JOINT, "can_free"
+        )
+        self.can_geom_id = _named_id(
+            model, mujoco.mjtObj.mjOBJ_GEOM, "can_geom"
+        )
         self._disable_legacy_box_asset()
         # Reference pose each hand's XYZ/RPY sliders are relative to (see module docstring).
         teleop_targets.set_home_references(self)
@@ -258,16 +281,29 @@ class TeleopApp:
         # 슬라이더가 직접 쓰는 "목표값" 딕셔너리 -- 물리 루프는 이 값만 읽고, 이 값을
         # 쓰는 건 GUI 슬라이더뿐이다(단방향 데이터 흐름, 모듈 docstring 참고).
         self.targets = {
-            "pos_r": [0.0, 0.0, 0.0], "rpy_r": [0.0, 0.0, 0.0],
-            "pos_l": [0.0, 0.0, 0.0], "rpy_l": [0.0, 0.0, 0.0],
-            "grasp_r": 0.0, "thumb_r": 0.0, "grasp_l": 0.0, "thumb_l": 0.0,
+            **{
+                f"{field}_{side}": [0.0, 0.0, 0.0]
+                for side in SIDES
+                for field in ("pos", "rpy")
+            },
+            **{
+                f"{field}_{side}": 0.0
+                for side in SIDES
+                for field in ("grasp", "thumb")
+            },
             "virtual_object_pos": VIRTUAL_OBJECT_HOME_POS.tolist(),
             "virtual_object_rpy": [0.0, 0.0, 0.0],
-            "lift": float(data.qpos[model.jnt_qposadr[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "lift_joint")]]),
+            "lift": float(
+                data.qpos[_joint_address(model, "lift_joint", model.jnt_qposadr)]
+            ),
         }
         # Whole-body IK chases smoothed copies so a typed/dragged target cannot jump abruptly.
-        self.smoothed_pos = {"r": np.array(self.targets["pos_r"]), "l": np.array(self.targets["pos_l"])}
-        self.smoothed_rpy = {"r": np.array(self.targets["rpy_r"]), "l": np.array(self.targets["rpy_l"])}
+        self.smoothed_pos = {
+            side: np.array(self.targets[f"pos_{side}"]) for side in SIDES
+        }
+        self.smoothed_rpy = {
+            side: np.array(self.targets[f"rpy_{side}"]) for side in SIDES
+        }
         self.lift_cmd = self.targets["lift"]
         self.whole_body_base_twist = base_teleop.BodyTwist()
         self.commanded_base_twist = base_teleop.BodyTwist()
@@ -283,7 +319,7 @@ class TeleopApp:
         self.collision_min_distance = math.inf
         self.collision_constraint_violation = 0.0
         self.camera_preset = 0
-        self.grab_state = {"r": None, "l": None}
+        self.grab_state = dict.fromkeys(SIDES)
         self.cyclo_controller = "movel"
         self.cyclo_move_time = 2.0
         self.cyclo_grasp_captured = False
@@ -601,38 +637,122 @@ class TeleopApp:
         _step_physics에서 이뤄진다."""
         teleop_ui.draw_panel(self)
 
+    def _read_base_feedback(self):
+        """Read wheel and chassis feedback used by manual/base handover control."""
+        data = self.data
+        steering_positions = {
+            wheel: float(data.qpos[address])
+            for wheel, address in self.wheel_steer_qadrs.items()
+        }
+        wheel_velocities = {
+            wheel: float(data.qvel[address])
+            for wheel, address in self.wheel_drive_dofs.items()
+        }
+        yaw = float(data.qpos[self.base_yaw_qadr])
+        cosine, sine = math.cos(yaw), math.sin(yaw)
+        vx_world = float(data.qvel[self.base_x_dof])
+        vy_world = float(data.qvel[self.base_y_dof])
+        body_twist = base_teleop.BodyTwist(
+            cosine * vx_world + sine * vy_world,
+            -sine * vx_world + cosine * vy_world,
+            float(data.qvel[self.base_yaw_dof]),
+        )
+        base_pose = np.array(
+            [
+                data.qpos[self.base_x_qadr],
+                data.qpos[self.base_y_qadr],
+                data.qpos[self.base_yaw_qadr],
+            ],
+            dtype=float,
+        )
+        return steering_positions, wheel_velocities, body_twist, base_pose
+
+    def _update_grasp_targets(self):
+        """Rate-limit one-touch open/close commands into the hand sliders."""
+        for side in SIDES:
+            state = self.grab_state[side]
+            if state is None:
+                continue
+            desired = 1.0 if state else 0.0
+            for name in (f"grasp_{side}", f"thumb_{side}"):
+                delta = np.clip(
+                    desired - self.targets[name], -self.frame_dt, self.frame_dt
+                )
+                self.targets[name] += float(delta)
+
+    def _smooth_hand_targets(self):
+        """Limit slider target motion to rates the IK/controller can track."""
+        for side in SIDES:
+            raw_position = np.asarray(self.targets[f"pos_{side}"], dtype=float)
+            position_delta = np.clip(
+                raw_position - self.smoothed_pos[side],
+                -MAX_POS_STEP_PER_FRAME,
+                MAX_POS_STEP_PER_FRAME,
+            )
+            self.smoothed_pos[side] += position_delta
+
+            raw_rpy = np.asarray(self.targets[f"rpy_{side}"], dtype=float)
+            rpy_delta = np.clip(
+                raw_rpy - self.smoothed_rpy[side],
+                -MAX_RPY_STEP_PER_FRAME_DEG,
+                MAX_RPY_STEP_PER_FRAME_DEG,
+            )
+            self.smoothed_rpy[side] += rpy_delta
+
+    def _smoothed_target_poses(self):
+        """Build world-space poses from the rate-limited UI targets."""
+        return {
+            side: (
+                teleop_targets.target_pos_to_world_pos(
+                    self, side, self.smoothed_pos[side]
+                ),
+                teleop_targets.target_rpy_to_world_quat(
+                    self, side, self.smoothed_rpy[side]
+                ),
+            )
+            for side in SIDES
+        }
+
+    def _step_actuators(self, wheel_commands):
+        """Apply the current command set throughout one rendered frame."""
+        data = self.data
+        for _ in range(self.steps_per_frame):
+            self.ctrl_r.apply(data, self.q_des_r)
+            self.ctrl_l.apply(data, self.q_des_l)
+            data.ctrl[self.lift_aid] = self.lift_cmd
+            for wheel, (steer_angle, drive_speed) in wheel_commands.items():
+                data.ctrl[self.wheel_steer_aids[wheel]] = steer_angle
+                data.ctrl[self.wheel_drive_aids[wheel]] = drive_speed
+            for side in SIDES:
+                grasp.apply_grasp(
+                    self.model,
+                    data,
+                    grasp=self.targets[f"grasp_{side}"],
+                    thumb=self.targets[f"thumb_{side}"],
+                    side=side,
+                )
+            mujoco.mj_step(self.model, data)
+
     def _step_physics(self, drive_keys):
         """실제 물리 반영: target rate-limit -> world-fixed pose -> whole-body solve ->
         팔 torque/lift position/swerve/grasp actuator ctrl -> ``mj_step``. Solver는 live
         qpos를 읽기만 하며, robot qpos를 직접 쓰는 kinematic override는 없다."""
-        model, data = self.model, self.data
-
-        steering_positions = {
-            w: float(data.qpos[qadr]) for w, qadr in self.wheel_steer_qadrs.items()}
-        wheel_velocities = {
-            w: float(data.qvel[dof]) for w, dof in self.wheel_drive_dofs.items()}
-        base_yaw = float(data.qpos[self.base_yaw_qadr])
-        cy, sy = math.cos(base_yaw), math.sin(base_yaw)
-        vx_world = float(data.qvel[self.base_x_dof])
-        vy_world = float(data.qvel[self.base_y_dof])
+        data = self.data
+        (
+            steering_positions,
+            wheel_velocities,
+            measured_body_twist,
+            current_base_pose,
+        ) = self._read_base_feedback()
         # Use chassis feedback for the manual-to-WBIK stop handover. During active braking,
         # temporary tire slip makes wheel-only odometry a worse stop detector than the
         # model's directly observable planar base velocity.
-        measured_body_twist = base_teleop.BodyTwist(
-            cy * vx_world + sy * vy_world,
-            -sy * vx_world + cy * vy_world,
-            float(data.qvel[self.base_yaw_dof]),
-        )
         manual_twist = self.base_drive.base.update_body(
             drive_keys, self.frame_dt, measured_body_twist)
         manual_keys_active = any(drive_keys.values())
         measured_motion_active = (
             math.hypot(measured_body_twist.vx, measured_body_twist.vy) > 0.01
             or abs(measured_body_twist.wz) > 0.02)
-        current_base_pose = np.array([
-            data.qpos[self.base_x_qadr], data.qpos[self.base_y_qadr],
-            data.qpos[self.base_yaw_qadr],
-        ], dtype=float)
         if manual_keys_active and not self._manual_override_active:
             # Rising edge: do not mistake any preceding WBIK motion for manual motion.
             self._manual_reference_base_pose = current_base_pose.copy()
@@ -645,43 +765,20 @@ class TeleopApp:
 
         if self.cyclo_grasp_captured:
             self.apply_virtual_object_target()
-        for side in ("r", "l"):
-            if self.grab_state[side] is None:
-                continue
-            desired = 1.0 if self.grab_state[side] else 0.0
-            step = self.frame_dt
-            for name in (f"grasp_{side}", f"thumb_{side}"):
-                delta = np.clip(desired - self.targets[name], -step, step)
-                self.targets[name] += float(delta)
-
-        # Rate-limit the raw slider targets into the smoothed copies IK actually chases (see
-        # "IK target rate limiting" note near their declaration in _setup_sim).
-        for side in ("r", "l"):
-            raw_pos = np.array(self.targets[f"pos_{side}"])
-            delta = np.clip(raw_pos - self.smoothed_pos[side], -MAX_POS_STEP_PER_FRAME, MAX_POS_STEP_PER_FRAME)
-            self.smoothed_pos[side] = self.smoothed_pos[side] + delta
-            raw_rpy = np.array(self.targets[f"rpy_{side}"])
-            delta_rpy = np.clip(raw_rpy - self.smoothed_rpy[side],
-                                 -MAX_RPY_STEP_PER_FRAME_DEG, MAX_RPY_STEP_PER_FRAME_DEG)
-            self.smoothed_rpy[side] = self.smoothed_rpy[side] + delta_rpy
+        self._update_grasp_targets()
+        self._smooth_hand_targets()
 
         # World-anchored targets are essential for whole-body IK: if a target were rebuilt
         # from the *current* base pose each frame, moving the base would move the goal by the
         # same amount and could never reduce task error.
-        target_poses = {}
-        for side in ("r", "l"):
-            target_pos = teleop_targets.target_pos_to_world_pos(
-                self, side, self.smoothed_pos[side])
-            target_quat = teleop_targets.target_rpy_to_world_quat(
-                self, side, self.smoothed_rpy[side])
-            target_poses[side] = (target_pos, target_quat)
+        target_poses = self._smoothed_target_poses()
 
         if carry_manual_targets:
             # Handover must redefine zero common motion at the new chassis pose; otherwise
             # startup references make WBIK issue a reverse command that feels like inertia.
             self.whole_body_solver.rebase(data, target_poses)
 
-        active_sides = tuple(side for side in ("r", "l") if self.arm_mode[side] == "ik")
+        active_sides = tuple(side for side in SIDES if self.arm_mode[side] == "ik")
         whole_body_cmd = self.whole_body_solver.solve(
             data, target_poses, self.frame_dt,
             active_sides=active_sides,
@@ -697,7 +794,7 @@ class TeleopApp:
         self.collision_constraint_violation = whole_body_cmd.collision_constraint_violation
         self.lift_cmd = (whole_body_cmd.lift_position if self.whole_body_enabled
                          else self.targets["lift"])
-        for side in ("r", "l"):
+        for side in SIDES:
             if side in whole_body_cmd.arm_positions:
                 if side == "r":
                     self.q_des_r = whole_body_cmd.arm_positions[side]
@@ -731,20 +828,7 @@ class TeleopApp:
         if previous_manual_override and not self._manual_override_active:
             self.base_drive.base.reset_motion()
 
-        # 렌더 프레임 하나(frame_dt)당 물리 스텝을 여러 번(steps_per_frame) 돌린다 --
-        # 렌더링은 25Hz면 충분하지만 물리는 훨씬 촘촘한 timestep이 필요하기 때문.
-        # IK로 구한 목표 관절각(q_des_r/l)과 grasp/thumb/lift/바퀴 ctrl을 매 서브스텝
-        # 다시 적용한 뒤 mj_step 한 번.
-        for _ in range(self.steps_per_frame):
-            self.ctrl_r.apply(data, self.q_des_r)
-            self.ctrl_l.apply(data, self.q_des_l)
-            data.ctrl[self.lift_aid] = self.lift_cmd
-            for wheel, (steer_angle, drive_angvel) in wheel_cmds.items():
-                data.ctrl[self.wheel_steer_aids[wheel]] = steer_angle
-                data.ctrl[self.wheel_drive_aids[wheel]] = drive_angvel
-            grasp.apply_grasp(model, data, grasp=self.targets["grasp_r"], thumb=self.targets["thumb_r"], side="r")
-            grasp.apply_grasp(model, data, grasp=self.targets["grasp_l"], thumb=self.targets["thumb_l"], side="l")
-            mujoco.mj_step(model, data)
+        self._step_actuators(wheel_cmds)
 
 def _parse_args(argv):
     parser = argparse.ArgumentParser(description="FFW-SH5 teleop app")

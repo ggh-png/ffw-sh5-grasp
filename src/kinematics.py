@@ -166,6 +166,13 @@ def default_collision_pairs(model):
     geometry per arm link/palm covers arm-arm, folded-arm/body, and arm/table collisions at
     predictable cost.  Floor and wheel pairs are deliberately excluded.
     """
+    collision_geoms_by_body = {}
+    for geom_id in range(model.ngeom):
+        if int(model.geom_contype[geom_id]) == 0:
+            continue
+        body_id = int(model.geom_bodyid[geom_id])
+        collision_geoms_by_body.setdefault(body_id, []).append(geom_id)
+
     body_geom = {}
     for body_name in (
             *(f"arm_{side}_link{i}" for side in ("r", "l") for i in range(1, 8)),
@@ -174,11 +181,7 @@ def default_collision_pairs(model):
         body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body_name)
         if body_id < 0:
             continue
-        candidates = [
-            geom_id for geom_id in range(model.ngeom)
-            if int(model.geom_bodyid[geom_id]) == body_id
-            and int(model.geom_contype[geom_id]) != 0
-        ]
+        candidates = collision_geoms_by_body.get(body_id, []).copy()
         if candidates:
             # Collision meshes/palm boxes use group 3.  The mobile base's collision box is
             # group 0, so the fallback retains it while visual meshes (contype=0) stay out.

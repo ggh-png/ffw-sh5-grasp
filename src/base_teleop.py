@@ -78,9 +78,11 @@ class BodyTwist:
     wz: float = 0.0
 
     def is_zero(self):
-        return (abs(self.vx) < LINEAR_VEL_DEADBAND
-                and abs(self.vy) < LINEAR_VEL_DEADBAND
-                and abs(self.wz) < ANGULAR_VEL_DEADBAND)
+        return (
+            abs(self.vx) < LINEAR_VEL_DEADBAND
+            and abs(self.vy) < LINEAR_VEL_DEADBAND
+            and abs(self.wz) < ANGULAR_VEL_DEADBAND
+        )
 
 
 class BaseTeleop:
@@ -238,14 +240,15 @@ class SwerveDrive:
     def __init__(self, kinematics=None):
         self.base = BaseTeleop()
         self.kinematics = kinematics or SwerveKinematics()
-        self.steer_angle = {name: 0.0 for name in WHEELS}
-        self.previous_wheel_rotation_direction = {name: 1.0 for name in WHEELS}
-        self.wheel_speed_scale = {name: 1.0 for name in WHEELS}
-        self.reversal_phase = {name: ReversalPhase.NORMAL for name in WHEELS}
-        self.reversal_target_steering_angle = {name: 0.0 for name in WHEELS}
-        self.reversal_target_direction = {name: 1.0 for name in WHEELS}
-        self.previous_commands = {name: 0.0 for name in WHEELS}
-        self.previous_drive_commands = {name: 0.0 for name in WHEELS}
+        self.wheels = tuple(self.kinematics.wheel_positions)
+        self.steer_angle = dict.fromkeys(self.wheels, 0.0)
+        self.previous_wheel_rotation_direction = dict.fromkeys(self.wheels, 1.0)
+        self.wheel_speed_scale = dict.fromkeys(self.wheels, 1.0)
+        self.reversal_phase = dict.fromkeys(self.wheels, ReversalPhase.NORMAL)
+        self.reversal_target_steering_angle = dict.fromkeys(self.wheels, 0.0)
+        self.reversal_target_direction = dict.fromkeys(self.wheels, 1.0)
+        self.previous_commands = dict.fromkeys(self.wheels, 0.0)
+        self.previous_drive_commands = dict.fromkeys(self.wheels, 0.0)
         self.wheel_saturation_scale = 1.0
         self.last_body_twist = BodyTwist()
 
@@ -255,7 +258,7 @@ class SwerveDrive:
         measured_twist = None
         if (steering_positions is not None and wheel_velocities is not None
                 and all(name in steering_positions and name in wheel_velocities
-                        for name in WHEELS)):
+                        for name in self.wheels)):
             measured_twist = self.kinematics.forward(steering_positions, wheel_velocities)
         twist = self.base.update_body(keys, dt, measured_twist)
         return self.update_twist(twist, dt, steering_positions, wheel_velocities)
@@ -272,7 +275,7 @@ class SwerveDrive:
         self.last_body_twist = twist
         if twist.is_zero():
             self.wheel_saturation_scale = 1.0
-            self.previous_drive_commands = {name: 0.0 for name in WHEELS}
+            self.previous_drive_commands = dict.fromkeys(self.wheels, 0.0)
             return self._hold_zero(steering_positions)
 
         desired, self.wheel_saturation_scale = self.kinematics.inverse(
@@ -290,8 +293,11 @@ class SwerveDrive:
         # Match AI Worker's safety contract: do not apply propulsion until every module is
         # aligned.  This prevents a transient unintended chassis direction during steering.
         if not all_aligned:
-            module_results = {name: (angle, 0.0) for name, (angle, _speed) in module_results.items()}
-            self.previous_drive_commands = {name: 0.0 for name in WHEELS}
+            module_results = {
+                name: (angle, 0.0)
+                for name, (angle, _speed) in module_results.items()
+            }
+            self.previous_drive_commands = dict.fromkeys(self.wheels, 0.0)
         else:
             module_results = self._rate_limit_drive_commands(module_results, dt)
 
@@ -323,13 +329,13 @@ class SwerveDrive:
         return result
 
     def _hold_zero(self, steering_positions):
-        for name in WHEELS:
+        for name in self.wheels:
             self.reversal_phase[name] = ReversalPhase.NORMAL
             self.wheel_speed_scale[name] = 1.0
             cur = self._current_steering(name, steering_positions)
             self.steer_angle[name] = cur
             self.previous_commands[name] = cur
-        return {name: (self.steer_angle[name], 0.0) for name in WHEELS}
+        return {name: (self.steer_angle[name], 0.0) for name in self.wheels}
 
     def _control_module(self, name, target_angle, target_wheel_speed, dt,
                         steering_positions, wheel_velocities):
@@ -342,7 +348,9 @@ class SwerveDrive:
         # feedback as the reference held the position-servo error (and therefore torque)
         # constant; stationary tire friction could then trap steering around 20 degrees.
         steering_cmd = _limit_steering_rate(
-            self.previous_commands[name], steering_target, dt)
+            self.previous_commands[name], steering_target, dt,
+            self.kinematics.steer_range,
+        )
 
         effective_direction = (
             self.previous_wheel_rotation_direction[name]
@@ -425,20 +433,16 @@ class SwerveDrive:
         return target
 
 
-def _limit_steering_rate(current, target, dt):
+def _limit_steering_rate(current, target, dt, steer_range=STEER_RANGE):
     max_change = STEERING_ANGULAR_VELOCITY_LIMIT * dt
     desired = target - current
     if abs(desired) <= max_change:
         return target
-    return _clamp(current + math.copysign(max_change, desired), *STEER_RANGE)
+    return _clamp(current + math.copysign(max_change, desired), *steer_range)
 
 
 def _normalize_angle(angle):
     return (angle + math.pi) % (2.0 * math.pi) - math.pi
-
-
-def _shortest_angular_distance(start, target):
-    return _normalize_angle(target - start)
 
 
 def _clamp(value, lo, hi):
