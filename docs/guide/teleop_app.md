@@ -33,6 +33,8 @@ while not glfw.window_should_close(self.window):
 
 | 이름 | 역할 |
 |---|---|
+| `_named_id(model, object_type, name)` | 필수 MuJoCo object id 조회, 누락 시 명확한 오류 반환 |
+| `_joint_address(model, name, addresses)` | joint의 qpos 또는 DOF 주소 조회 |
 | `rpy_deg_to_quat(rpy_deg)` | `teleop_targets.rpy_deg_to_quat()` wrapper |
 | `quat_to_rpy_deg(q)` | `teleop_targets.quat_to_rpy_deg()` wrapper |
 | `_reset_can_random(model, data, rng)` | 캔 free joint를 home 근처에 랜덤 리셋 |
@@ -63,7 +65,12 @@ while not glfw.window_should_close(self.window):
 | `_draw_ui_panel()` | `teleop_ui.draw_panel(self)` 호출 |
 | `_handle_edge_keys(io)` | `R/G/V/C` edge key 처리 |
 | `_read_drive_and_lift_keys(io)` | 주행/리프트 continuous key 처리 |
-| `_step_physics(drive_keys)` | target smoothing, IK, base/grasp/lift/arm command, `mj_step` |
+| `_read_base_feedback()` | wheel 상태, body twist, base pose를 한 번에 읽기 |
+| `_update_grasp_targets()` | Grab/Release 상태를 grasp/thumb 값으로 rate-limit |
+| `_smooth_hand_targets()` | raw XYZ/RPY를 frame 이동 한계 안으로 보간 |
+| `_smoothed_target_poses()` | 보간된 UI 값을 양손 world pose로 변환 |
+| `_step_actuators(wheel_commands)` | 물리 substep마다 모든 actuator command와 `mj_step` 적용 |
+| `_step_physics(drive_keys)` | 위 단계의 순서와 수동/WBIK 명령 우선순위 조율 |
 | `run()` | 전체 frame loop 실행 |
 
 ## 함수 흐름
@@ -81,16 +88,15 @@ flowchart TD
     I --> J["_read_drive_and_lift_keys()<br>주행/리프트 continuous key 읽기"]
     J --> K["_draw_ui_panel()<br>UI 모듈 호출 wrapper"]
     K --> L["teleop_ui.draw_panel()<br>조작 패널을 그리고 target 갱신"]
-    L --> M["_step_physics()<br>target을 actuator 명령으로 변환하고 physics 진행"]
-    M --> N["teleop_targets.apply_virtual_object_target()<br>Bimanual MoveL 양손 target 갱신"]
-    M --> O["whole_body_ik.solve()<br>손 목표 pose를 base/lift/양팔 명령으로 변환"]
-    M --> P["base_teleop.SwerveDrive.update_twist()<br>base body twist를 바퀴 명령으로 변환"]
-    M --> Q["arm_control.apply()<br>팔 관절 목표를 torque로 적용"]
-    M --> R["grasp.apply_grasp()<br>손가락 synergy를 actuator에 적용"]
-    Q --> S["mujoco.mj_step()<br>최종 ctrl로 물리 step 진행"]
-    R --> S
-    P --> S
-    S --> T["teleop_render.render_scene()<br>MuJoCo scene, gizmo, UI 렌더링"]
+    L --> M["_step_physics()<br>frame 제어 순서 조율"]
+    M --> N["_read_base_feedback()<br>wheel · body · base 상태"]
+    N --> O["target carry · grasp ramp · smoothing"]
+    O --> P["_smoothed_target_poses()<br>양손 world pose"]
+    P --> Q["whole_body_ik.solve()<br>base · lift · arm command"]
+    Q --> R["SwerveDrive.update_twist()<br>wheel command"]
+    R --> S["_step_actuators()<br>arm · lift · wheel · finger ctrl"]
+    S --> V["mujoco.mj_step()<br>물리 진행"]
+    V --> T["teleop_render.render_scene()<br>MuJoCo scene, gizmo, UI 렌더링"]
     T --> U["teleop_render.end_frame()<br>frame timing 정리"]
     U --> F
 ```
@@ -123,19 +129,20 @@ flowchart TD
 
 ## `_step_physics()` 내부 순서
 
-1. Bimanual MoveL capture 상태면 virtual object target을 양손 target으로 적용한다.
-2. grab/release button 상태를 grasp/thumb slider 값으로 ramp한다.
-3. raw target을 `smoothed_pos`, `smoothed_rpy`로 rate-limit한다.
-4. startup anchor 기준 값에서 world-fixed 양손 target pose를 만든다. 수동 베이스
-   주행 중에는 target frame도 측정된 base SE(2) 이동만큼 함께 운반한다.
-5. `whole_body_ik.solve()`가 ON이면 base x/y/yaw, lift, IK 모드 양팔을 한 문제로
+1. `_read_base_feedback()`으로 steer 위치, wheel 속도, chassis body twist와 base pose를 읽는다.
+2. 키보드 주행 입력과 실제 정지 여부를 판정한다.
+3. 수동 주행 또는 제동 중이면 target frame을 측정된 base SE(2) 이동만큼 운반한다.
+4. Bimanual capture 상태의 virtual object와 Grab/Release 상태를 raw target에 반영한다.
+5. `_smooth_hand_targets()`로 XYZ/RPY target을 frame 이동 한계 안에서 rate-limit한다.
+6. `_smoothed_target_poses()`가 현재 mode에 맞는 양손 world pose를 만든다.
+7. `whole_body_ik.solve()`가 ON이면 base x/y/yaw, lift, IK 모드 양팔을 한 문제로
    풀고, OFF면 base/lift 속도를 0으로 고정해 팔만 푼다.
-6. FK 모드인 손은 FK slider 값을 사용하고 whole-body arm 변수는 0속도로 고정한다.
-7. 키보드 base 명령이 있으면 우선한다. 키가 없을 때 ON은 whole-body twist, OFF는
+8. FK 모드인 손은 FK slider 값을 사용하고 whole-body arm 변수는 0속도로 고정한다.
+9. 키보드 base 명령이 있으면 우선한다. 키가 없을 때 ON은 whole-body twist, OFF는
    zero twist를 선택한다.
-8. `base_teleop.SwerveDrive.update_twist()`로 wheel command를 계산한다.
-9. 물리 substep마다 arm torque, lift, wheel, hand command를 `data.ctrl`에 쓴다.
-10. `mujoco.mj_step()`을 호출한다.
+10. `SwerveDrive.update_twist()`로 wheel command를 계산한다.
+11. `_step_actuators()`가 각 물리 substep에 arm, lift, wheel, finger command를 쓰고
+    `mujoco.mj_step()`을 호출한다.
 
 ## 직접 쓰는 `data`
 
@@ -143,7 +150,7 @@ flowchart TD
 |---|---|
 | `_reset_can_random()` | 자유물체 캔 리셋 |
 | `_disable_legacy_box_asset()` | legacy box asset 비활성화 |
-| `_step_physics()` | actuator command 기록과 `mj_step` |
+| `_step_actuators()` | actuator command 기록과 `mj_step` |
 
 로봇 관절 위치를 live `data.qpos`로 직접 덮어쓰지 않는다.
 

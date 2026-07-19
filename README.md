@@ -13,11 +13,11 @@ collision avoidance를 하나의 Python 앱에서 실행합니다.
 
 | 목적 | 문서 |
 |---|---|
-| 설치부터 첫 동작까지 | [10분 빠른 시작](docs/getting-started.md) |
-| 버튼과 키 전체 목록 | [조작과 UI](docs/run.md) |
-| MoveL/IK/Whole-body 조합 | [제어 모드 선택](docs/control-modes.md) |
+| 설치부터 첫 동작까지 | [빠른 시작](docs/getting-started.md) |
+| 버튼과 키 전체 목록 | [화면과 조작](docs/run.md) |
+| MoveL/IK/Whole-body 조합 | [모드 선택](docs/control-modes.md) |
 | 느림·잔류 주행·collision 진단 | [문제 해결](docs/troubleshooting.md) |
-| 구조와 알고리즘 이해 | [핵심 개념](docs/concepts.md), [프로젝트 구조](docs/overview.md) |
+| 구조와 알고리즘 이해 | [동작 원리](docs/concepts.md), [아키텍처와 데이터 흐름](docs/overview.md) |
 | 테스트 근거 | [테스트와 검증](docs/testing.md) |
 
 ## 핵심 기능
@@ -107,5 +107,6 @@ src/
 └── ik.py                # 단일 팔 IK와 Phase 3/4 독립 회귀 경로
 ```
 
-전체 책임과 데이터 흐름은 [프로젝트 구조](docs/overview.md), 모듈별 함수는
-[코드 가이드](docs/guide/index.md)에서 이어집니다.
+코드를 처음 읽는다면 [동작 원리](docs/concepts.md) →
+[아키텍처와 데이터 흐름](docs/overview.md) →
+[코드 읽기 시작](docs/guide/index.md) 순서가 가장 짧습니다.

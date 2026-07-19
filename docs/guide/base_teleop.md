@@ -90,9 +90,8 @@ release 뒤 약 0.92초 안에 zero deadband로 들어온다.
 | `SwerveDrive.update(keys, ...)` | 키보드 호환 wrapper |
 | `SwerveDrive._hold_zero(steering_positions)` | 정지 명령일 때 반전 상태 리셋 + 현재 조향각 유지 |
 | `SwerveDrive._control_module(...)` | 바퀴 하나의 reversal FSM, rate limit, alignment 계산 |
-| `_limit_steering_rate(previous_command, target, dt)` | 조향 명령 궤적의 프레임별 변화량 제한 |
+| `_limit_steering_rate(previous_command, target, dt, steer_range)` | 주입된 조향 범위 안에서 명령 궤적의 프레임별 변화량 제한 |
 | `_normalize_angle(angle)` | 각도를 `[-pi, pi)`로 정규화 |
-| `_shortest_angular_distance(start, target)` | 최단 각도 차 계산 |
 | `_clamp(value, lo, hi)` | 값 clamp |
 
 ## 함수 흐름

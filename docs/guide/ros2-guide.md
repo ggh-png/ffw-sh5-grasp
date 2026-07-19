@@ -5,8 +5,8 @@
 필요는 없다.** 처음 사용자에게는 다음 짧은 경로가 더 적합하다.
 
 - 실행: [10분 빠른 시작](../getting-started.md)
-- 모드 조합: [제어 모드 선택](../control-modes.md)
-- 전체 mental model: [핵심 개념](../concepts.md)
+- 모드 조합: [모드 선택](../control-modes.md)
+- 전체 mental model: [동작 원리](../concepts.md)
 - 증상 진단: [문제 해결](../troubleshooting.md)
 
 이 문서는 “왜 이런 알고리즘과 구조인가?”를 이해하거나 ROS2 시스템과 설계를 비교할

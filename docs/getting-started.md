@@ -118,7 +118,7 @@ python src/teleop_app.py
 
 창을 닫아 종료한다. 다음에는 목적에 따라 이동한다.
 
-- 모드 조합이 헷갈리면 [제어 모드 선택](control-modes.md)
-- 모든 버튼과 키를 보려면 [조작과 UI](run.md)
-- 왜 이런 구조인지 이해하려면 [핵심 개념](concepts.md)
+- 모드 조합이 헷갈리면 [모드 선택](control-modes.md)
+- 모든 버튼과 키를 보려면 [화면과 조작](run.md)
+- 왜 이런 구조인지 이해하려면 [동작 원리](concepts.md)
 - 이상 동작을 진단하려면 [문제 해결](troubleshooting.md)

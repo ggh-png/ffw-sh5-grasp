@@ -1,7 +1,7 @@
-# 프로젝트 구조
+# 아키텍처와 데이터 흐름
 
 코드를 읽기 전에 “어느 파일이 무엇을 소유하는가”를 빠르게 찾는 문서다. 제어 개념이
-먼저 필요하면 [핵심 개념](concepts.md)을 읽는다.
+먼저 필요하면 [동작 원리](concepts.md)를 읽는다.
 
 ## 한 문장 구조
 
@@ -58,6 +58,12 @@ flowchart TB
 | `arm_control.py` | current arm state, `q_des` | motor torque | IK target 해석 없음 |
 | `grasp.py` | grasp/thumb, contact | finger target, grasp 판정 | 물체 weld 없음 |
 | `ik.py` | 한 손 pose | 단일 팔 관절 해 | 현재 teleop WBIK 경로 아님 |
+| `mj_util.py` | joint id | 연결된 actuator id | 제어 정책 없음 |
+| `bimanual_constraint.py` | legacy 양손 box pose | projected arm delta | 현재 teleop 경로에 참여하지 않음 |
+
+구현을 수정할 때는 [코드 읽기 시작](guide/index.md)의 목적별 경로에서 해당 모듈과
+최소 회귀 테스트를 함께 찾을 수 있다. 공용 pose/Jacobian/distance 계산은
+[기구학과 충돌 거리](guide/kinematics.md)에 따로 정리되어 있다.
 
 ## 상태의 소유권
 
