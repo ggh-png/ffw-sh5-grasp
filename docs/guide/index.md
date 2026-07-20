@@ -89,7 +89,6 @@ flowchart TB
 | `grasp.py` | synergy를 finger command로 바꾸고 contact force 판정 | finger `data.ctrl` |
 | `ik.py` | 단일 팔 pose를 scratch state에서 풀이 | scratch `MjData`만 |
 | `mj_util.py` | joint에서 actuator를 찾는 공용 MuJoCo helper | 없음 |
-| `bimanual_constraint.py` | 과거 box 양손 제약 실험 코드 | 현재 앱 경로에서는 미사용 |
 
 ## 반드시 지킬 불변식
 
@@ -109,4 +108,4 @@ flowchart TB
 4. 문서를 바꿨다면 `mkdocs build --strict`도 실행한다.
 
 짧은 함수 서명과 기본값은 [API 치트시트](cheatsheet.md), ROS2 구성과의 대응은
-[ROS2 개발자용 대응표](ros2-guide.md)에서 찾을 수 있다.
+[ROS2 관점의 시스템 해설](ros2-guide.md)에서 찾을 수 있다.

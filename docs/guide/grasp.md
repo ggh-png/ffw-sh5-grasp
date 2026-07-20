@@ -25,8 +25,8 @@
 
 > **왜 `open_frac`만큼 미리 오므려 두는가**: `hand_only.xml`은 아직 테이블이 없어
 > 캔이 자유낙하하는데, 손가락 액추에이터는 일부러 힘을 약하게 만들어뒀다(접촉
-> 시 토크 포화로 순응 그립이 나오도록, ROS2 개발자를 위한 튜토리얼
-> [Part 2.6](ros2-guide.md#part-2-6)/[5.2](ros2-guide.md#part-5-2) 참고).
+> 시 토크 포화로 순응 그립이 나오도록, ROS2 관점의 시스템 해설
+> [MuJoCo contact](ros2/02-mujoco-model-data.md#part-2-6)/[손 관절 지도](ros2/05-hand-control.md#part-5-2) 참고).
 > Range 전체(완전히 편 상태부터)를 다 오므리면 그 약한
 > 액추에이터가 다 닫기 전에 캔이 이미 손 밖으로 떨어진다 — 그래서 "펼침"
 > 자체를 range 끝이 아니라 캔 표면 근처로 당겨둔다.
@@ -74,11 +74,8 @@ flowchart TD
 | `_set_joint_ctrl(model, data, joint_name, value)` | 관절 이름 기준으로 actuator target 기록 |
 | `_set_joint_fraction(...)` | joint range 조회와 보간, actuator 기록을 한 단계로 처리 |
 | `apply_grasp(model, data, grasp, thumb, side="r")` | synergy 값을 손가락 actuator target으로 변환 |
-| `apply_open_hand(model, data, side="r")` | actuated finger joint를 open pose로 명령 |
 | `get_finger_can_contacts(model, data, side="r")` | 캔과 닿은 finger group별 normal force 합산 |
 | `is_grasped(model, data, min_fingers=2, min_total_force=0.05, require_thumb=True, side="r")` | 접촉력 기준 grasp 성공 여부 반환 |
-| `get_box_hand_contacts(model, data)` | legacy box 접촉 force 측정 |
-| `is_box_held(model, data, min_force_per_hand=1.0)` | legacy box 양손 hold 판정 |
 
 ## 함수 흐름
 

@@ -28,9 +28,9 @@ FK/Jacobian 정의가 달라지는 문제를 막는다.
 > 특이점에서 역행렬이 왜 폭발하는지, DLS가 이를 어떻게 제한하는지, damped
 > null-space 투영이 왜 위치 보존의 근사인지까지 단계별로 보려면
 > [DLS와 위치 우선 IK 수학](ik-math.md)을 먼저 읽는다. ROS2 관점의 전체 흐름은
-> [ROS2 개발자를 위한 튜토리얼 Part 6](ros2-guide.md#part-6)에 이어진다.
+> [역기구학 시스템 해설](ros2/06-inverse-kinematics.md)에 이어진다.
 
-Damped least-squares(DLS) 한 스텝(`_dls_step`, 위치 오차 \(e\), 위치 야코비안 \(J_p\),
+Damped least-squares(DLS) 한 스텝(`solve_pose` 내부, 위치 오차 \(e\), 위치 야코비안 \(J_p\),
 감쇠 \(\lambda\)) — \(\lambda\)가 없는 순수 pseudo-inverse는 특이 자세 근처에서
 관절 속도가 발산하므로, "오차도 줄이고 관절도 작게 움직이는" 절충해를 찾는다:
 
@@ -78,8 +78,6 @@ flowchart TD
 | `_write_q(scratch, q)` | solver 담당 관절각을 scratch qpos에 씀 |
 | `_clamp_to_limits(q)` | joint range로 clamp |
 | `_jac(scratch)` | 목표 site의 position/rotation Jacobian 계산 |
-| `_dls_step(J, err)` | damped least-squares 1 step 계산 |
-| `solve_position(q_init, target_pos, max_iter, tol, context_qpos)` | 위치만 맞추는 3DOF IK |
 | `_pose_error(scratch, target_pos, target_quat)` | 위치/자세 오차 계산 |
 | `solve_pose(q_init, target_pos, target_quat, ...)` | 위치 우선 + 자세 보정 6DOF IK |
 | `solve_pose_multistart(q_init, target_pos, target_quat, rng, ...)` | 여러 초기값으로 재시도해 local minimum 회피 |
@@ -94,7 +92,7 @@ flowchart TD
     D --> F["mj_forward()<br>정규화 pose와 world-aligned Jacobian 갱신"]
     F --> G["_pose_error()<br>목표와 현재 위치/자세 오차 계산"]
     G --> H["_jac()<br>site Jacobian 계산"]
-    H --> I["_dls_step() for position<br>감쇠 최소제곱으로 위치 보정량 계산"]
+    H --> I["position_system solve<br>감쇠 최소제곱으로 위치 보정량 계산"]
     H --> J["orientation null-space projection<br>위치 해를 크게 망치지 않고 자세 보정"]
     I --> K["combine / clamp dq<br>관절 변화량 합성 및 제한"]
     J --> K

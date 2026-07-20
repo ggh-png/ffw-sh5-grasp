@@ -101,16 +101,16 @@ flowchart TD
     U --> F
 ```
 
-### `teleop_targets.py` wrapper
+### `teleop_targets.py` 연결 메서드
 
-기존 렌더/테스트 호출 계약을 유지하기 위해 아래 이름은 `TeleopApp`에 남아 있다.
-실제 계산은 `teleop_targets.py`가 수행한다.
+`TeleopApp`에는 렌더링과 테스트가 직접 호출하는 연결 메서드만 남긴다. 실제 좌표
+계산과 Cyclo 상태 변경은 같은 이름의 `teleop_targets.py` 함수가 수행한다. 단순 전달만
+하고 호출되지 않던 wrapper는 삭제했다.
 
 | wrapper | 실제 역할 |
 |---|---|
-| `_base_pose()` | base x/y/yaw와 yaw quaternion |
 | `_local_to_world_pos()` / `_world_to_base_pos()` | base/world 위치 변환 |
-| `_target_pos_to_base_pos()` / `_target_pos_to_world_pos()` / `_world_to_target_pos()` | 손별 home-relative target 위치 변환 |
+| `_world_to_target_pos()` | world 위치를 손별 home-relative target으로 변환 |
 | `_target_world_quat()` / `_world_quat_to_target_rpy()` | 손별 RPY/world quaternion 변환 |
 | `_world_quat_to_virtual_rpy()` | virtual object RPY 변환 |
 | `_quat_to_mat()` / `_mat_to_quat()` | quaternion/matrix 변환 |
@@ -120,8 +120,6 @@ flowchart TD
 | `capture_grasp()` | Bimanual MoveL capture |
 | `release_grasp()` | Bimanual MoveL release |
 | `apply_virtual_object_target()` | virtual object pose로 양손 target 갱신 |
-| `_bimanual_marker_visible()` | virtual marker 표시 여부 |
-| `_sync_marker_visibility()` | marker alpha 갱신 |
 | `_active_gizmo_target()` | gizmo 대상 선택 |
 | `_gizmo_target_world_pose()` | gizmo 대상 world pose |
 | `_set_gizmo_target_world_pose()` | gizmo 결과를 target에 반영 |

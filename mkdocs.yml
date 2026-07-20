@@ -108,5 +108,24 @@ nav:
             - 렌더링과 Gizmo: guide/teleop_render.md
         - 개발 체크리스트: guide/pitfalls.md
         - API 치트시트: guide/cheatsheet.md
-    - ROS2 개발자용 대응표: guide/ros2-guide.md
+    - ROS2 관점의 시스템 해설:
+        - 전체 안내: guide/ros2-guide.md
+        - 시작과 구조:
+            - ROS2와 개념 지도: guide/ros2/01-concepts.md
+            - MuJoCo model과 data: guide/ros2/02-mujoco-model-data.md
+            - 프로젝트 정체성: guide/ros2/03-project-identity.md
+            - 런타임 아키텍처: guide/ros2/04-runtime-architecture.md
+        - 제어 알고리즘:
+            - 손 제어: guide/ros2/05-hand-control.md
+            - 역기구학: guide/ros2/06-inverse-kinematics.md
+            - 팔 토크 제어: guide/ros2/07-arm-torque-control.md
+            - 모바일 베이스: guide/ros2/08-mobile-base.md
+        - 조작과 좌표계:
+            - 3D 텔레오퍼레이션 UI: guide/ros2/09-teleoperation-ui.md
+            - 좌표계: guide/ros2/10-coordinate-frames.md
+        - 검증과 참고:
+            - 테스트와 검증: guide/ros2/11-testing.md
+            - 직접 실행: guide/ros2/12-running.md
+            - 버그 사례집: guide/ros2/13-bug-cases.md
+            - 용어 사전: guide/ros2/14-glossary.md
     - 릴리스 기록: releases.md

@@ -45,7 +45,7 @@ clamp한 뒤 `data.ctrl`에 쓴다.
 아무리 올려도 0이 아니라 반비례로 줄어들 뿐이다. \(h(q,\dot q)\)를 더하면 평형
 조건의 양변에서 그 항이 상쇄돼 \(K_p(q_{des}-q)=0\), 즉 유한한 \(K_p\)에서도
 오차가 정확히 0이 되는 평형점으로 바뀐다. 유도 과정은
-[ROS2 개발자를 위한 튜토리얼 Part 7.2](ros2-guide.md#part-7-2) 참고.
+[팔 토크 제어 해설의 PD와 feedforward](ros2/07-arm-torque-control.md#part-7-2) 참고.
 
 ## 클래스
 

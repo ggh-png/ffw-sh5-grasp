@@ -19,7 +19,7 @@ UI target, 3D marker/gizmo pose, IK world pose 사이의 변환을 담당한다.
 > **왜 startup anchor가 필요한가**: 입력 축은 로봇 시작 방향의 앞/옆/위를
 > 유지하되 최종 target world pose는 고정돼야 한다. 현재 base pose에 target을 붙이면
 > whole-body IK가 베이스를 움직일 때 goal도 똑같이 움직여 오차가 줄지 않는다. 자세한 이유는
-> [ROS2 개발자를 위한 튜토리얼 Part 10.3](ros2-guide.md#part-10-3) 참고.
+> [좌표계 해설의 변환 함수 지도](ros2/10-coordinate-frames.md#part-10-3) 참고.
 
 startup-anchor 위치 \((x,y,z)\) → world 위치, 앱 시작 시 캡처한 베이스 pose
 \((x_{b0},y_{b0},\theta_{b0})\)만큼 2D 회전 후 평행이동한다:

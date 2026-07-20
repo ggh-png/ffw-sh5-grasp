@@ -431,20 +431,11 @@ class TeleopApp:
 
         self.arm_mode[side] = mode
 
-    def _base_pose(self):
-        return teleop_targets.base_pose(self)
-
     def _local_to_world_pos(self, p_local):
         return teleop_targets.local_to_world_pos(self, p_local)
 
     def _world_to_base_pos(self, p_world):
         return teleop_targets.world_to_base_pos(self, p_world)
-
-    def _target_pos_to_base_pos(self, side, pos_target):
-        return teleop_targets.target_pos_to_base_pos(self, side, pos_target)
-
-    def _target_pos_to_world_pos(self, side, pos_target):
-        return teleop_targets.target_pos_to_world_pos(self, side, pos_target)
 
     def _world_to_target_pos(self, side, world_pos):
         return teleop_targets.world_to_target_pos(self, side, world_pos)
@@ -541,12 +532,6 @@ class TeleopApp:
 
     def apply_virtual_object_target(self):
         teleop_targets.apply_virtual_object_target(self)
-
-    def _bimanual_marker_visible(self):
-        return teleop_targets.bimanual_marker_visible(self)
-
-    def _sync_marker_visibility(self):
-        teleop_targets.sync_marker_visibility(self)
 
     def _active_gizmo_target(self):
         return teleop_targets.active_gizmo_target(self)

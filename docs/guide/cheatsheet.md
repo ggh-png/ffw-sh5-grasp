@@ -46,7 +46,6 @@
 | `mj_id2name()` | `grasp.py` | id를 이름으로 변환 |
 | `mj_jacSite()` | `kinematics.py`, `ik.py` | site Jacobian 계산 |
 | `mj_contactForce()` | `grasp.py` | contact force 읽기 |
-| `mju_subQuat()` | legacy `bimanual_constraint.py` | quaternion 상대 회전 계산 |
 | `mju_mat2Quat()` | target/render/IK | matrix를 quaternion으로 변환 |
 | `mju_quat2Mat()` | `teleop_targets.py` | quaternion을 matrix로 변환 |
 | `mju_mulQuat()` | target/IK | quaternion 곱 |

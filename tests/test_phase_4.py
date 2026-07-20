@@ -134,7 +134,7 @@ def run_ik_unit_test(model, solver, rng):
     joint_ranges = np.array([model.jnt_range[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, n)]
                               for n in ARM_R])
     scratch = mujoco.MjData(model)
-    _reset_home(model, scratch)  # seeds lift_joint etc. -- see solve_position's context_qpos note
+    _reset_home(model, scratch)  # seeds lift_joint and other upstream context joints
 
     successes = 0
     pos_errs, ori_errs = [], []

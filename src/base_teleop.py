@@ -306,9 +306,6 @@ class SwerveDrive:
             self.previous_commands[name] = angle
         return module_results
 
-    def estimate_body_twist(self, steering_positions, wheel_velocities):
-        return self.kinematics.forward(steering_positions, wheel_velocities)
-
     def _rate_limit_drive_commands(self, commands, dt):
         """Rate-limit nonzero drive transitions; parking commands take the zero fast path."""
         result = {}

@@ -70,43 +70,6 @@ class InverseKinematics:
         cols = self.dof_ids
         return jacp[:, cols], jacr[:, cols]
 
-    def _dls_step(self, J, err):
-        """damped least squares 한 스텝: dq = J^T (J J^T + lam^2 I)^-1 err.
-        lam(감쇠)이 특이 자세(singularity) 근처에서 역행렬이 폭발하는 걸 막아준다."""
-        lam2 = self.damping ** 2
-        JJt = J @ J.T + lam2 * np.eye(J.shape[0])
-        return J.T @ np.linalg.solve(JJt, err)
-
-    def solve_position(self, q_init, target_pos, max_iter=DEFAULT_MAX_ITER, tol=POS_TOL,
-                       context_qpos=None):
-        """Position-only 3DOF DLS starting from q_init. Returns (q_solution, pos_err_norm).
-
-        context_qpos: full-model qpos to seed every *other* joint from (e.g. models/
-        full_scene.xml's lift_joint, which sits upstream of the arm chain and is not part
-        of this solver's own joint_names) -- without it those joints reset to 0, silently
-        moving the whole chain's base to the wrong place. Leave
-        None for single-arm models like models/arm_hand.xml where nothing upstream varies.
-        """
-        q = np.array(q_init, dtype=float)
-        # context_qpos로 전체 qpos를 먼저 시드해야, 이 솔버가 담당하지 않는 상위
-        # 관절(예: full_scene.xml의 lift_joint)이 0으로 리셋되지 않는다.
-        scratch = self._initialize_scratch(q, context_qpos)
-
-        err_norm = np.inf
-        # 위치 오차가 허용치 밑으로 떨어지거나 반복 한도에 도달할 때까지 DLS를 반복.
-        for _ in range(max_iter):
-            cur_pos = scratch.site_xpos[self.site_id]
-            err = target_pos - cur_pos
-            err_norm = float(np.linalg.norm(err))
-            if err_norm < tol:
-                break
-            jacp, _ = self._jac(scratch)
-            dq = np.clip(self._dls_step(jacp, err), -self.max_joint_delta, self.max_joint_delta)
-            q = self._clamp_to_limits(q + dq)
-            self._write_q(scratch, q)
-            mujoco.mj_forward(self.model, scratch)
-        return q, err_norm
-
     def _pose_error(self, scratch, target_pos, target_quat):
         """Return world-frame position and shortest-path orientation errors."""
         cur_pos = scratch.site_xpos[self.site_id]
@@ -134,9 +97,9 @@ class InverseKinematics:
           4. dq = dq_pos + dq_ori, clamped
           5. backtrack: halve dq (up to 6x) until pos_err + ori_weight*ori_err actually drops;
              if it never does, take the smallest tried step (guarantees monotonic progress)
-        context_qpos: see solve_position -- seeds every joint this solver doesn't itself
-        control (e.g. models/full_scene.xml's lift_joint) so the site's world position
-        reflects the real simulation's current state rather than resetting to 0.
+        context_qpos seeds every joint this solver doesn't itself control (for example,
+        models/full_scene.xml's lift_joint) so the site's world position reflects the real
+        simulation state rather than resetting upstream joints to 0.
 
         Returns (q_solution, pos_err_norm, ori_err_norm_rad).
         """

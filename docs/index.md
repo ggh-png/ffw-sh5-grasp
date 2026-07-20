@@ -46,7 +46,7 @@ FFW-SH5 양팔 모바일 로봇을 MuJoCo 물리에서 조작하는 ROS-free 텔
     기본 구조를 먼저 본 다음 ROS2 구성요소와 대응시킨다.
 
     - [아키텍처와 데이터 흐름](overview.md)
-    - [ROS2 개발자용 대응표](guide/ros2-guide.md)
+    - [ROS2 관점의 시스템 해설](guide/ros2-guide.md)
 
 ## 한눈에 보는 동작 흐름
 

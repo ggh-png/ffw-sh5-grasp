@@ -59,7 +59,6 @@ flowchart TB
 | `grasp.py` | grasp/thumb, contact | finger target, grasp 판정 | 물체 weld 없음 |
 | `ik.py` | 한 손 pose | 단일 팔 관절 해 | 현재 teleop WBIK 경로 아님 |
 | `mj_util.py` | joint id | 연결된 actuator id | 제어 정책 없음 |
-| `bimanual_constraint.py` | legacy 양손 box pose | projected arm delta | 현재 teleop 경로에 참여하지 않음 |
 
 구현을 수정할 때는 [코드 읽기 시작](guide/index.md)의 목적별 경로에서 해당 모듈과
 최소 회귀 테스트를 함께 찾을 수 있다. 공용 pose/Jacobian/distance 계산은
@@ -151,7 +150,7 @@ wheel controller를 사용하지 않는다.
 | swerve controller plugin | `base_teleop.py` |
 | `ros2_control` | MuJoCo actuator `data.ctrl` |
 
-알고리즘 대응을 더 깊게 보려면 [ROS2 개발자 심화 튜토리얼](guide/ros2-guide.md)을
+ROS2 관점에서 구조와 알고리즘을 더 깊게 보려면 [ROS2 관점의 시스템 해설](guide/ros2-guide.md)을
 읽는다.
 
 ## 테스트 연결
