@@ -67,7 +67,7 @@ flowchart TB
 | 손 pose/Jacobian | [기구학과 충돌 거리](kinematics.md) | [전신 IK](whole_body_ik.md) | Phase 3, Whole-body |
 | 전신 IK·관절 한계·충돌 | [전신 IK와 충돌 회피](whole_body_ik.md) | [목표와 좌표 변환](teleop_targets.md) | Whole-body, Phase 6 |
 | 바퀴·조향·수동 주행 | [모바일 스워브 제어](base_teleop.md) | [앱 조립](teleop_app.md) | Phase 5, Whole-body |
-| 단일 팔 IK | [단일 팔 IK](ik.md) | [기구학](kinematics.md) | Phase 3, 4 |
+| 단일 팔 IK | [단일 팔 IK](ik.md) | [DLS와 위치 우선 IK 수학](ik-math.md), [기구학](kinematics.md) | Phase 3, 4 |
 | 팔 torque | [팔 토크 제어](arm_control.md) | [앱 조립](teleop_app.md) | Phase 3, 4 |
 | 손가락·파지 판정 | [손 파지와 접촉 판정](grasp.md) | [MuJoCo 기본 용어](00-basics.md) | Phase 1, 2 |
 | target·marker·좌표계 | [목표와 좌표 변환](teleop_targets.md) | [동작 원리](../concepts.md) | Phase 6 |

@@ -25,11 +25,10 @@ FK/Jacobian 정의가 달라지는 문제를 막는다.
 
 ## 수식
 
-> 왜 이런 식들이 필요한지(특이점에서 역행렬이 왜 폭발하는지, null-space 투영이
-> 왜 위치를 안 건드리는지, backtracking이 왜 따로 필요한지)는
-> [ROS2 개발자를 위한 튜토리얼 Part 6](ros2-guide.md#part-6)이 유도 과정과
-> 필요한 선형대수(야코비안, null space)까지 포함해 자세히 다룬다. 여기서는
-> 최종 식만 정리한다.
+> 특이점에서 역행렬이 왜 폭발하는지, DLS가 이를 어떻게 제한하는지, damped
+> null-space 투영이 왜 위치 보존의 근사인지까지 단계별로 보려면
+> [DLS와 위치 우선 IK 수학](ik-math.md)을 먼저 읽는다. ROS2 관점의 전체 흐름은
+> [ROS2 개발자를 위한 튜토리얼 Part 6](ros2-guide.md#part-6)에 이어진다.
 
 Damped least-squares(DLS) 한 스텝(`_dls_step`, 위치 오차 \(e\), 위치 야코비안 \(J_p\),
 감쇠 \(\lambda\)) — \(\lambda\)가 없는 순수 pseudo-inverse는 특이 자세 근처에서
@@ -56,7 +55,7 @@ flowchart TD
     DP --> SUM["Δq_pos + Δq_ori"]
     DO --> SUM
     SUM --> CLIP["joint delta clamp"]
-    CLIP --> LS["backtracking<br>실제 오차가 줄어드는 크기 선택"]
+    CLIP --> LS["backtracking<br>step 후보의 실제 비용 비교"]
 ```
 
 위쪽 경로가 우선순위가 높은 위치 task다. 아래 자세 경로는 `Jp`가 이미 사용하는

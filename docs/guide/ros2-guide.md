@@ -645,6 +645,10 @@ yaw_value = THUMB_YAW_REST[side] + thumb * (THUMB_YAW_CURL[side] - THUMB_YAW_RES
 
 ## Part 6 — 역기구학: `src/ik.py` {: #part-6 }
 
+!!! tip "DLS와 null-space 식만 집중해서 보고 싶다면"
+    [DLS와 위치 우선 IK 수학](ik-math.md)은 문제 정의, SVD 관점의 안정성,
+    2관절 예제와 damped projector의 한계를 한 페이지에 모아 설명한다.
+
 ### 6.1 이 프로젝트에 왜 MoveIt이 없는가 {: #part-6-1 }
 
 MoveIt은 (1) IK 계산 (2) 충돌을 피하는 전체 궤적 플래닝 (3) 궤적 실행까지
@@ -730,7 +734,7 @@ J_{ji} = \frac{\partial x_j}{\partial q_i}
 
 이게 6.4(계층형 IK)에서 왜 중요한가: 위치를 이미 다 맞춘 뒤에 자세가 아직
 안 맞았다면, "위치에 영향을 주지 않는 방향"(=위치 야코비안 \(J_p\)의 null
-space) 안에서만 관절을 추가로 움직이면, 방금 맞춘 위치를 전혀 망치지 않으면서
+space) 안에서만 관절을 추가로 움직이면, 방금 맞춘 위치에 미치는 영향을 억제하면서
 자세를 마저 맞출 수 있다. "자세 오차를 관절 방향으로 바꾼 값"(\(J_r^Te_{ori}\))을
 통째로 다 쓰는 대신, 그중 null space에 들어가는 성분만 걸러 쓰는 것이 6.4의
 투영 공식이 하는 일이다.
@@ -801,7 +805,7 @@ def _dls_step(self, J, err):
 
 1. 위치 오차만으로 \(\Delta q_{pos}\)를 6.3의 DLS로 먼저 푼다 — 자세는 아직
    전혀 고려하지 않은 순수 위치 해.
-2. 자세 보정 \(\Delta q_{ori}\)를 그 위에 더하되, **위치를 조금도 건드리지 않는
+2. 자세 보정 \(\Delta q_{ori}\)를 그 위에 더하되, **위치에 미치는 영향을 크게 줄인
    방향으로만** 더한다. "위치를 안 건드리는 관절 조합들의 집합"이 정확히
    \(J_p\)의 null space(핵공간, \(J_p x = 0\)을 만족하는 \(x\) 전체)다. 임의의
    벡터 \(g\)를 그 null space에 투영하는 표준 공식은 \(g - J_p^{+}(J_p g)\)
@@ -816,6 +820,12 @@ def _dls_step(self, J, err):
 이렇게 만든 \(\Delta q_{ori}\)는 1차 근사에서 \(J_p\,\Delta q_{ori}\approx 0\)이라
 — 즉 위에서 이미 구한 위치 해 \(\Delta q_{pos}\)를 거의 망치지 않으면서 남는
 여유 자유도만으로 자세를 맞춘다.
+
+!!! warning "damped projector는 정확한 영공간 projector가 아니다"
+    여기서는 안정성을 위해 Moore–Penrose pseudoinverse 대신 damped
+    pseudoinverse를 재사용한다. 따라서 \(J_p\Delta q_{ori}=0\)이 정확히 성립하는
+    것이 아니라 대략 0에 가까워진다. damping, clamp, 유한 step과 비선형성 때문에
+    작은 위치 변화가 남을 수 있다.
 
 3. \(\Delta q = \Delta q_{pos} + \Delta q_{ori}\), 관절당 최대 변화량으로
    clamp.
@@ -903,8 +913,9 @@ for _ in range(6):
     step *= 0.5
 ```
 
-이게 있어야 "반복할수록 나빠지는" 상황에서도 **매 반복이 최소한 이전보다
-나쁘지 않음을 보장**한다.
+구현은 비용이 감소한 후보를 찾으면 즉시 채택한다. 여섯 후보가 모두 개선되지 않으면
+시험한 후보 중 비용이 가장 작은 것을 택하므로 큰 step의 위험은 줄지만, **매 반복의
+단조 감소를 수학적으로 보장하지는 않는다**.
 
 ### 6.7 multistart — 국소해(local minimum) 탈출 {: #part-6-7 }
 

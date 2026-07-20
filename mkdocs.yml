@@ -97,6 +97,7 @@ nav:
             - 기구학과 충돌 거리: guide/kinematics.md
             - 전신 IK와 충돌 회피: guide/whole_body_ik.md
             - 모바일 스워브 제어: guide/base_teleop.md
+            - DLS와 위치 우선 IK 수학: guide/ik-math.md
             - 단일 팔 IK: guide/ik.md
             - 팔 토크 제어: guide/arm_control.md
             - 손 파지와 접촉 판정: guide/grasp.md
