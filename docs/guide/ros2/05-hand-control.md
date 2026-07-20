@@ -2,13 +2,17 @@
 
 # Part 5 — 손 제어: `src/grasp.py` {: #part-5 }
 
+!!! info "함께 볼 개발자 가이드"
+    함수별 입력·출력과 접촉 판정 조건은 [`grasp.py` 개발자 가이드](../grasp.md)에서
+    실제 호출 관점으로 확인할 수 있다.
+
 ## 기능 구현 요약
 
 | 구분 | 내용 |
 |---|---|
 | 해결할 문제 | 많은 손가락 관절을 소수의 입력으로 움직이고, 물체를 실제 접촉력으로 잡았는지 판정해야 한다. |
 | 해결 방법 | `grasp`, `thumb` 두 synergy 값을 관절 범위에 보간하고, 캔과 닿은 손가락별 normal force를 합산해 grasp 조건을 검사한다. |
-| 사용 수식 | 관절 목표는 \(q(s)=q_{lo}+s(q_{hi}-q_{lo})\), 총 접촉력은 \(F_{total}=\sum_i F_i\)다. 각 항과 분기 조건은 5.2와 5.5에서 순서대로 설명한다. |
+| 사용 수식 | 먼저 \(f=f_{open}+s(1-f_{open})\)를 만든다. open이 range의 lo이면 \(q=lo+f(hi-lo)\), hi이면 \(q=hi-f(hi-lo)\)로 미러링한다. 총 접촉력은 \(F_{total}=\sum_iF_i\)다. 각 항과 판정 조건은 5.2와 5.3에서 설명한다. |
 | 코드 구현 과정 | `apply_grasp()` → `_set_joint_fraction()` → `_ramp_value()` → `_set_joint_ctrl()` 순서로 actuator 목표를 기록한다. 판정은 `get_finger_can_contacts()`가 힘을 모으고 `is_grasped()`가 손가락 수·총 힘·엄지 조건을 확인한다. |
 | 수식 없이 사용하는 함수 | `_validate_side()`는 좌우 손 입력을 검증하고, `_resolve_joint_actuator()`는 `mj_util.find_actuator_for_joint()`로 joint와 actuator 연결을 찾고 캐시한다. `mujoco.mj_contactForce()`는 접촉력 원시값을 읽는다. |
 
@@ -37,11 +41,12 @@ FINGER_CURL_JOINTS = {
 }
 THUMB_CURL_JOINTS = {"r": ("finger_r_joint3", "finger_r_joint4"), ...}
 FINGER_OPEN_FRAC = 0.20   # grasp=0이어도 range 전체를 펴지 않고 20% 남겨둠
-RING_PINKY_MAX_FRAC = 0.35  # 약지/새끼는 실제 grasp에 참여 안 함, 코스메틱으로만 35%까지 굽음
+RING_PINKY_MAX_FRAC = 0.35  # 약지/새끼는 판정 대상이 아니며 35%까지 보조 명령
 ```
 
-3점 파지(엄지+검지+중지)만 실제로 캔을 쥐고, **약지/새끼는 애초에 grasp에
-참여하지 않는다** — MCP(스프레드) 관절은 XML에서 `range="0 0"`으로 아예
+성공 판정은 엄지·검지·중지 body group만 집계한다. 약지·새끼는 최대 35%의
+보조 동작 명령을 받고 물리적으로 접촉할 수 있지만, `is_grasped()`의 손가락 수와
+접촉력 합에는 포함되지 않는다. MCP(스프레드) 관절은 XML에서 `range="0 0"`으로
 잠겨 있다. 이건 튜닝 실패가 아니라 처음부터 제시된 fallback이다:
 "5지 전부"에 집착하지 않고 3점 파지로 단순화하는 게 "정직한 물리 파지"라는
 목표에 더 맞다는 판단.

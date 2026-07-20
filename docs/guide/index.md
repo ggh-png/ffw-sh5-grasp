@@ -93,6 +93,8 @@ flowchart TB
 ## 반드시 지킬 불변식
 
 - 초기화와 자유물체 reset 외에는 live robot `data.qpos`를 직접 덮어쓰지 않는다.
+  시작 시 `_disable_legacy_box_asset()`이 사용하지 않는 box를 비활성화하는 것은
+  can-only workflow를 위한 명시적 초기화 예외다.
 - UI와 gizmo는 target/state만 바꾸고 actuator command를 직접 만들지 않는다.
 - quaternion을 정규화하고 orientation error와 rotational Jacobian의 frame을 맞춘다.
 - FK arm과 Whole-body OFF DOF는 weight가 아니라 solver bound로 정확히 고정한다.

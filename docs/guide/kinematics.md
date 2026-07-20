@@ -4,6 +4,9 @@
 world pose와 Jacobian을 읽고, 충돌 geometry 사이의 signed distance와 그 변화율을
 계산한다.
 
+이 계산이 실시간 전신 IK와 legacy 단일 팔 DLS에서 어떻게 사용되는지는
+[Part 6 — 전신 IK와 단일 팔 DLS IK](ros2/06-inverse-kinematics.md)에서 연결해 설명한다.
+
 ## 언제 이 파일을 보는가
 
 - 손 pose 또는 Jacobian 값이 예상과 다를 때

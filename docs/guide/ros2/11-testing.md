@@ -2,6 +2,10 @@
 
 # Part 11 — 테스트와 검증 철학 {: #part-11 }
 
+!!! info "함께 볼 개발자 가이드"
+    최신 전체 명령과 각 gate의 기대 결과는 [테스트](../../testing.md)에서
+    복사해 실행할 수 있다.
+
 ## 11.1 Phase별 테스트 게이트 {: #part-11-1 }
 
 | 파일 | 무엇을 검증하나 | 실행 방식 |
@@ -24,6 +28,7 @@
 
 ```bash
 for p in 0 1 2 3 4 5 6; do python3 tests/test_phase_$p.py; done
+python3 tests/test_whole_body.py
 ```
 
 각 파일은 독립적으로 실행 가능하다(공유 상태 없음, 매번 새 `MjModel`/`MjData`

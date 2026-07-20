@@ -2,6 +2,10 @@
 
 # Part 1 — 개념 지도: ROS2 세계관에서 이 프로젝트로 {: #part-1 }
 
+!!! info "함께 볼 개발자 가이드"
+    코드 중심 탐색은 [개발자 가이드](../index.md), 전체 시스템 경계는
+    [프로젝트 개요](../../overview.md)에서 이어서 볼 수 있다.
+
 ## 1.1 큰 그림 비교표 {: #part-1-1 }
 
 ROS2로 로봇을 다뤄본 사람이 이 저장소를 열었을 때 가장 먼저 느낄 위화감은
@@ -17,18 +21,18 @@ MuJoCo Python 바인딩 위에 순수 Python으로 물리 루프 + GUI를 얹은
 | 서비스(service) 호출 | 없음 — 그냥 함수 호출 | 예: `capture_grasp()`는 서비스가 아니라 메서드 |
 | 액션(action, ex. `GripperCommand`) | `grasp.apply_grasp()` (스칼라 즉시 반영) | goal/feedback/result 개념 없음, 매 스텝 값만 밀어넣음 |
 | URDF/xacro | MJCF(`models/full_scene.xml`) | 아래 2.1에서 상세 비교 |
-| `robot_state_publisher` + tf2 | 없음 — MuJoCo가 `data.site_xpos`/`xmat`를 직접 계산해줌 | tf 트리 자체가 없다, 아래 Part 11 참고 |
+| `robot_state_publisher` + tf2 | 없음 — MuJoCo가 `data.site_xpos`/`xmat`를 직접 계산해줌 | tf 트리 자체가 없다, 아래 Part 10 참고 |
 | `joint_state_publisher` / `/joint_states` 토픽 | `data.qpos` 배열 직접 읽기 | 퍼블리시 안 하고 그냥 메모리에서 읽는다 |
 | `ros2_control` (hardware_interface, controller_manager) | `arm_control.ArmTorqueController`, `grasp.apply_grasp`, `base_teleop.SwerveDrive` | 컨트롤러 플러그인 로딩 없이 그냥 파이썬 클래스 3개 |
 | `ros2_control` command interface (position/velocity/effort) | MuJoCo actuator 타입 3종(`<position>`/`<velocity>`/`<motor>`) | 아래 2.5 |
 | MoveIt (IK 서비스, 모션 플래닝, 충돌 회피 경로) | `src/whole_body_ik.py`의 `WholeBodyIK` | base/lift/양팔 differential IK와 reactive collision CBF가 있고, ROS·전역 경로 플래너는 없다 |
-| RViz Interactive Marker (3D 드래그 핸들) | `teleop_render.py`의 ImGuizmo + MuJoCo mocap body | 아래 Part 10 |
+| RViz Interactive Marker (3D 드래그 핸들) | `teleop_render.py`의 ImGuizmo + MuJoCo mocap body | 아래 Part 9 |
 | `rqt`/dynamic reconfigure 슬라이더 패널 | `teleop_ui.py`의 ImGui 패널 | 그림도 물리도 같은 창 안에서 그려진다 |
 | Gazebo/Ignition (물리 시뮬레이터) | MuJoCo | 둘 다 "물리 엔진"이지만 세부 개념이 다르다 (아래 Part 2) |
 | `nav2`(cmd_vel, twist_mux, diff_drive_controller) | `base_teleop.SwerveDrive` | ROS2 없이 직접 구현한 스워브 역기구학 |
 | launch 파일(`.launch.py`) | 없음 — `python3 src/teleop_app.py` 한 줄 | 노드가 하나뿐이니 launch로 여러 프로세스를 묶을 필요가 없다 |
 | 파라미터 서버(`ros2 param`) | 파이썬 모듈 최상단 상수(`grasp.py`의 `FINGER_OPEN_FRAC` 등) | 런타임 재설정 불가, 코드/XML 값을 고쳐야 함 |
-| `colcon test` / `launch_testing` | `tests/test_phase_{0..6}.py`, `tests/test_whole_body.py` | headless, 순차 실행; 아래 Part 12 |
+| `colcon test` / `launch_testing` | `tests/test_phase_{0..6}.py`, `tests/test_whole_body.py` | headless, 순차 실행; 아래 Part 11 |
 | DDS QoS, 콜백 그룹, executor, spin | 없음 — `while` 루프 하나 | "멀티스레드로 인한 레이스 컨디션"이라는 문제 자체가 없다 |
 
 ## 1.2 왜 ROS2가 없는가 {: #part-1-2 }

@@ -2,6 +2,10 @@
 
 # Part 8 — 모바일 베이스: `src/base_teleop.py` {: #part-8 }
 
+!!! info "함께 볼 개발자 가이드"
+    클래스별 상태와 제어 단계는 [`base_teleop.py` 개발자 가이드](../base_teleop.md)에서
+    실제 API와 함께 볼 수 있다.
+
 ## 기능 구현 요약
 
 | 구분 | 내용 |

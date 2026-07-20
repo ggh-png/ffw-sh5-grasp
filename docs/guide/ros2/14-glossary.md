@@ -1,6 +1,6 @@
 [← 전체 안내](../ros2-guide.md)
 
-# Part 14 — 용어 사전 (ROS2 ↔ 이 프로젝트) {: #part-14 }
+# Part 14 — 용어와 개념 찾아보기 {: #part-14 }
 
 | ROS2/로보틱스 용어 | 이 프로젝트 용어 | 짧은 설명 |
 |---|---|---|
@@ -21,7 +21,7 @@
 | launch 파일 | (없음, `python3 src/teleop_app.py`) | 노드가 하나라 불필요 |
 | 파라미터 서버 | 모듈 최상단 상수 | 런타임 재설정 불가 |
 | `colcon test`/`launch_testing` | `tests/test_phase_{0..6}.py`, `test_whole_body.py` | headless, 직접 실행 |
-| Gazebo `SetModelState` 치팅 | `data.qpos[...]` 직접 대입 | **금지** (reset/초기배치 제외) |
+| Gazebo `SetModelState` 치팅 | `data.qpos[...]` 직접 대입 | live 로봇 제어에는 금지. reset·초기배치·startup legacy-box 비활성화만 예외 |
 | `dynamic_reconfigure`/`rqt` | `teleop_ui.py` (ImGui) | 같은 프로세스 내 위젯 |
 
 ---

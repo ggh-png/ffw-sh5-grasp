@@ -2,6 +2,9 @@
 
 GLFW 창, MuJoCo scene render, 카메라, 3D gizmo를 담당한다.
 
+UI·목표 상태와 gizmo가 연결되는 전체 흐름은
+[Part 9 — Cyclo Control UI](ros2/09-teleoperation-ui.md)에서 확인한다.
+
 ## 역할
 
 | 항목 | 내용 |

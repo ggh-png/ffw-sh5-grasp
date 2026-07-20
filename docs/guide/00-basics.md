@@ -1,5 +1,8 @@
 # MuJoCo 기본 용어
 
+ROS2/URDF 개념과 항목별로 비교하려면 [Part 2 — MuJoCo 속성 강의](ros2/02-mujoco-model-data.md)를
+함께 본다.
+
 ## Core
 
 | 용어 | 의미 |

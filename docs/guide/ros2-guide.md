@@ -33,7 +33,7 @@
 | 페이지 | 내용 |
 |---|---|
 | <span id="part-5"></span>[Part 5 — 손 제어](ros2/05-hand-control.md) | grasp synergy, 관절 보간, 접촉 판정 |
-| <span id="part-6"></span>[Part 6 — 역기구학](ros2/06-inverse-kinematics.md) | DLS, task priority, 회전 오차, line search |
+| <span id="part-6"></span>[Part 6 — 전신 IK와 단일 팔 DLS IK](ros2/06-inverse-kinematics.md) | live bounded WBIK와 legacy DLS, task priority, 회전 오차 |
 | <span id="part-7"></span>[Part 7 — 팔 토크 제어](ros2/07-arm-torque-control.md) | PD와 bias force feedforward |
 | <span id="part-8"></span>[Part 8 — 모바일 베이스](ros2/08-mobile-base.md) | 스워브 역기구학과 feedback 제어 |
 
@@ -51,7 +51,7 @@
 | <span id="part-11"></span>[Part 11 — 테스트와 검증](ros2/11-testing.md) | Phase gate와 release 전략 |
 | <span id="part-12"></span>[Part 12 — 직접 실행](ros2/12-running.md) | 설치와 실행 명령 |
 | <span id="part-13"></span>[Part 13 — 버그 사례집](ros2/13-bug-cases.md) | 실제 결함과 일반화된 교훈 |
-| <span id="part-14"></span>[Part 14 — 용어 사전](ros2/14-glossary.md) | ROS2와 현재 프로젝트 용어 비교 |
+| <span id="part-14"></span>[Part 14 — 용어와 개념 찾아보기](ros2/14-glossary.md) | 익숙한 용어에서 현재 구현으로 빠르게 이동 |
 
 ## 수식 설명 원칙
 

@@ -3,6 +3,9 @@
 앱의 조립 지점이다. MuJoCo model/data를 만들고, UI/렌더/target/IK/control 모듈을
 연결한 뒤 메인 루프를 실행한다.
 
+렌더 프레임과 물리 서브스텝의 정확한 호출 순서는
+[Part 4 — 전체 아키텍처 실행 흐름](ros2/04-runtime-architecture.md)에서 해설한다.
+
 ## 책임
 
 | 구분 | 내용 |

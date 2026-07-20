@@ -2,6 +2,9 @@
 
 ImGui 기반 텔레옵 패널을 그린다.
 
+MoveL/Bimanual MoveL 상태 전이 안에서 이 패널이 맡는 위치는
+[Part 9 — Cyclo Control UI](ros2/09-teleoperation-ui.md)에서 확인한다.
+
 ## 역할
 
 | 항목 | 내용 |

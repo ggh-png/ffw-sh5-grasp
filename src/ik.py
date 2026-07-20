@@ -82,7 +82,7 @@ class InverseKinematics:
     def solve_pose(self, q_init, target_pos, target_quat, max_iter=DEFAULT_MAX_ITER,
                    pos_tol=POS_TOL, ori_tol=ORI_TOL, ori_weight=0.3, context_qpos=None):
         """Hierarchical 6DOF DLS: position (3) task-priority over orientation (3), with a
-        backtracking line search so every accepted step actually reduces error.
+        backtracking line search that prefers a step which actually reduces error.
 
         A naive stacked-Jacobian 6D DLS solve (position+orientation errors in one
         least-squares problem) diverges whenever the orientation gap is large relative to
@@ -96,7 +96,7 @@ class InverseKinematics:
           3. dq_ori  = g_ori - Jp^T (Jp Jp^T + lam^2 I)^-1 (Jp g_ori)   (null-space projected)
           4. dq = dq_pos + dq_ori, clamped
           5. backtrack: halve dq (up to 6x) until pos_err + ori_weight*ori_err actually drops;
-             if it never does, take the smallest tried step (guarantees monotonic progress)
+             if none improves it, take the least-cost tried candidate (not a monotonic guarantee)
         context_qpos seeds every joint this solver doesn't itself control (for example,
         models/full_scene.xml's lift_joint) so the site's world position reflects the real
         simulation state rather than resetting upstream joints to 0.

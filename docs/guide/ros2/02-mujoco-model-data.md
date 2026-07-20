@@ -2,6 +2,10 @@
 
 # Part 2 — MuJoCo 속성 강의 (ROS2/Gazebo 경험자를 위해) {: #part-2 }
 
+!!! info "함께 볼 개발자 가이드"
+    용어를 빠르게 찾으려면 [MuJoCo 기본 용어](../00-basics.md), 배열·객체 대응을
+    나란히 보려면 [코드 읽기 치트시트](../cheatsheet.md)를 함께 참고한다.
+
 ## 2.1 URDF vs MJCF {: #part-2-1 }
 
 ROS2 생태계에서 로봇 모델은 URDF(또는 xacro로 조립되는 URDF)로 쓴다. MuJoCo는

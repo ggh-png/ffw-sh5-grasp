@@ -3,6 +3,9 @@
 손 target을 팔만으로 맞추지 않고 모바일 베이스 3축, 리프트 1축, 양팔 14축을 한
 문제에서 푸는 ROS 비의존 differential whole-body IK다.
 
+ROS2/MoveIt 관점의 개념 비교와 legacy DLS 식의 역할은
+[Part 6 — 전신 IK와 단일 팔 DLS IK](ros2/06-inverse-kinematics.md)를 함께 본다.
+
 ## 제어 변수와 출력
 
 제어 속도 벡터는 다음 18개 자유도다.

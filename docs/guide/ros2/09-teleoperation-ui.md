@@ -2,6 +2,11 @@
 
 # Part 9 — Cyclo Control UI: 3D 마커 텔레옵 {: #part-9 }
 
+!!! info "함께 볼 개발자 가이드"
+    패널 이벤트는 [`teleop_ui.py`](../teleop_ui.md), 창·카메라·gizmo는
+    [`teleop_render.py`](../teleop_render.md), 목표 상태 변환은
+    [`teleop_targets.py`](../teleop_targets.md)에서 각각 확인할 수 있다.
+
 ## 기능 구현 요약
 
 | 구분 | 내용 |

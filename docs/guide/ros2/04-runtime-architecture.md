@@ -2,6 +2,10 @@
 
 # Part 4 — 전체 아키텍처 실행 흐름 {: #part-4 }
 
+!!! info "함께 볼 개발자 가이드"
+    실행 진입점과 모듈 책임은 [TeleopApp 개발자 가이드](../teleop_app.md),
+    프로젝트 전체 구조는 [프로젝트 개요](../../overview.md)에서 코드 단위로 확인할 수 있다.
+
 ## 기능 구현 요약
 
 | 구분 | 내용 |
@@ -112,30 +116,31 @@ def run(self):
 
 ```python
 def _step_physics(self, drive_keys):
-    ctx_qpos = data.qpos.copy()
-    # 1) Bimanual MoveL이 캡처된 상태면 virtual object target으로 양손 target을 갱신
-    if self.cyclo_grasp_captured:
-        self.apply_virtual_object_target()
-    # 2) Grab/Release 버튼 상태를 grasp/thumb 슬라이더 값으로 서서히 ramp
-    for side in ("r", "l"):
-        ...
-    # 3) 슬라이더 원시값 -> rate-limit된 smoothed_pos/smoothed_rpy
-    for side in ("r", "l"):
-        ...
-    # 4) IK 모드인 손: solve_pose() 호출. FK 모드인 손: 관절각 슬라이더 값을 그대로 사용
-    if self.arm_mode["r"] == "ik": ...
-    if self.arm_mode["l"] == "ik": ...
-    # 5) 스워브 드라이브 명령 계산 (프레임당 1회)
-    wheel_cmds = self.base_drive.update(...)
-    # 6) 물리 서브스텝 여러 번 반복: 토크/grasp/lift/바퀴 ctrl 기록 -> mj_step
-    for _ in range(self.steps_per_frame):
-        self.ctrl_r.apply(data, self.q_des_r)
-        self.ctrl_l.apply(data, self.q_des_l)
-        data.ctrl[self.lift_aid] = self.targets["lift"]
-        ... wheel ctrl ...
-        grasp.apply_grasp(model, data, ...)
-        mujoco.mj_step(model, data)
+    # 1) chassis/바퀴 feedback으로 현재 base 상태와 수동 주행 명령을 계산
+    steering, wheel_vel, measured_twist, base_pose = self._read_base_feedback()
+    manual_twist = self.base_drive.base.update_body(...)
+
+    # 2) 수동 주행 중에는 world target을 base와 함께 운반하고,
+    #    수동→WBIK 전환 시 새 base pose를 기준으로 rebase
+    carry_world_targets_with_base(...)
+    self.whole_body_solver.rebase(...)
+
+    # 3) grasp/손 목표를 갱신·평활화한 뒤 프레임당 한 번 전신 IK 계산
+    self._update_grasp_targets()
+    self._smooth_hand_targets()
+    target_poses = self._smoothed_target_poses()
+    command = self.whole_body_solver.solve(...)
+
+    # 4) 수동 주행이 WBIK base 명령보다 우선하도록 중재하고 스워브 명령 생성
+    self.commanded_base_twist = manual_twist if manual_active else command.base_twist
+    wheel_cmds = self.base_drive.update_twist(...)
+
+    # 5) 같은 명령을 물리 서브스텝에 적용
+    self._step_actuators(wheel_cmds)
 ```
+
+위 코드는 분기 조건을 생략한 **실행 순서 요약**이다. 실제 구현에서는 키를 놓은 뒤
+차체가 멈출 때까지 0 속도를 우선하는 handover 상태와 FK 모드 팔 분기도 함께 처리한다.
 
 여기서 반드시 짚어야 할 것 두 가지:
 
@@ -144,11 +149,12 @@ def _step_physics(self, drive_keys):
    돌린다 — ROS2의 "제어 루프 주기(예: 1kHz)"와 "디스플레이 갱신 주기(60Hz)"가
    다른 것과 같은 이유다. 안정적인 물리 적분에는 훨씬 촘촘한 타임스텝이
    필요하기 때문.
-2. **IK/토크/grasp/바퀴 명령은 매 서브스텝마다 다시 적용된다.** 한 번 계산해서
-   여러 스텝 동안 값을 "붙박이"로 두지 않고, 서브스텝 루프 안에서 매번
-   `ctrl_r.apply`, `grasp.apply_grasp` 등을 다시 호출한다 — `ros2_control`의
-   컨트롤러가 매 제어 주기마다 다시 계산되는 것과 같은 이유(제어값이 상태
-   피드백에 반응해야 하므로).
+2. **계산 주기는 기능마다 다르다.** feedback 읽기, 목표 변환, 전신 IK
+   `solve()`, 수동/WBIK 명령 중재, `update_twist()`는 렌더 프레임마다 한 번
+   실행된다. 반면 `_step_actuators()` 안에서는 팔 PD+중력보상 토크를 현재
+   상태로 다시 계산하고, lift·바퀴·손가락 `ctrl`을 다시 기록한 뒤 `mj_step()`을
+   수행한다. 따라서 IK 결과와 바퀴 목표는 프레임 동안 유지되지만 팔 토크는
+   물리 상태 피드백에 맞춰 서브스텝마다 갱신된다.
 
 ## 4.4 "이건 ROS2 노드로 치면 무엇인가" — 파일별 정리 {: #part-4-4 }
 
