@@ -91,6 +91,11 @@ s_i = \sqrt{v_{i,x}^2 + v_{i,y}^2}
 벡터식을 그대로 옮긴 것이다. 완전 정지는 각도를 새로 계산하지 않고 현재 조향각을
 유지하는 별도 분기로 처리한다:
 
+<figure markdown>
+  ![차체 병진 속도와 회전 접선 속도를 합쳐 스워브 모듈 속도를 만드는 기하](../../assets/swerve-velocity.svg)
+  <figcaption>빨강 병진 벡터와 주황 회전 접선 벡터를 더한 초록 벡터의 방향이 조향각이고, 길이가 모듈 선속도다.</figcaption>
+</figure>
+
 ```python
 wheel_vel_x = vx_body - wz * module_y
 wheel_vel_y = vy_body + wz * module_x

@@ -30,6 +30,26 @@
 | `grasp` (0~1) | 검지+중지의 pip/dip/tip 관절 전부 동시에 |
 | `thumb` (0~1) | 엄지의 mcp_pitch/ip 관절 + 엄지 MCP-yaw(방향) |
 
+```mermaid
+flowchart LR
+    G["grasp<br>0: 펼침 · 1: 닫힘"] --> GF["open fraction을 포함한<br>검지·중지 보간"]
+    T["thumb<br>0: 펼침 · 1: 닫힘"] --> TY["REST → CURL<br>MCP-yaw 보간"]
+    T --> TF["손별 방향을 반영한<br>엄지 curl 보간"]
+    GF --> IM["검지 · 중지<br>6개 actuator"]
+    G --> RP["약지 · 새끼<br>최대 35% 보조 명령"]
+    TY --> TH["엄지 actuator"]
+    TF --> TH
+    IM --> CONTACT["MuJoCo 접촉"]
+    RP --> CONTACT
+    TH --> CONTACT
+    CONTACT --> FORCE["엄지·검지·중지<br>normal force 집계"]
+    FORCE --> RESULT["grasp 성공/실패"]
+```
+
+위 그림의 왼쪽은 **명령 생성**, 오른쪽은 물리가 만든 접촉을 읽는 **성공 판정**이다.
+약지·새끼는 움직임에는 포함되지만 오른쪽 판정 그룹에는 포함되지 않는다는 차이를
+화살표로 구분했다.
+
 ## 5.2 관절 지도와 상수 {: #part-5-2 }
 
 ```python
@@ -92,6 +112,21 @@ hi - \text{frac}\,(hi - lo) & \text{open\_at\_hi = True (왼손 엄지 -- range 
 
 이 두 식이 `grasp.py`의 `_ramp_value(lo, hi, frac, open_at_hi)` 함수 그 자체다.
 
+```mermaid
+flowchart TD
+    S["slider s"] --> CLAMP["s를 [0, 1]로 제한"]
+    CLAMP --> FRAC["frac = open_frac<br>+ s(1-open_frac)"]
+    FRAC --> OPEN{"펼친 자세가<br>range의 어느 끝인가?"}
+    OPEN -->|lo| FORWARD["lo + frac(hi-lo)"]
+    OPEN -->|hi · 미러링 엄지| REVERSE["hi - frac(hi-lo)"]
+    FORWARD --> THETA["목표 관절각 θ"]
+    REVERSE --> THETA
+    THETA --> CTRL["data.ctrl[actuator]"]
+```
+
+같은 `frac`이라도 미러링 여부에 따라 마지막 화살표의 방향이 반대다. 이 분기가
+없으면 왼손 엄지에서 `thumb=0`과 `thumb=1`의 물리적 의미가 뒤집힌다.
+
 약지/새끼는 위와 다른, 더 단순한 식을 쓴다 — 이유는 이 두 손가락이 애초에
 "자유낙하하는 캔을 놓치지 않게 미리 오므려둘" 필요 자체가 없기 때문이다(3점
 파지에 참여하지 않으므로, 이 프로젝트 설계 초기부터의 fallback 결정). 그래서 `open_frac`으로
@@ -127,6 +162,23 @@ def is_grasped(model, data, min_fingers=2, min_total_force=0.05,
 "그리퍼가 물체를 쥐었는지" 판정하는 노드와 같은 역할이다 — 다만 진짜 센서가
 아니라 물리 엔진이 계산한 접촉력을 직접 읽는다는 차이가 있을 뿐, **"위치가
 가까우면 쥔 걸로 친다" 같은 치팅은 하지 않는다.**
+
+```mermaid
+flowchart TD
+    ALL["data.contact 전체 순회"] --> CAN{"한쪽 geom이<br>can_geom인가?"}
+    CAN -->|아니오| SKIP["무시"]
+    CAN -->|예| GROUP{"다른 geom body가<br>엄지·검지·중지인가?"}
+    GROUP -->|아니오| SKIP
+    GROUP -->|예| NORMAL["mj_contactForce()<br>normal force 읽기"]
+    NORMAL --> SUM["finger group별 합산"]
+    SUM --> THUMB{"엄지 접촉이 있는가?"}
+    THUMB -->|아니오| FALSE["False"]
+    THUMB -->|예| COUNT{"접촉 group 수 ≥ min_fingers?"}
+    COUNT -->|아니오| FALSE
+    COUNT -->|예| TOTAL{"ΣF_i ≥ min_total_force?"}
+    TOTAL -->|아니오| FALSE
+    TOTAL -->|예| TRUE["True"]
+```
 
 ## 5.4 사례 연구 — 엄지 프리쉐입 버그 {: #part-5-4 }
 
