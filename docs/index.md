@@ -92,7 +92,7 @@ command를 계산하고, MuJoCo physics가 다음 state를 만든다.
 
 <div style="position: relative; padding-bottom: 56.25%; height: 0; overflow: hidden; border-radius: 8px;">
   <iframe
-    src="https://www.youtube.com/watch?v=MzO1GpUfCd8&list=PLWyQPsEn5Atg&index=4"
+    src="[https://www.youtube.com/watch?v=MzO1GpUfCd8&list=PLWyQPsEn5Atg&index=4](https://youtu.be/MzO1GpUfCd8?si=5XhxNuoJetenGAAw)"
     title="ffw-sh5-grasp demo"
     style="position: absolute; inset: 0; width: 100%; height: 100%; border: 0;"
     allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
