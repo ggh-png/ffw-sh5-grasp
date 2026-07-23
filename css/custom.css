@@ -1,0 +1,49 @@
+/* ffw-sh5-grasp docs — small tweaks on top of mkdocs-material */
+
+:root {
+  --md-text-font: "Noto Sans KR", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --md-code-font: "D2Coding", "Cascadia Code", ui-monospace, "SF Mono", Consolas, monospace;
+}
+
+.md-typeset {
+  line-height: 1.7;
+}
+
+/* keep long fromto="..." / friction="..." attribute lines from forcing horizontal scroll on mobile */
+.md-typeset pre > code {
+  white-space: pre;
+  word-break: normal;
+}
+
+.md-typeset img {
+  border-radius: 4px;
+}
+
+.hero-figure img {
+  width: 100%;
+  height: auto;
+  border-radius: 6px;
+  margin-bottom: 0.4em;
+}
+
+.hero-figure figcaption {
+  font-size: 0.78rem;
+  color: var(--md-default-fg-color--light);
+  font-style: italic;
+}
+
+/* phase progress badges on the guide index page */
+.phase-track {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 1.2rem 0;
+}
+.phase-track span {
+  font-family: var(--md-code-font);
+  font-size: 0.72rem;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-top: 3px solid var(--md-primary-fg-color);
+  border-radius: 3px;
+  padding: 0.3rem 0.6rem;
+}

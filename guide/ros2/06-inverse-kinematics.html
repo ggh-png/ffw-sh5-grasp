@@ -1,0 +1,3030 @@
+
+<!doctype html>
+<html lang="ko" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="ROBOTIS FFW-SH5의 ROS-free MuJoCo 텔레오퍼레이션 — whole-body/arm-only IK, 실제 스워브 물리, 양손 grasp, reactive collision avoidance와 검증 문서.">
+      
+      
+        <meta name="author" content="ggh-png">
+      
+      
+        <link rel="canonical" href="https://ggh-png.github.io/ffw-sh5-grasp/guide/ros2/06-inverse-kinematics.html">
+      
+      
+        <link rel="prev" href="05-hand-control.html">
+      
+      
+        <link rel="next" href="07-arm-torque-control.html">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>역기구학 - ffw-sh5-grasp</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../css/custom.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#part-6" class="md-skip">
+          콘텐츠로 이동
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="상단/헤더">
+    <a href="../../index.html" title="ffw-sh5-grasp" class="md-header__button md-logo" aria-label="ffw-sh5-grasp" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ffw-sh5-grasp
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              역기구학
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="다크 모드로 전환"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="다크 모드로 전환" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="라이트 모드로 전환"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="라이트 모드로 전환" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="검색" placeholder="검색" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="검색">
+        
+        <button type="reset" class="md-search__icon md-icon" title="지우기" aria-label="지우기" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            검색 초기화
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ggh-png/ffw-sh5-grasp" title="저장소로 이동" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="탭" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../index.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  홈
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../getting-started.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  처음 사용하기
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../concepts.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  시스템 이해
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  개발자 가이드
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../ros2-guide.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  ROS2 관점의 시스템 해설
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../releases.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  릴리스 기록
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="네비게이션" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../index.html" title="ffw-sh5-grasp" class="md-nav__button md-logo" aria-label="ffw-sh5-grasp" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ffw-sh5-grasp
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ggh-png/ffw-sh5-grasp" title="저장소로 이동" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    홈
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    처음 사용하기
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    처음 사용하기
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    빠른 시작
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../run.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    화면과 조작
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../control-modes.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    모드 선택
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../troubleshooting.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    문제 해결
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    시스템 이해
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    시스템 이해
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    동작 원리
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../overview.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    아키텍처와 데이터 흐름
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../testing.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    테스트와 검증
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    개발자 가이드
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    개발자 가이드
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../00-basics.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MuJoCo 기본 용어
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_3" id="__nav_4_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    핵심 알고리즘
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    핵심 알고리즘
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../kinematics.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    기구학과 충돌 거리
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../whole_body_ik.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    전신 IK와 충돌 회피
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../base_teleop.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    모바일 스워브 제어
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ik-math.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DLS와 위치 우선 IK 수학
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ik.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    단일 팔 IK
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../arm_control.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    팔 토크 제어
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../grasp.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    손 파지와 접촉 판정
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_4" id="__nav_4_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    애플리케이션 계층
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    애플리케이션 계층
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../teleop_app.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    앱 조립과 물리 루프
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../teleop_targets.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    목표와 좌표 변환
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../teleop_ui.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    UI 패널
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../teleop_render.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    렌더링과 Gizmo
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../pitfalls.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    개발 체크리스트
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cheatsheet.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API 치트시트
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ROS2 관점의 시스템 해설
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    ROS2 관점의 시스템 해설
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ros2-guide.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    전체 안내
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_2" id="__nav_5_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    시작과 구조
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    시작과 구조
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="01-concepts.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ROS2와 개념 지도
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="02-mujoco-model-data.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MuJoCo model과 data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="03-project-identity.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    프로젝트 정체성
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="04-runtime-architecture.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    런타임 아키텍처
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    제어 알고리즘
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    제어 알고리즘
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="05-hand-control.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    손 제어
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    역기구학
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="06-inverse-kinematics.html" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    역기구학
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="목차">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      목차
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        기능 구현 요약
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#part-6-1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.1 이 프로젝트에 왜 MoveIt이 없는가
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#part-6-2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.2 이 Part를 이해하는 데 필요한 수학: 벡터, 행렬, 야코비안, null space
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#part-6-3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.3 문제 정의와 DLS(damped least squares)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#part-6-4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.4 계층형 IK — position이 orientation보다 우선
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#part-6-5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.5 좌표계 함정 — site-local vs world
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6.5 좌표계 함정 — site-local vs world">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#quaternion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        쿼터니언(quaternion)이란
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#quaternion-world-aligned" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        quaternion 부호와 world-aligned 회전 오차
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#part-6-6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.6 backtracking line search
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#part-6-7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.7 multistart — 국소해(local minimum) 탈출
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#part-6-8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.8 두 solver의 실제 사용 위치와 실행 예산
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="07-arm-torque-control.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    팔 토크 제어
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="08-mobile-base.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    모바일 베이스
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_4" id="__nav_5_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    조작과 좌표계
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    조작과 좌표계
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="09-teleoperation-ui.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3D 텔레오퍼레이션 UI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="10-coordinate-frames.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    좌표계
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_5" id="__nav_5_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    검증과 참고
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    검증과 참고
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="11-testing.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    테스트와 검증
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="12-running.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    직접 실행
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="13-bug-cases.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    버그 사례집
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="14-glossary.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    용어 사전
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    릴리스 기록
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="목차">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      목차
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        기능 구현 요약
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#part-6-1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.1 이 프로젝트에 왜 MoveIt이 없는가
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#part-6-2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.2 이 Part를 이해하는 데 필요한 수학: 벡터, 행렬, 야코비안, null space
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#part-6-3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.3 문제 정의와 DLS(damped least squares)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#part-6-4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.4 계층형 IK — position이 orientation보다 우선
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#part-6-5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.5 좌표계 함정 — site-local vs world
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6.5 좌표계 함정 — site-local vs world">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#quaternion" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        쿼터니언(quaternion)이란
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#quaternion-world-aligned" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        quaternion 부호와 world-aligned 회전 오차
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#part-6-6" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.6 backtracking line search
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#part-6-7" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.7 multistart — 국소해(local minimum) 탈출
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#part-6-8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.8 두 solver의 실제 사용 위치와 실행 예산
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<p><a href="../ros2-guide.html">← 전체 안내</a></p>
+<h1 id="part-6">Part 6 — 전신 IK와 단일 팔 DLS IK<a class="headerlink" href="#part-6" title="Permanent link">&para;</a></h1>
+<div class="admonition info">
+<p class="admonition-title">현재 실행 경로와 개발자 가이드</p>
+<p>실시간 텔레옵은 <a href="../whole_body_ik.html"><code>WholeBodyIK</code></a>를 호출하고,
+<a href="../kinematics.html"><code>kinematics.py</code></a>의 MJCF 트리가 FK·Jacobian·자세 오차를 공통
+제공한다. <a href="../ik.html"><code>ik.py</code></a>의 <code>InverseKinematics</code> 이름은 Phase 3·4·6 회귀
+테스트와 <code>tests/record_demo.py</code>를 위한 호환 진입점이다.</p>
+</div>
+<div class="admonition tip">
+<p class="admonition-title">DLS와 null-space 식만 집중해서 보고 싶다면</p>
+<p><a href="../ik-math.html">DLS와 위치 우선 IK 수학</a>은 목적함수의 항별 전개와 미분부터
+primal/dual 변환, SVD gain, 정확한 projector와 damped 잔차까지 모든 중간
+등식을 생략하지 않고 전개한다. 이 Part는 시스템 맥락과 구현 흐름에 집중한다.</p>
+</div>
+<h2 id="_1">기능 구현 요약<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>구분</th>
+<th>내용</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>해결할 문제</td>
+<td>양손 목표를 base·lift·양팔이 함께 추종하되 속도/관절 한계와 충돌 안전거리를 지켜야 한다. 단일 팔 회귀 경로에서는 특이점의 관절 step 폭발도 막아야 한다.</td>
+</tr>
+<tr>
+<td>해결 방법</td>
+<td>실시간 경로는 weighted bounded differential IK에 joint-limit bound와 collision barrier를 결합한다. legacy 단일 팔 경로는 위치 DLS 뒤에 자세 보정을 damped null-space로 투영한다.</td>
+</tr>
+<tr>
+<td>사용 수식</td>
+<td>실시간 경로는 먼저 <span class="arithmatex">\(\dot q_0=\arg\min_{\ell\le\dot q\le u}\|A\dot q-b\|^2\)</span>를 푼다. 충돌 제약이 켜지면 <span class="arithmatex">\(\arg\min_{\ell\le\dot q\le u}\|\dot q-\dot q_0\|^2+\mu\|\max(0,h-G\dot q)\|^2\)</span>로 안전 보정한다. 단일 팔 식은 <a href="../ik-math.html">DLS와 위치 우선 IK 수학</a>에 목적함수부터 생략 없이 전개했다.</td>
+</tr>
+<tr>
+<td>코드 구현 과정</td>
+<td><code>TeleopApp._step_physics()</code> → <code>WholeBodyIK.solve()</code> → 공유 <code>KinematicTree</code>의 <code>KinematicsSolver.forward()</code> → <code>_bounded_least_squares()</code>/<code>_bounded_least_squares_with_barriers()</code> → base twist·lift 위치·양팔 위치 명령 반환 순서다.</td>
+</tr>
+<tr>
+<td>수식 없이 사용하는 함수</td>
+<td><code>rebase()</code>는 수동 주행 handover 기준을 재설정하고, <code>set_rigid_grasp()</code>는 양손 상대 pose를 캡처하며, <code>collision_distances()</code>는 모니터링/시각화용 거리 상태를 반환한다.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="part-6-1">6.1 이 프로젝트에 왜 MoveIt이 없는가<a class="headerlink" href="#part-6-1" title="Permanent link">&para;</a></h2>
+<p>MoveIt은 (1) IK 계산 (2) 충돌을 피하는 전체 궤적 플래닝 (3) 궤적 실행까지
+포괄하는 프레임워크다. 이 프로젝트는 사람이 매 프레임 조금씩 옮긴 양손 목표를
+현재 상태에서 바로 추종하는 <strong>속도 수준 전신 IK</strong>가 핵심이므로 전체 경로
+플래너를 두지 않았다. <code>src/whole_body_ik.py</code>가 base·lift·양팔 명령을 한 문제로
+풀고, 결과를 실제 actuator 경로로 보낸다. <code>src/ik.py</code>는 단일 팔 알고리즘의
+회귀·오프라인 검증을 담당한다. 어느 경로도 장애물 주위의 전역 경로, 궤적
+스무딩, 시간 파라미터화를 생성하지 않는다.</p>
+<pre class="mermaid"><code>flowchart LR
+    TARGET["양손 world pose target"] --&gt; LIVE["실시간 경로&lt;br&gt;WholeBodyIK.solve()"]
+    STATE["현재 qpos · qvel"] --&gt; TREE["MJCF에서 파싱한 KinematicTree&lt;br&gt;FK · Jacobian 직접 계산"]
+    TREE --&gt; LIVE
+    LIVE --&gt; BVLS["18-DOF weighted&lt;br&gt;bounded least squares"]
+    BVLS --&gt; SAFE["joint bound · collision CBF"]
+    SAFE --&gt; CMD["base twist · lift 위치&lt;br&gt;양팔 목표각"]
+
+    SAMPLE["Phase 테스트의&lt;br&gt;단일 팔 target"] --&gt; LEGACY["legacy 경로&lt;br&gt;InverseKinematics.solve_pose()"]
+    LEGACY --&gt; DLS["위치 DLS"]
+    DLS --&gt; NULL["자세 null-space 보정"]
+    NULL --&gt; QARM["단일 팔 관절각"]</code></pre>
+<p>위쪽이 현재 앱의 제어 경로이고 아래쪽은 회귀·학습용 단일 팔 경로다. 이어지는
+6.2~6.7의 DLS 전개는 아래쪽 경로를 작은 예제로 삼고, 실시간 전신 식은
+<a href="../whole_body_ik.html"><code>whole_body_ik.py</code> 개발자 가이드</a>에서 이어진다.</p>
+<h2 id="part-6-2">6.2 이 Part를 이해하는 데 필요한 수학: 벡터, 행렬, 야코비안, null space<a class="headerlink" href="#part-6-2" title="Permanent link">&para;</a></h2>
+<blockquote>
+<p>이 절은 선형대수를 아직 안 배웠거나(대학 1학년 1학기 수준을 가정) 배웠어도
+가물가물한 사람을 위한 것이다. 아래 개념들만 잡고 가면 이후 나오는 모든 식을
+그대로 따라갈 수 있다. 이미 익숙하다면 6.3으로 건너뛰어도 된다.</p>
+</blockquote>
+<p><strong>벡터란</strong>: 숫자를 순서대로 여러 개 묶어놓은 것. 화살표로 그리면 "어느
+방향으로 얼마나"를 나타내는 것과 같다. 이 문서에서는 "위치"(x, y, z 세 숫자)나
+"관절각 전체"(이 팔은 관절이 7개니까 숫자 7개)를 벡터로 다룬다.</p>
+<p><strong>행렬이란, "벡터에 행렬을 곱한다"는 게 무슨 뜻인가</strong>: 행렬은 숫자를 격자(표)
+모양으로 늘어놓은 것이다. 행렬을 벡터에 곱하면(<span class="arithmatex">\(Ax\)</span>) 새 벡터가 나오는데, 이건
+"<span class="arithmatex">\(x\)</span>라는 입력을 <span class="arithmatex">\(A\)</span>라는 규칙에 따라 변환해서 출력을 만든다"는 뜻이다.
+예를 들어</p>
+<div class="arithmatex">\[
+\begin{pmatrix}\cos\theta &amp; -\sin\theta \\ \sin\theta &amp; \cos\theta\end{pmatrix}
+\begin{pmatrix}x\\y\end{pmatrix}
+\]</div>
+<p>라는 곱은 "점 <span class="arithmatex">\((x,y)\)</span>를 원점 기준으로 각도 <span class="arithmatex">\(\theta\)</span>만큼 돌린 새 점"을
+계산한다(이 행렬이 실제로 Part 8.3의 스워브 계산과 Part 10.3의 좌표 변환에
+그대로 나온다). 즉 행렬은 "벡터를 다른 벡터로 바꾸는 규칙"을 숫자 표 하나로
+적어둔 것이라고 생각하면 된다.</p>
+<p>이 문서에서 또 자주 나오는 표기 두 가지:</p>
+<ul>
+<li><strong>전치(transpose, <span class="arithmatex">\(A^T\)</span>)</strong>: 행렬의 행과 열을 맞바꾼 것(대각선을 기준으로
+  뒤집는다고 생각해도 된다).</li>
+<li><strong>직교행렬(orthogonal matrix)</strong>: 회전을 나타내는 행렬처럼, 열벡터들이 서로
+  수직인 단위벡터로 이뤄진 특별한 행렬. 이런 행렬은 <span class="arithmatex">\(A^TA=I\)</span>(단위행렬)를
+  만족하는데, 이 말은 곧 <strong>전치가 바로 역행렬</strong>(<span class="arithmatex">\(A^{-1}=A^T\)</span>)이라는
+  뜻이다 — 역행렬을 따로 어렵게 계산할 필요 없이 그냥 뒤집기만 하면 된다는
+  것(Part 9.2, Part 10.3에서 이 성질을 그대로 쓴다). 아무 행렬이나 이 성질을
+  갖는 건 아니고, 회전처럼 "길이와 각도를 보존하는 변환"만 그렇다.</li>
+</ul>
+<p><strong>야코비안(Jacobian)이란</strong>: 고등학교/1학년 미적분에서 "미분"은 "입력을 아주
+조금 바꾸면 출력이 얼마나 바뀌는가"(변화율)를 알려주는 값이다. 그런데 이
+프로젝트의 IK 문제는 입력이 숫자 하나가 아니라 관절각 7개, 출력도 손끝 위치
+3개(x,y,z)다 — <strong>입력도 여러 개, 출력도 여러 개인 함수의 "미분"에 해당하는
+것이 야코비안</strong>이다.</p>
+<p>구체적으로, 관절각 <span class="arithmatex">\(q=(q_1,\dots,q_7)\)</span>이 바뀌면 손끝 위치
+<span class="arithmatex">\(x=(x_1,x_2,x_3)\)</span>도 바뀐다. 이 관계를 <span class="arithmatex">\(x=f(q)\)</span>라 하면, 야코비안 <span class="arithmatex">\(J\)</span>는
+"<span class="arithmatex">\(q_i\)</span> 하나만 아주 조금 바꿨을 때 <span class="arithmatex">\(x_j\)</span>가 얼마나 바뀌는지"를 전부 모아놓은
+3×7 행렬이다(각 성분이 편미분):</p>
+<div class="arithmatex">\[
+J_{ji} = \frac{\partial x_j}{\partial q_i}
+\]</div>
+<p>이 행렬을 알면, 관절을 <span class="arithmatex">\(\Delta q\)</span>만큼 바꿨을 때 손끝이 대략 얼마나 움직일지
+근사적으로 예측할 수 있다: <span class="arithmatex">\(\Delta x \approx J\,\Delta q\)</span>(이것도 결국 "행렬 곱 =
+변환"이라는 위 개념 그대로다). IK가 실제로 풀려는 문제는 이 식의 반대
+방향이다 — "손끝이 목표까지의 오차 <span class="arithmatex">\(e\)</span>만큼 움직이길 원하는데, 그러려면
+관절을 얼마나(<span class="arithmatex">\(\Delta q\)</span>) 바꿔야 하는가"를 거꾸로 구하는 것이 6.3의 DLS
+공식이다. 이 프로젝트는 <code>KinematicTree</code>가 MJCF에서 복사한 관절 구조를 따라가며
+각 slide/hinge 관절의 기하 Jacobian 열을 직접 만든다. 전체 전개와 코드 대응은
+<a href="../kinematics.html#direct-geometric-jacobian"><code>src/kinematics.py</code> 가이드</a>에
+있다.</p>
+<p><strong>null space(영공간, 커널)란</strong>: 이 로봇 팔은 관절이 7개인데, 손끝 pose(위치
+3 + 자세 3 = 6개 숫자)를 정하는 데는 이론적으로 6개 자유도만 있으면 충분하다 —
+즉 필요한 것보다 관절이 하나 더 많다("여유 자유도", redundant DOF). 이런
+경우 "손끝 위치는 전혀 안 바꾼 채로 팔 안쪽 자세만 바꿀 수 있는 관절 움직임의
+조합"이 반드시 존재한다 — 실제로 팔을 뻗어 손끝을 책상 위 한 점에 고정한 채로
+팔꿈치만 위아래로 움직여 보면, 사람 팔에서도 이런 여유가 있다는 걸 몸으로
+느낄 수 있다.</p>
+<p>야코비안의 언어로 말하면: 이렇게 "손끝에는 (근사적으로) 아무 영향을 주지 않는"
+관절 방향 <span class="arithmatex">\(v\)</span>들의 집합이 바로 <span class="arithmatex">\(J\)</span>의 <strong>null space</strong>다. 정의는 <span class="arithmatex">\(Jv=0\)</span>을
+만족하는 모든 <span class="arithmatex">\(v\)</span>의 집합 — "이 방향으로 관절을 움직여도 야코비안이 예측하는
+손끝 변화는 정확히 0"이라는 뜻이다.</p>
+<p>이게 6.4(계층형 IK)에서 왜 중요한가: 위치를 이미 다 맞춘 뒤에 자세가 아직
+안 맞았다면, "위치에 영향을 주지 않는 방향"(=위치 야코비안 <span class="arithmatex">\(J_p\)</span>의 null
+space) 안에서만 관절을 추가로 움직이면, 방금 맞춘 위치에 미치는 영향을 억제하면서
+자세를 마저 맞출 수 있다. "자세 오차를 관절 방향으로 바꾼 값"(<span class="arithmatex">\(J_r^Te_{ori}\)</span>)을
+통째로 다 쓰는 대신, 그중 null space에 들어가는 성분만 걸러 쓰는 것이 6.4의
+투영 공식이 하는 일이다.</p>
+<p><strong>특이점(singularity) — 왜 갑자기 역행렬이 폭발하는가</strong>: 관절 개수만큼 자유도가
+있어도, 어떤 특정 자세에서는 "야코비안이 표현할 수 있는 방향의 개수"가
+순간적으로 줄어드는 경우가 있다 — 예를 들어 팔을 완전히 쭉 편 자세에서는
+팔꿈치를 살짝 굽혀도 손끝이 거의 안 움직인다(그 방향으로의 "민감도"가 0에
+가까워진다). 이런 자세를 <strong>특이점</strong>이라 부른다. 역행렬을 취하는 계산은 사실상
+"그 민감도로 나누기"를 하는 셈이라, 민감도가 0에 가까워지면 결과가 0으로
+나누는 것처럼 무한대로 튄다. 6.3의 DLS 공식에 들어가는 감쇠항 <span class="arithmatex">\(\lambda\)</span>가
+바로 이 "거의 0으로 나누기"를 막아주는 안전장치다 — 나눗셈의 분모에 작은
+양수를 더해 절대 0에 너무 가까워지지 않게 하는 것과 같은 발상이다.</p>
+<h2 id="part-6-3">6.3 문제 정의와 DLS(damped least squares)<a class="headerlink" href="#part-6-3" title="Permanent link">&para;</a></h2>
+<p>목표: MJCF의 <code>site</code>(<code>grasp_target_r</code>) 하나가 목표 위치/자세에 오도록 팔
+7관절의 각도를 구한다. 관절각을 조금 바꿨을 때(<span class="arithmatex">\(\Delta q\)</span>) site 위치가 얼마나
+움직이는지는 자체 트리에서 직접 만든 야코비안 <span class="arithmatex">\(J\)</span>가 1차 근사로 알려준다:
+<span class="arithmatex">\(\Delta x \approx J\,\Delta q\)</span>. 목표는 원하는 위치 오차 <span class="arithmatex">\(e\)</span>(목표-현재)를
+그대로 만드는 <span class="arithmatex">\(\Delta q\)</span>를 찾는 것, 즉 <span class="arithmatex">\(J\,\Delta q = e\)</span>를 푸는 것이다.</p>
+<p><strong>왜 그냥 <span class="arithmatex">\(J^{-1}\)</span>(또는 <span class="arithmatex">\(J^+\)</span>, pseudo-inverse)로 풀지 않는가</strong>: 이 로봇 팔은
+7자유도라 <span class="arithmatex">\(J\)</span>가 정사각행렬이 아니고(3×7 또는 6×7), 게다가 특정 자세(singularity,
+예: 팔이 거의 다 펴진 상태)에서는 <span class="arithmatex">\(J J^T\)</span>가 거의 특이(singular, 행렬식이 0에
+가까움)해진다 — 역행렬을 취하면 그 근처에서 아주 작은 위치 오차 <span class="arithmatex">\(e\)</span>에도 관절
+속도 <span class="arithmatex">\(\Delta q\)</span>가 무한대로 튄다(역행렬의 원소가 행렬식에 반비례하기 때문).
+실제 텔레옵에서는 이게 "팔이 갑자기 확 튀는" 증상으로 나타난다.</p>
+<p><strong>DLS가 이걸 어떻게 막는가</strong>: 순수 최소제곱 대신, 아래 두 항을 동시에 작게 만드는
+<span class="arithmatex">\(\Delta q\)</span>를 찾도록 문제 자체를 바꾼다 — "오차를 줄이되, 관절을 너무 크게
+움직이는 것도 페널티로 취급한다"(Tikhonov/능형 회귀와 같은 정규화 기법):</p>
+<div class="arithmatex">\[
+\min_{\Delta q} \; \|J\,\Delta q - e\|^2 + \lambda^2 \|\Delta q\|^2
+\]</div>
+<p>이 최소화 문제를 풀면(미분해서 0으로 놓고 정리) 바로 아래 닫힌 형태 해가
+나온다 — <span class="arithmatex">\(\lambda\)</span>가 클수록 "관절을 작게 움직여라"는 페널티가 세져서 특이
+자세 근처에서도 해가 안전한 크기로 유지된다. <span class="arithmatex">\(\lambda=0\)</span>이고 <span class="arithmatex">\(JJ^T\)</span>가
+가역인 full-row-rank 조건에서만 아래 식은 <span class="arithmatex">\(J^T(JJ^T)^{-1}\)</span>, 즉 해당 형태의
+Moore–Penrose pseudoinverse와 같아진다. 특이점에서는 <span class="arithmatex">\(JJ^T\)</span>의 역행렬 자체가
+존재하지 않으므로 <span class="arithmatex">\(\lambda=0\)</span>으로 둘 수 없다:</p>
+<div class="arithmatex">\[
+\Delta q = J^T (J J^T + \lambda^2 I)^{-1} \, e
+\]</div>
+<p>여기서 <span class="arithmatex">\(e\)</span>는 위치 오차(목표 - 현재), <span class="arithmatex">\(\lambda=0.05\)</span>가 기본값
+(<code>DEFAULT_DAMPING</code>) — 너무 크면 수렴이 느려지고(관절을 조금씩만 움직이므로),
+너무 작으면 다시 특이 자세 근처에서 불안정해지는 트레이드오프다. 코드로는 이렇게
+그대로 나타난다:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">lam2</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">damping</span> <span class="o">**</span> <span class="mi">2</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">position_system</span> <span class="o">=</span> <span class="n">jacp</span> <span class="o">@</span> <span class="n">jacp</span><span class="o">.</span><span class="n">T</span> <span class="o">+</span> <span class="n">lam2</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">dq_pos</span> <span class="o">=</span> <span class="n">jacp</span><span class="o">.</span><span class="n">T</span> <span class="o">@</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">solve</span><span class="p">(</span><span class="n">position_system</span><span class="p">,</span> <span class="n">pos_err</span><span class="p">)</span>
+</code></pre></div>
+<figure>
+<p><img alt="의사역행렬과 DLS의 특이값 방향별 증폭 비교" src="../../assets/dls-singular-value-gain.svg" />
+  </p>
+<figcaption>특이값이 0에 가까워질 때 순수 의사역행렬의 gain은 폭증하지만 DLS gain은 유한하며 0으로 줄어든다.</figcaption>
+</figure>
+<p>그림의 가로축 <span class="arithmatex">\(\sigma\)</span>는 관절 움직임이 손 움직임으로 전달되는 민감도다. 왼쪽
+특이점 영역에서 DLS 곡선이 내려가는 모습이 “움직이기 어려운 방향을 더 세게 밀지
+않는다”는 감쇠항의 역할을 보여준다.</p>
+<h2 id="part-6-4">6.4 계층형 IK — position이 orientation보다 우선<a class="headerlink" href="#part-6-4" title="Permanent link">&para;</a></h2>
+<p><strong>왜 위치와 자세를 한 번에 안 푸는가</strong>: 가장 직관적인 확장은 위치 오차(3)와 자세
+오차(3)를 이어붙인 6차원 오차 벡터 하나에 6.3과 똑같은 DLS를 적용하는 것이다(스택
+야코비안 6×n). 실제로 처음엔 이렇게 구현했지만, 자세 오차가 크면 위치를 맞추려는
+성분과 자세를 맞추려는 성분이 같은 <span class="arithmatex">\(\Delta q\)</span> 안에서 서로 간섭해 흔들리고
+발산했다(실측으로 확인) — 두 목표가 같은 관절 예산을 놓고 매 스텝 다투는 구조이기
+때문이다. 그래서 "위치가 항상 이긴다"는 우선순위를 아예 식에 박아넣는
+<strong>task-priority(계층형)</strong> 방식을 쓴다:</p>
+<ol>
+<li>위치 오차만으로 <span class="arithmatex">\(\Delta q_{pos}\)</span>를 6.3의 DLS로 먼저 푼다 — 자세는 아직
+   전혀 고려하지 않은 순수 위치 해.</li>
+<li>자세 보정 <span class="arithmatex">\(\Delta q_{ori}\)</span>를 그 위에 더하되, <strong>위치에 미치는 영향을 크게 줄인
+   방향으로만</strong> 더한다. "위치를 안 건드리는 관절 조합들의 집합"이 정확히
+   <span class="arithmatex">\(J_p\)</span>의 null space(핵공간, <span class="arithmatex">\(J_p x = 0\)</span>을 만족하는 <span class="arithmatex">\(x\)</span> 전체)다. 임의의
+   벡터 <span class="arithmatex">\(g\)</span>를 그 null space에 투영하는 표준 공식은 <span class="arithmatex">\(g - J_p^{+}(J_p g)\)</span>
+   (전체에서 "<span class="arithmatex">\(J_p\)</span>를 통해 위치에 영향을 주는 성분"을 빼는 것)인데, 여기서
+   <span class="arithmatex">\(J_p^{+}\)</span>는 6.3과 같은 damped pseudo-inverse를 재사용한다. <span class="arithmatex">\(g\)</span>로는 자세
+   오차를 관절 공간으로 보낸 gradient <span class="arithmatex">\(J_r^T e_{ori}\)</span>를 쓴다:</li>
+</ol>
+<div class="arithmatex">\[
+\Delta q_{ori} = \underbrace{J_r^T e_{ori}}_{g} - J_p^T (J_p J_p^T + \lambda^2 I)^{-1} \big(J_p \, \underbrace{J_r^T e_{ori}}_{g}\big)
+\]</div>
+<p>이렇게 만든 <span class="arithmatex">\(\Delta q_{ori}\)</span>는 1차 근사에서 <span class="arithmatex">\(J_p\,\Delta q_{ori}\approx 0\)</span>이라
+— 즉 위에서 이미 구한 위치 해 <span class="arithmatex">\(\Delta q_{pos}\)</span>를 거의 망치지 않으면서 남는
+여유 자유도만으로 자세를 맞춘다.</p>
+<div class="admonition warning">
+<p class="admonition-title">damped projector는 정확한 영공간 projector가 아니다</p>
+<p>여기서는 안정성을 위해 Moore–Penrose pseudoinverse 대신 damped
+pseudoinverse를 재사용한다. 따라서 <span class="arithmatex">\(J_p\Delta q_{ori}=0\)</span>이 정확히 성립하는
+것이 아니라 대략 0에 가까워진다. damping, clamp, 유한 step과 비선형성 때문에
+작은 위치 변화가 남을 수 있다.</p>
+</div>
+<ol>
+<li><span class="arithmatex">\(\Delta q = \Delta q_{pos} + \Delta q_{ori}\)</span>, 관절당 최대 변화량으로
+   clamp.</li>
+</ol>
+<pre class="mermaid"><code>flowchart LR
+    EP["위치 오차 e_p"] --&gt; POS["DLS"]
+    POS --&gt; DQP["우선 적용할 Δq_pos"]
+
+    ER["자세 오차 e_R"] --&gt; GRAD["g = J_Rᵀe_R&lt;br&gt;원래 자세 보정 방향"]
+    GRAD --&gt; EFFECT["J_pg&lt;br&gt;위치를 움직이는 효과"]
+    EFFECT --&gt; BACK["J_p,λ⁺(J_pg)&lt;br&gt;그 효과의 관절 성분"]
+    GRAD --&gt; SUB["빼기"]
+    BACK --&gt; SUB
+    SUB --&gt; DQR["Δq_ori&lt;br&gt;위치 영향이 억제된 성분"]
+    DQP --&gt; ADD["더하기"]
+    DQR --&gt; ADD
+    ADD --&gt; LIMIT["joint delta clamp"]</code></pre>
+<p>자세 경로에서 <code>빼기</code> 상자가 핵심이다. 자세를 돌리려는 원래 방향 전체를 쓰지 않고,
+그중 손 위치를 움직일 것으로 예측된 관절 성분을 제거한 뒤 위치 해에 더한다.</p>
+<p>이 순서 자체가 <strong>ROS2/로보틱스에서 흔한 "task-priority IK"</strong>(예: 상체는
+위치 우선, 자세는 여유 자유도로만 맞추는 휴머노이드 전신 제어와 같은 발상)와
+같은 패턴이다.</p>
+<h2 id="part-6-5">6.5 좌표계 함정 — site-local vs world<a class="headerlink" href="#part-6-5" title="Permanent link">&para;</a></h2>
+<h3 id="quaternion">쿼터니언(quaternion)이란<a class="headerlink" href="#quaternion" title="Permanent link">&para;</a></h3>
+<p>3차원 회전은 숫자 3개(Roll/Pitch/Yaw 같은 오일러각)로도 나타낼 수 있지만,
+Part 10에서 보듯 오일러각은 축끼리 서로 얽히는("짐벌락"류) 문제가 있고, 두
+회전을 이어붙이는 계산도 지저분하다. 그래서 로봇공학/그래픽스에서는 회전을
+숫자 4개짜리 <strong>쿼터니언</strong> <span class="arithmatex">\(q=(w,x,y,z)\)</span>로 표현하는 경우가 많다.</p>
+<p>직관적으로: 3차원의 모든 회전은 "어떤 축 <span class="arithmatex">\(\hat n\)</span>을 기준으로 각도 <span class="arithmatex">\(\theta\)</span>만큼
+돈다"는 형태로 나타낼 수 있다(회전축 + 회전각, 팽이가 어느 축으로 얼마나 도는지
+떠올리면 된다). 쿼터니언은 이 정보를 <span class="arithmatex">\(q = (\cos\frac{\theta}{2},\ \sin\frac{\theta}{2}\,\hat n)\)</span>
+형태로 담아둔 것뿐이다(<span class="arithmatex">\(\theta=0\)</span>, 즉 "회전 없음"일 때 <span class="arithmatex">\(q=(1,0,0,0)\)</span> —
+이 문서에서 종종 나오는 "identity quaternion"이 이거다). 이 프로젝트가 실제로
+쓰는 연산은 딱 세 가지다:</p>
+<ul>
+<li><strong>곱셈/합성(<span class="arithmatex">\(\otimes\)</span>)</strong>: 두 회전을 순서대로 이어붙인 회전을 만든다 —
+  "먼저 이만큼 돌리고 그다음 이만큼 더 돌린다"를 쿼터니언 곱 하나로 표현한다
+  (Part 9, Part 10의 <code>q_base ⊗ q_home ⊗ q_rpy</code> 같은 식이 바로 이것).</li>
+<li><strong>역(inverse)</strong>: 그 회전을 정확히 반대로 되돌리는 회전.</li>
+<li><strong>뺄셈(<code>mju_subQuat</code>)</strong>: "회전 A에서 회전 B까지 가려면 어떤 회전을 추가로
+  해야 하는가"를 구한다(오차 계산에 쓰인다) — 바로 아래에서 이 연산이 나온다.</li>
+</ul>
+<p>곱셈/역원의 정확한 계산식은 이 문서 범위 밖이지만, <strong>"곱하면 회전이 합쳐지고,
+역을 취하면 회전이 반대로 뒤집힌다"</strong>는 성질만 기억하면 이후 나오는 식을 전부
+그대로 읽을 수 있다 — 회전 버전의 "숫자 곱하기/나누기"라고 생각하면 된다.</p>
+<h3 id="quaternion-world-aligned">quaternion 부호와 world-aligned 회전 오차<a class="headerlink" href="#quaternion-world-aligned" title="Permanent link">&para;</a></h3>
+<p><code>kinematics.shortest_orientation_error()</code>는 "지금 자세(<code>cur_quat</code>)에서 목표
+자세(<code>target_quat</code>)까지 가는 데 필요한 가장 짧은 회전"을 world-frame 축각 벡터로
+반환한다:</p>
+<div class="arithmatex">\[
+q_e=q_{target}\otimes q_{current}^{-1},\qquad
+e_{ori}=\hat n\,2\operatorname{atan2}(\|q_{e,xyz}\|,q_{e,w})
+\]</div>
+<p>곱셈을 <code>target * inverse(current)</code> 순서로 하므로 축은 MuJoCo <code>jacr</code>와 같은 world
+frame이다. 또 quaternion은 <span class="arithmatex">\(q\)</span>와 <span class="arithmatex">\(-q\)</span>가 같은 자세를 나타내므로, 두 quaternion의
+내적이 음수면 target 부호를 뒤집고 단위 길이로 정규화한다. 이 과정을 빼면 180°
+근처에서 같은 자세가 갑자기 긴 회전 명령으로 바뀔 수 있다. 현재 공용 코드:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">target</span> <span class="o">=</span> <span class="n">normalize_quaternion</span><span class="p">(</span><span class="n">target</span><span class="p">)</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">current</span> <span class="o">=</span> <span class="n">normalize_quaternion</span><span class="p">(</span><span class="n">current</span><span class="p">)</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="k">if</span> <span class="n">np</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="n">current</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">:</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="n">target</span> <span class="o">=</span> <span class="o">-</span><span class="n">target</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">error_world</span> <span class="o">=</span> <span class="n">shortest_orientation_error</span><span class="p">(</span><span class="n">target</span><span class="p">,</span> <span class="n">current</span><span class="p">)</span>
+</code></pre></div>
+<p><code>KinematicsSolver.forward()</code>가 파싱한 트리에서 pose와 Jacobian을 항상 이 규칙으로
+제공하므로 단일 팔 IK와 whole-body IK가 같은 좌표계를 사용한다. 테스트는 pose를
+물리 엔진 결과와 대조하고 Jacobian은 각 관절을 <span class="arithmatex">\(\pm\epsilon\)</span>만큼 움직인 중앙
+유한차분 결과와 대조한다. 따라서 Jacobian 검증에도 다른 Jacobian solver를 쓰지 않는다.</p>
+<h2 id="part-6-6">6.6 backtracking line search<a class="headerlink" href="#part-6-6" title="Permanent link">&para;</a></h2>
+<p><strong>왜 DLS+null-space 투영만으로는 부족한가</strong>: <code>max_joint_delta</code>로 스텝 크기 자체는
+이미 한 번 clamp되지만(6.3), 그건 "관절이 한 번에 얼마나 크게 움직일 수 있는지"의
+상한일 뿐이지 "그 방향이 실제로 오차를 줄이는 방향인지"는 보장하지 않는다.
+<span class="arithmatex">\(\Delta q = J^{-1}e\)</span> 형태의 계산은 애초에 야코비안이 <strong>국소(local) 선형 근사</strong>
+라는 전제 위에 있다 — 오차 <span class="arithmatex">\(e\)</span>가 작을 때는 이 근사가 잘 맞지만, 오차가 크면
+실제 site 이동량이 야코비안이 예측한 것과 크게 달라질 수 있다(관절 각도가 크게
+움직일수록 비선형성이 커지므로). 계층형 IK만으로도 오차가 큰 경우 반복할수록
+진동/발산한 게 바로 이 근사 오차가 누적된 결과였다. 그래서 매 반복마다
+전체 스텝을 그대로 쓰지 않고, <strong>실제로 비용(위치 오차 + 가중치×자세 오차)이
+줄어드는지 확인하며 스텝을 절반씩 줄여 재시도</strong>한다(최대 6회) — "계산된 방향은
+믿되, 그 방향으로 얼마나 멀리 가도 안전한지는 직접 측정해서 정한다"는 뜻이다:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">cur_cost</span> <span class="o">=</span> <span class="n">pos_err_norm</span> <span class="o">+</span> <span class="n">ori_weight</span> <span class="o">*</span> <span class="n">ori_err_norm</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">step</span> <span class="o">=</span> <span class="mf">1.0</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="k">for</span> <span class="n">_</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">6</span><span class="p">):</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">q_try</span> <span class="o">=</span> <span class="n">clamp</span><span class="p">(</span><span class="n">q</span> <span class="o">+</span> <span class="n">step</span> <span class="o">*</span> <span class="n">dq_full</span><span class="p">)</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="o">...</span> <span class="n">비용</span> <span class="n">재계산</span> <span class="o">...</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="k">if</span> <span class="n">cost</span> <span class="o">&lt;</span> <span class="n">cur_cost</span><span class="p">:</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>        <span class="k">break</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>    <span class="n">step</span> <span class="o">*=</span> <span class="mf">0.5</span>
+</code></pre></div>
+<p>구현은 비용이 감소한 후보를 찾으면 즉시 채택한다. 여섯 후보가 모두 개선되지 않으면
+시험한 후보 중 비용이 가장 작은 것을 택하므로 큰 step의 위험은 줄지만, <strong>매 반복의
+단조 감소를 수학적으로 보장하지는 않는다</strong>.</p>
+<pre class="mermaid"><code>flowchart TD
+    FULL["계산된 전체 step&lt;br&gt;α = 1"] --&gt; TRY["q_try = clamp(q + αΔq)"]
+    TRY --&gt; FK["tree FK로 실제 비용 C(q_try) 계산"]
+    FK --&gt; BETTER{"현재 비용보다 작은가?"}
+    BETTER --&gt;|예| ACCEPT["즉시 채택"]
+    BETTER --&gt;|아니오| HALF["α ← α/2"]
+    HALF --&gt; LIMIT{"6개 후보를&lt;br&gt;모두 시험했는가?"}
+    LIMIT --&gt;|아니오| TRY
+    LIMIT --&gt;|예| BEST["시험 후보 중&lt;br&gt;비용 최소 후보 채택"]</code></pre>
+<h2 id="part-6-7">6.7 multistart — 국소해(local minimum) 탈출<a class="headerlink" href="#part-6-7" title="Permanent link">&para;</a></h2>
+<p>legacy 단일 팔 <code>solve_pose</code>만으로는 큰 격차나 관절 한계 근처에서 국소해에 갇힐 수 있다.
+<code>solve_pose_multistart</code>는 우선 <code>q_init</code>(보통 직전 프레임의 해 — 웜스타트라
+싸고 대개 좋은 시작점)으로 시도하고, 실패하면 관절 range 안에서 무작위로
+뽑은 시작점 여러 개(기본 8개)로 재시도한다. 이건 MoveIt의 IK 플러그인들도
+흔히 쓰는 전략(예: BioIK, TRAC-IK의 랜덤 재시작)과 같다. 이 함수는 Phase
+회귀 테스트와 오프라인 검증에서만 쓰인다. 실시간 텔레옵 루프는 단일 팔
+<code>solve_pose</code>나 multistart를 호출하지 않고 <code>WholeBodyIK.solve()</code>를 프레임당
+한 번 호출한다.</p>
+<h2 id="part-6-8">6.8 두 solver의 실제 사용 위치와 실행 예산<a class="headerlink" href="#part-6-8" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>경로</th>
+<th>호출 위치</th>
+<th>프레임당 동작</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>WholeBodyIK.solve()</code></td>
+<td><code>TeleopApp._step_physics()</code></td>
+<td>현재 상태에서 bounded least-squares 문제를 한 번 구성하고 푼다.</td>
+</tr>
+<tr>
+<td><code>KinematicsSolver.solve_pose()</code> (<code>InverseKinematics</code> 호환 이름)</td>
+<td>Phase 3·4·6 테스트, <code>tests/record_demo.py</code></td>
+<td>호출자가 지정한 반복 수 안에서 tree FK, DLS와 line search를 반복한다.</td>
+</tr>
+<tr>
+<td><code>solve_pose_multistart()</code></td>
+<td>테스트/오프라인 검증</td>
+<td>웜스타트 실패 시 여러 초기값을 시도하므로 실시간 루프에는 넣지 않는다.</td>
+</tr>
+</tbody>
+</table>
+<p>예전 구현의 stuck-frame 상수나 손별 반복 예산 감소 로직은 현재 코드에 없다.
+실시간 성능은 반복 횟수를 임의로 줄이는 대신 <code>WholeBodyIK.solve()</code> 한 번의
+latency를 <code>tests/test_whole_body.py</code>에서 측정해 회귀를 막는다.</p>
+<hr />
+<p><a href="05-hand-control.html">← Part 5</a> · <a href="../ros2-guide.html">전체 안내</a> · <a href="07-arm-torque-control.html">Part 7 →</a></p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  맨위로
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="하단/푸터" >
+        
+          
+          <a href="05-hand-control.html" class="md-footer__link md-footer__link--prev" aria-label="이전: 손 제어">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                이전
+              </span>
+              <div class="md-ellipsis">
+                손 제어
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="07-arm-torque-control.html" class="md-footer__link md-footer__link--next" aria-label="다음: 팔 토크 제어">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                다음
+              </span>
+              <div class="md-ellipsis">
+                팔 토크 제어
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 ggh-png
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/ggh-png/ffw-sh5-grasp" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "navigation.indexes", "navigation.footer", "navigation.tracking", "content.code.copy", "content.code.annotate", "search.highlight", "search.suggest", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\ud074\ub9bd\ubcf4\ub4dc\uc5d0 \ubcf5\uc0ac\ub428", "clipboard.copy": "\ud074\ub9bd\ubcf4\ub4dc\ub85c \ubcf5\uc0ac", "search.result.more.one": "\uc774 \ubb38\uc11c\uc5d0\uc11c 1\uac1c\uc758 \uac80\uc0c9 \uacb0\uacfc \ub354 \ubcf4\uae30", "search.result.more.other": "\uc774 \ubb38\uc11c\uc5d0\uc11c #\uac1c\uc758 \uac80\uc0c9 \uacb0\uacfc \ub354 \ubcf4\uae30", "search.result.none": "\uac80\uc0c9\uc5b4\uc640 \uc77c\uce58\ud558\ub294 \ubb38\uc11c\uac00 \uc5c6\uc2b5\ub2c8\ub2e4", "search.result.one": "1\uac1c\uc758 \uc77c\uce58\ud558\ub294 \ubb38\uc11c", "search.result.other": "#\uac1c\uc758 \uc77c\uce58\ud558\ub294 \ubb38\uc11c", "search.result.placeholder": "\uac80\uc0c9\uc5b4\ub97c \uc785\ub825\ud558\uc138\uc694", "search.result.term.missing": "\ud3ec\ud568\ub418\uc9c0 \uc54a\uc740 \uac80\uc0c9\uc5b4", "select.version": "\ubc84\uc804 \uc120\ud0dd"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../../javascripts/mathjax.js"></script>
+      
+        <script src="https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>

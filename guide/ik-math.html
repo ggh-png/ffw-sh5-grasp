@@ -1,0 +1,3781 @@
+
+<!doctype html>
+<html lang="ko" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="ROBOTIS FFW-SH5의 ROS-free MuJoCo 텔레오퍼레이션 — whole-body/arm-only IK, 실제 스워브 물리, 양손 grasp, reactive collision avoidance와 검증 문서.">
+      
+      
+        <meta name="author" content="ggh-png">
+      
+      
+        <link rel="canonical" href="https://ggh-png.github.io/ffw-sh5-grasp/guide/ik-math.html">
+      
+      
+        <link rel="prev" href="base_teleop.html">
+      
+      
+        <link rel="next" href="ik.html">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>DLS와 위치 우선 IK 수학 - ffw-sh5-grasp</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../css/custom.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#dls-ik" class="md-skip">
+          콘텐츠로 이동
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="상단/헤더">
+    <a href="../index.html" title="ffw-sh5-grasp" class="md-header__button md-logo" aria-label="ffw-sh5-grasp" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            ffw-sh5-grasp
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              DLS와 위치 우선 IK 수학
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="다크 모드로 전환"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="다크 모드로 전환" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="라이트 모드로 전환"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="라이트 모드로 전환" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="검색" placeholder="검색" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="검색">
+        
+        <button type="reset" class="md-search__icon md-icon" title="지우기" aria-label="지우기" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            검색 초기화
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/ggh-png/ffw-sh5-grasp" title="저장소로 이동" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="탭" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../index.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  홈
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../getting-started.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  처음 사용하기
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../concepts.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  시스템 이해
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  개발자 가이드
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="ros2-guide.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  ROS2 관점의 시스템 해설
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../releases.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  릴리스 기록
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="네비게이션" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../index.html" title="ffw-sh5-grasp" class="md-nav__button md-logo" aria-label="ffw-sh5-grasp" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    ffw-sh5-grasp
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/ggh-png/ffw-sh5-grasp" title="저장소로 이동" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    홈
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    처음 사용하기
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    처음 사용하기
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    빠른 시작
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../run.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    화면과 조작
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../control-modes.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    모드 선택
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    문제 해결
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    시스템 이해
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    시스템 이해
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../concepts.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    동작 원리
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../overview.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    아키텍처와 데이터 흐름
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../testing.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    테스트와 검증
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    개발자 가이드
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    개발자 가이드
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="00-basics.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MuJoCo 기본 용어
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4_3" id="__nav_4_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    핵심 알고리즘
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    핵심 알고리즘
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="kinematics.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    기구학과 충돌 거리
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="whole_body_ik.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    전신 IK와 충돌 회피
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="base_teleop.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    모바일 스워브 제어
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DLS와 위치 우선 IK 수학
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="ik-math.html" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    DLS와 위치 우선 IK 수학
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="목차">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      목차
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        먼저 보는 전체 흐름
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-ik" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. IK가 푸는 문제
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. IK가 푸는 문제">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        왜 해가 여러 개인가
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-dls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. DLS는 무엇을 최소화하는가
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. DLS는 무엇을 최소화하는가">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#21" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.1 목적함수 완전 전개
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#22-normal-equation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.2 미분에서 normal equation까지
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#23-primal-form-dual-form" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.3 Primal form에서 코드의 dual form까지
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. 수식과 코드의 대응
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-dls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. DLS가 특이점에서 폭발을 막는 이유
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. DLS가 특이점에서 폭발을 막는 이유">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-pseudoinverse-gain" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1 순수 pseudoinverse의 방향별 gain
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-dls-gain-svd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2 DLS gain을 SVD에서 끝까지 전개
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#43-dls-gain" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.3 DLS gain의 최대값과 극한
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. 왜 위치와 자세를 한 번에 풀지 않는가
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-null-space-projector" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Null-space projector
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. Null-space projector">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#damped-projector" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        중요한 주의점: damped projector는 근사다
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-solver-iteration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. 실제 solver의 한 iteration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-2-null-space" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. 2관절로 보는 null space
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-dls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. 현재 방식과 더 엄밀한 계층형 DLS
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="9. 현재 방식과 더 엄밀한 계층형 DLS">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        더 엄밀한 계층형 식의 전개
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        핵심만 다시 보기
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ik.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    단일 팔 IK
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="arm_control.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    팔 토크 제어
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="grasp.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    손 파지와 접촉 판정
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_4" id="__nav_4_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    애플리케이션 계층
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    애플리케이션 계층
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="teleop_app.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    앱 조립과 물리 루프
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="teleop_targets.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    목표와 좌표 변환
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="teleop_ui.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    UI 패널
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="teleop_render.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    렌더링과 Gizmo
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="pitfalls.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    개발 체크리스트
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="cheatsheet.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API 치트시트
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ROS2 관점의 시스템 해설
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    ROS2 관점의 시스템 해설
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ros2-guide.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    전체 안내
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_2" id="__nav_5_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    시작과 구조
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    시작과 구조
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ros2/01-concepts.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ROS2와 개념 지도
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ros2/02-mujoco-model-data.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    MuJoCo model과 data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ros2/03-project-identity.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    프로젝트 정체성
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ros2/04-runtime-architecture.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    런타임 아키텍처
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    제어 알고리즘
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    제어 알고리즘
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ros2/05-hand-control.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    손 제어
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ros2/06-inverse-kinematics.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    역기구학
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ros2/07-arm-torque-control.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    팔 토크 제어
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ros2/08-mobile-base.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    모바일 베이스
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_4" id="__nav_5_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    조작과 좌표계
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    조작과 좌표계
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ros2/09-teleoperation-ui.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    3D 텔레오퍼레이션 UI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ros2/10-coordinate-frames.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    좌표계
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_5" id="__nav_5_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    검증과 참고
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    검증과 참고
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ros2/11-testing.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    테스트와 검증
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ros2/12-running.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    직접 실행
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ros2/13-bug-cases.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    버그 사례집
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="ros2/14-glossary.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    용어 사전
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../releases.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    릴리스 기록
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="목차">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      목차
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        먼저 보는 전체 흐름
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-ik" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. IK가 푸는 문제
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. IK가 푸는 문제">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        왜 해가 여러 개인가
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-dls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. DLS는 무엇을 최소화하는가
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. DLS는 무엇을 최소화하는가">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#21" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.1 목적함수 완전 전개
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#22-normal-equation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.2 미분에서 normal equation까지
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#23-primal-form-dual-form" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2.3 Primal form에서 코드의 dual form까지
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. 수식과 코드의 대응
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-dls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. DLS가 특이점에서 폭발을 막는 이유
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. DLS가 특이점에서 폭발을 막는 이유">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-pseudoinverse-gain" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1 순수 pseudoinverse의 방향별 gain
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-dls-gain-svd" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2 DLS gain을 SVD에서 끝까지 전개
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#43-dls-gain" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.3 DLS gain의 최대값과 극한
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. 왜 위치와 자세를 한 번에 풀지 않는가
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-null-space-projector" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Null-space projector
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. Null-space projector">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#damped-projector" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        중요한 주의점: damped projector는 근사다
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-solver-iteration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. 실제 solver의 한 iteration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-2-null-space" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. 2관절로 보는 null space
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-dls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. 현재 방식과 더 엄밀한 계층형 DLS
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="9. 현재 방식과 더 엄밀한 계층형 DLS">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#_3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        더 엄밀한 계층형 식의 전개
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#_4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        핵심만 다시 보기
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="dls-ik">DLS와 위치 우선 IK 수학<a class="headerlink" href="#dls-ik" title="Permanent link">&para;</a></h1>
+<p>이 페이지는 <code>src/kinematics.py</code>의 <code>KinematicsSolver.solve_pose()</code>를 읽을 때 가장
+헷갈리기 쉬운 두 질문에 답한다.</p>
+<ol>
+<li>DLS는 왜 특이점 근처에서 관절 움직임이 폭발하지 않게 하는가?</li>
+<li>자세 보정은 어떻게 이미 맞춘 손 위치를 거의 망치지 않고 더할 수 있는가?</li>
+</ol>
+<p>설명은 7자유도 팔의 <strong>한 solver iteration</strong>을 기준으로 한다. 실제 클래스와 호출
+흐름은 <a href="ik.html">단일 팔 IK</a>, Jacobian과 좌표계 정의는
+<a href="kinematics.html">기구학과 충돌 거리</a>를 참고한다.</p>
+<div class="admonition note">
+<p class="admonition-title">현재 텔레옵과 이 페이지의 관계</p>
+<p>현재 텔레옵은 <a href="whole_body_ik.html"><code>src/whole_body_ik.py</code></a>의 bounded solver를
+사용한다. 여기서 설명하는 반복 DLS는 단일 팔 회귀·오프라인 경로지만, FK와
+Jacobian은 실시간 경로와 같은 <code>KinematicTree</code> 구현을 공유한다. <code>src/ik.py</code>는
+기존 <code>InverseKinematics</code> 이름만 제공한다.</p>
+</div>
+<h2 id="_1">먼저 보는 전체 흐름<a class="headerlink" href="#_1" title="Permanent link">&para;</a></h2>
+<p>세부 수식보다 아래 네 단계를 먼저 기억하면 된다.</p>
+<pre class="mermaid"><code>flowchart TD
+    ERROR["1. 목표-현재&lt;br&gt;손 오차 계산"] --&gt; DLS["2. DLS&lt;br&gt;위치용 관절 변화 계산"]
+    DLS --&gt; NULL["3. null-space&lt;br&gt;위치를 덜 건드리는 자세 보정"]
+    NULL --&gt; SAFE["4. clamp + backtracking&lt;br&gt;실제 적용 크기 제한"]</code></pre>
+<table>
+<thead>
+<tr>
+<th>기호</th>
+<th style="text-align: right;">크기</th>
+<th>쉬운 의미</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><span class="arithmatex">\(q\)</span></td>
+<td style="text-align: right;"><span class="arithmatex">\(7\times1\)</span></td>
+<td>현재 관절각 7개</td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(\Delta q\)</span></td>
+<td style="text-align: right;"><span class="arithmatex">\(7\times1\)</span></td>
+<td>이번 iteration에 움직일 관절량</td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(p(q),\ p^\ast\)</span></td>
+<td style="text-align: right;">각각 <span class="arithmatex">\(3\times1\)</span></td>
+<td>현재 손 위치와 목표 손 위치</td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(e_p=p^\ast-p(q)\)</span></td>
+<td style="text-align: right;"><span class="arithmatex">\(3\times1\)</span></td>
+<td>손이 더 움직여야 할 거리와 방향</td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(J_p\)</span></td>
+<td style="text-align: right;"><span class="arithmatex">\(3\times7\)</span></td>
+<td>관절 변화가 손 위치 변화로 바뀌는 비율</td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(J_R\)</span></td>
+<td style="text-align: right;"><span class="arithmatex">\(3\times7\)</span></td>
+<td>관절 변화가 손 자세 변화로 바뀌는 비율</td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(\lambda\)</span></td>
+<td style="text-align: right;">스칼라</td>
+<td>큰 관절 움직임을 얼마나 강하게 억제할지 정하는 damping</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition tip">
+<p class="admonition-title">처음 읽는다면</p>
+<p>먼저 1절의 문제, 4절의 그래프, 6절의 컵 비유와 마지막 요약을 읽으면 큰 흐름을
+잡을 수 있다. 그다음 2절부터 순서대로 읽으면 각 등식이 어디서 나왔는지 중간
+단계를 건너뛰지 않고 확인할 수 있다.</p>
+</div>
+<h2 id="1-ik">1. IK가 푸는 문제<a class="headerlink" href="#1-ik" title="Permanent link">&para;</a></h2>
+<p>7개 관절각을 벡터 <span class="arithmatex">\(q\in\mathbb R^7\)</span>, 손의 현재 위치를
+<span class="arithmatex">\(p(q)\in\mathbb R^3\)</span>, 목표 위치를 <span class="arithmatex">\(p^\ast\)</span>라고 하자. 위치 오차는 다음과 같다.</p>
+<div class="arithmatex">\[
+e_p = p^\ast - p(q)
+\]</div>
+<p>관절을 작은 양 <span class="arithmatex">\(\Delta q\)</span>만큼 움직였을 때 손 위치 변화는 position Jacobian
+<span class="arithmatex">\(J_p\in\mathbb R^{3\times7}\)</span>으로 선형 근사한다.</p>
+<div class="arithmatex">\[
+\Delta p \approx J_p\Delta q
+\]</div>
+<p>따라서 한 iteration의 목표는 다음 식을 가능한 한 잘 만족하는 <span class="arithmatex">\(\Delta q\)</span>를 찾는
+것이다.</p>
+<div class="arithmatex">\[
+J_p\Delta q \approx e_p
+\]</div>
+<pre class="mermaid"><code>flowchart LR
+    DQ["관절 변화 Δq&lt;br&gt;7개 숫자"] --&gt; J["position Jacobian Jp&lt;br&gt;현재 자세에서의 변화율"]
+    J --&gt; DP["예측 손 이동 JpΔq&lt;br&gt;3개 숫자"]
+    EP["원하는 손 이동 e_p"] --&gt; COMPARE{"두 값의 차이를&lt;br&gt;작게 만들기"}
+    DP --&gt; COMPARE</code></pre>
+<h3 id="_2">왜 해가 여러 개인가<a class="headerlink" href="#_2" title="Permanent link">&para;</a></h3>
+<p><span class="arithmatex">\(J_p\)</span>는 식 3개에 미지수 7개인 <span class="arithmatex">\(3\times7\)</span> 행렬이다. 일반적인 자세에서
+<span class="arithmatex">\(\operatorname{rank}(J_p)\approx3\)</span>이면 위치를 움직이지 않는 관절 방향이 대략
+4차원 남는다.</p>
+<div class="arithmatex">\[
+\dim\mathcal N(J_p)
+= 7-\operatorname{rank}(J_p)
+\approx 4
+\]</div>
+<p><span class="arithmatex">\(J_pz=0\)</span>인 관절 벡터 <span class="arithmatex">\(z\)</span>는 1차 근사에서 손 위치를 바꾸지 않는다. 손을 한 점에
+둔 채 팔꿈치 자세를 바꾸는 움직임이 이 <strong>null space(영공간)</strong>의 직관적인 예다.</p>
+<h2 id="2-dls">2. DLS는 무엇을 최소화하는가<a class="headerlink" href="#2-dls" title="Permanent link">&para;</a></h2>
+<p>Damped least-squares(DLS)는 위치 오차만 줄이는 대신 관절 변화량에도 벌점을 준다.</p>
+<div class="arithmatex">\[
+\boxed{
+\min_{\Delta q}
+\left(
+\lVert J_p\Delta q-e_p\rVert^2
++\lambda^2\lVert\Delta q\rVert^2
+\right)
+}
+\]</div>
+<table>
+<thead>
+<tr>
+<th>항</th>
+<th>의미</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><span class="arithmatex">\(\lVert J_p\Delta q-e_p\rVert^2\)</span></td>
+<td>예측한 손 이동이 원하는 이동과 얼마나 다른가</td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(\lambda^2\lVert\Delta q\rVert^2\)</span></td>
+<td>관절을 얼마나 과격하게 움직이는가</td>
+</tr>
+</tbody>
+</table>
+<p><span class="arithmatex">\(\lambda\)</span>가 커지면 작은 관절 움직임을 더 선호해 안정적이지만 느려지고,
+작아지면 목표를 적극적으로 쫓지만 특이점 근처에서 민감해진다.</p>
+<div class="admonition summary">
+<p class="admonition-title">이 식을 말로 읽으면</p>
+<p><strong>손 오차는 줄이되, 그 대가로 관절을 너무 크게 움직여야 한다면 조금 양보한다.</strong>
+DLS의 핵심은 정확한 오차 0만 고집하지 않고 안정적인 관절 움직임과 절충하는 것이다.</p>
+</div>
+<h3 id="21">2.1 목적함수 완전 전개<a class="headerlink" href="#21" title="Permanent link">&para;</a></h3>
+<p>아래에서는 표기를 짧게 하기 위해 <span class="arithmatex">\(J_p\)</span>를 <span class="arithmatex">\(J\)</span>, <span class="arithmatex">\(e_p\)</span>를 <span class="arithmatex">\(e\)</span>로 쓴다.
+제곱 노름의 정의부터 시작한다.</p>
+<div class="arithmatex">\[
+\begin{aligned}
+L(\Delta q)
+&amp;=\lVert J\Delta q-e\rVert^2
++\lambda^2\lVert\Delta q\rVert^2 \\
+&amp;=(J\Delta q-e)^T(J\Delta q-e)
++\lambda^2\Delta q^T\Delta q
+\end{aligned}
+\]</div>
+<p>첫 번째 곱을 네 항으로 전개한다.</p>
+<div class="arithmatex">\[
+\begin{aligned}
+(J\Delta q-e)^T(J\Delta q-e)
+&amp;=(\Delta q^TJ^T-e^T)(J\Delta q-e) \\
+&amp;=\Delta q^TJ^TJ\Delta q
+-\Delta q^TJ^Te
+-e^TJ\Delta q
++e^Te
+\end{aligned}
+\]</div>
+<p><span class="arithmatex">\(\Delta q^TJ^Te\)</span>는 스칼라이므로 전치해도 값이 같다.</p>
+<div class="arithmatex">\[
+\Delta q^TJ^Te
+=(\Delta q^TJ^Te)^T
+=e^TJ\Delta q
+\]</div>
+<p>따라서 가운데 두 항을 합칠 수 있다.</p>
+<div class="arithmatex">\[
+\boxed{
+L(\Delta q)
+=\Delta q^TJ^TJ\Delta q
+-2e^TJ\Delta q
++e^Te
++\lambda^2\Delta q^T\Delta q
+}
+\]</div>
+<h3 id="22-normal-equation">2.2 미분에서 normal equation까지<a class="headerlink" href="#22-normal-equation" title="Permanent link">&para;</a></h3>
+<p>필요한 미분 규칙은 세 가지다. <span class="arithmatex">\(A=A^T\)</span>이고 <span class="arithmatex">\(b\)</span>가 상수일 때</p>
+<div class="arithmatex">\[
+\frac{\partial}{\partial x}(x^TAx)=2Ax,
+\qquad
+\frac{\partial}{\partial x}(b^Tx)=b,
+\qquad
+\frac{\partial}{\partial x}(\text{constant})=0
+\]</div>
+<p>여기서 <span class="arithmatex">\(J^TJ\)</span>는 대칭행렬이고 <span class="arithmatex">\(e^Te\)</span>는 <span class="arithmatex">\(\Delta q\)</span>와 무관한 상수다.
+각 항을 하나씩 미분하면</p>
+<div class="arithmatex">\[
+\begin{aligned}
+\frac{\partial}{\partial\Delta q}
+(\Delta q^TJ^TJ\Delta q)
+&amp;=2J^TJ\Delta q, \\
+\frac{\partial}{\partial\Delta q}
+(-2e^TJ\Delta q)
+&amp;=-2J^Te, \\
+\frac{\partial}{\partial\Delta q}(e^Te)
+&amp;=0, \\
+\frac{\partial}{\partial\Delta q}
+(\lambda^2\Delta q^T\Delta q)
+&amp;=2\lambda^2\Delta q
+\end{aligned}
+\]</div>
+<p>이들을 더한 gradient를 0으로 둔다.</p>
+<div class="arithmatex">\[
+\begin{aligned}
+\nabla_{\Delta q}L
+&amp;=2J^TJ\Delta q-2J^Te+2\lambda^2\Delta q \\
+&amp;=0
+\end{aligned}
+\]</div>
+<p>양변을 2로 나누고 <span class="arithmatex">\(\Delta q\)</span>가 들어간 항을 묶으면</p>
+<div class="arithmatex">\[
+\begin{aligned}
+J^TJ\Delta q-J^Te+\lambda^2\Delta q&amp;=0 \\
+J^TJ\Delta q+\lambda^2\Delta q&amp;=J^Te \\
+(J^TJ+\lambda^2I)\Delta q&amp;=J^Te
+\end{aligned}
+\]</div>
+<p><span class="arithmatex">\(\lambda&gt;0\)</span>이면 <span class="arithmatex">\(J^TJ+\lambda^2I\)</span>는 positive definite라 역행렬이 존재한다.
+따라서 관절 공간에서 푸는 primal form은</p>
+<div class="arithmatex">\[
+\boxed{
+\Delta q=(J^TJ+\lambda^2I)^{-1}J^Te
+}
+\]</div>
+<p>이다.</p>
+<h3 id="23-primal-form-dual-form">2.3 Primal form에서 코드의 dual form까지<a class="headerlink" href="#23-primal-form-dual-form" title="Permanent link">&para;</a></h3>
+<p>관절이 <span class="arithmatex">\(n\)</span>개이고 task가 <span class="arithmatex">\(m\)</span>차원이면 primal form은 <span class="arithmatex">\(n\times n\)</span> system을
+푼다. 이 프로젝트의 위치 IK는 <span class="arithmatex">\(n=7\)</span>, <span class="arithmatex">\(m=3\)</span>이므로 <span class="arithmatex">\(3\times3\)</span> system을 푸는
+dual form이 더 작다. 두 형태가 같은 이유를 등식으로 확인한다.</p>
+<div class="arithmatex">\[
+\begin{aligned}
+(J^TJ+\lambda^2I_n)J^T
+&amp;=J^TJJ^T+\lambda^2J^T \\
+&amp;=J^T(JJ^T+\lambda^2I_m)
+\end{aligned}
+\]</div>
+<p>왼쪽에서 <span class="arithmatex">\((J^TJ+\lambda^2I_n)^{-1}\)</span>, 오른쪽에서
+<span class="arithmatex">\((JJ^T+\lambda^2I_m)^{-1}\)</span>를 차례로 곱한다.</p>
+<div class="arithmatex">\[
+\begin{aligned}
+J^T
+&amp;=(J^TJ+\lambda^2I_n)^{-1}
+J^T(JJ^T+\lambda^2I_m), \\
+J^T(JJ^T+\lambda^2I_m)^{-1}
+&amp;=(J^TJ+\lambda^2I_n)^{-1}J^T
+\end{aligned}
+\]</div>
+<p>두 번째 등식의 좌우를 바꾸고 primal form에 대입하면</p>
+<div class="arithmatex">\[
+\begin{aligned}
+\Delta q
+&amp;=(J^TJ+\lambda^2I_n)^{-1}J^Te \\
+&amp;=J^T(JJ^T+\lambda^2I_m)^{-1}e
+\end{aligned}
+\]</div>
+<p>따라서 실제 solver가 사용하는 결과식은</p>
+<div class="arithmatex">\[
+\boxed{
+\Delta q=J^T(JJ^T+\lambda^2I)^{-1}e
+}
+\]</div>
+<p>이다. 여기까지가 목적함수에서 코드의 DLS 식까지 생략 없는 전개다.</p>
+<h2 id="3">3. 수식과 코드의 대응<a class="headerlink" href="#3" title="Permanent link">&para;</a></h2>
+<p><code>KinematicsSolver.solve_pose()</code>는 위 식을 다음 코드로 직접 구현한다. 별도 helper로
+감싸지 않아 수식의 각 항이 iteration 안에서 그대로 보인다.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">damping_squared</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">damping</span> <span class="o">**</span> <span class="mi">2</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">position_system</span> <span class="o">=</span> <span class="p">(</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">position_jacobian</span> <span class="o">@</span> <span class="n">position_jacobian</span><span class="o">.</span><span class="n">T</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="o">+</span> <span class="n">damping_squared</span> <span class="o">*</span> <span class="n">np</span><span class="o">.</span><span class="n">eye</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="p">)</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="n">position_delta</span> <span class="o">=</span> <span class="n">position_jacobian</span><span class="o">.</span><span class="n">T</span> <span class="o">@</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">solve</span><span class="p">(</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="n">position_system</span><span class="p">,</span> <span class="n">position_error</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="p">)</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>코드</th>
+<th>수식</th>
+<th>역할</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>position_jacobian @ position_jacobian.T</code></td>
+<td><span class="arithmatex">\(J_pJ_p^T\)</span></td>
+<td>task-space sensitivity를 모은다.</td>
+</tr>
+<tr>
+<td><code>+ damping_squared * I</code></td>
+<td><span class="arithmatex">\(J_pJ_p^T+\lambda^2I\)</span></td>
+<td>0에 가까운 방향의 분모를 안정화한다.</td>
+</tr>
+<tr>
+<td><code>solve(position_system, position_error)</code></td>
+<td><span class="arithmatex">\((J_pJ_p^T+\lambda^2I)^{-1}e_p\)</span></td>
+<td>역행렬을 만들지 않고 선형계를 푼다.</td>
+</tr>
+<tr>
+<td><code>position_jacobian.T @ ...</code></td>
+<td><span class="arithmatex">\(J_p^T(\cdots)\)</span></td>
+<td>결과를 관절 공간으로 돌려보낸다.</td>
+</tr>
+</tbody>
+</table>
+<p>기본 감쇠는 <code>DEFAULT_DAMPING = 0.05</code>, iteration당 관절 변화 제한은
+<code>DEFAULT_MAX_JOINT_DELTA = 0.05 rad</code>다. 두 값은 역할이 다르다. damping은 해를
+계산하는 과정의 정규화이고, clamp는 계산된 해에 마지막으로 적용하는 상한이다.</p>
+<h2 id="4-dls">4. DLS가 특이점에서 폭발을 막는 이유<a class="headerlink" href="#4-dls" title="Permanent link">&para;</a></h2>
+<p>Jacobian을 singular value decomposition(SVD)으로 쓰면
+<span class="arithmatex">\(J=U\Sigma V^T\)</span>다. 각 특이값 <span class="arithmatex">\(\sigma_i\)</span>는 해당 task 방향으로 관절 움직임이
+얼마나 잘 전달되는지를 나타낸다.</p>
+<h3 id="41-pseudoinverse-gain">4.1 순수 pseudoinverse의 방향별 gain<a class="headerlink" href="#41-pseudoinverse-gain" title="Permanent link">&para;</a></h3>
+<p>SVD에서 pseudoinverse는 <span class="arithmatex">\(J^+=V\Sigma^+U^T\)</span>이고, <span class="arithmatex">\(\Sigma^+\)</span>의 대각 원소는
+0이 아닌 각 특이값의 역수다.</p>
+<div class="arithmatex">\[
+\Sigma^+
+=\operatorname{diag}\left(
+\frac{1}{\sigma_1},\ldots,\frac{1}{\sigma_r}
+\right)
+\]</div>
+<p>오차를 왼쪽 singular vector <span class="arithmatex">\(u_i\)</span> 방향 성분으로 나눠 쓰면</p>
+<div class="arithmatex">\[
+e=\sum_{i=1}^{r}(u_i^Te)u_i+e_\perp
+\]</div>
+<p>이고, pseudoinverse 해는 다음 순서로 전개된다.</p>
+<div class="arithmatex">\[
+\begin{aligned}
+\Delta q_{\text{pinv}}
+&amp;=J^+e \\
+&amp;=V\Sigma^+U^Te \\
+&amp;=\sum_{i=1}^{r}
+\frac{1}{\sigma_i}v_i(u_i^Te)
+\end{aligned}
+\]</div>
+<p>따라서 <span class="arithmatex">\(u_i\)</span> 방향의 task error는 관절 공간에서 정확히 <span class="arithmatex">\(1/\sigma_i\)</span>배 된다.</p>
+<h3 id="42-dls-gain-svd">4.2 DLS gain을 SVD에서 끝까지 전개<a class="headerlink" href="#42-dls-gain-svd" title="Permanent link">&para;</a></h3>
+<p>DLS 식에 <span class="arithmatex">\(J=U\Sigma V^T\)</span>를 대입한다. 먼저 <span class="arithmatex">\(JJ^T\)</span>를 계산하면</p>
+<div class="arithmatex">\[
+\begin{aligned}
+JJ^T
+&amp;=(U\Sigma V^T)(U\Sigma V^T)^T \\
+&amp;=(U\Sigma V^T)(V\Sigma^TU^T) \\
+&amp;=U\Sigma(V^TV)\Sigma^TU^T \\
+&amp;=U\Sigma\Sigma^TU^T
+\end{aligned}
+\]</div>
+<p>이다. <span class="arithmatex">\(U\)</span>가 orthogonal이므로 <span class="arithmatex">\(I=UIU^T\)</span>이고</p>
+<div class="arithmatex">\[
+\begin{aligned}
+JJ^T+\lambda^2I
+&amp;=U\Sigma\Sigma^TU^T+\lambda^2UIU^T \\
+&amp;=U(\Sigma\Sigma^T+\lambda^2I)U^T
+\end{aligned}
+\]</div>
+<p>이다. Orthogonal similarity transform의 역은</p>
+<div class="arithmatex">\[
+[UCU^T]^{-1}=UC^{-1}U^T
+\]</div>
+<p>이므로 DLS operator를 전개하면</p>
+<div class="arithmatex">\[
+\begin{aligned}
+J^T(JJ^T+\lambda^2I)^{-1}
+&amp;=V\Sigma^TU^T
+\left[U(\Sigma\Sigma^T+\lambda^2I)U^T\right]^{-1} \\
+&amp;=V\Sigma^TU^T
+U(\Sigma\Sigma^T+\lambda^2I)^{-1}U^T \\
+&amp;=V\Sigma^T(\Sigma\Sigma^T+\lambda^2I)^{-1}U^T
+\end{aligned}
+\]</div>
+<p>대각 원소끼리 계산하면</p>
+<div class="arithmatex">\[
+\Sigma^T(\Sigma\Sigma^T+\lambda^2I)^{-1}
+=\operatorname{diag}\left(
+\frac{\sigma_1}{\sigma_1^2+\lambda^2},\ldots,
+\frac{\sigma_r}{\sigma_r^2+\lambda^2}
+\right)
+\]</div>
+<p>이므로 최종 해는</p>
+<div class="arithmatex">\[
+\boxed{
+\Delta q_{\text{DLS}}
+=\sum_{i=1}^{r}
+\frac{\sigma_i}{\sigma_i^2+\lambda^2}
+v_i(u_i^Te)
+}
+\]</div>
+<p>이다. 따라서 DLS의 방향별 gain은</p>
+<div class="arithmatex">\[
+\boxed{g(\sigma)=\frac{\sigma}{\sigma^2+\lambda^2}}
+\]</div>
+<p>로 정확히 나타난다.</p>
+<h3 id="43-dls-gain">4.3 DLS gain의 최대값과 극한<a class="headerlink" href="#43-dls-gain" title="Permanent link">&para;</a></h3>
+<p>gain을 <span class="arithmatex">\(\sigma\)</span>로 미분한다. 몫의 미분법을 그대로 적용하면</p>
+<div class="arithmatex">\[
+\begin{aligned}
+g'(\sigma)
+&amp;=\frac{1\cdot(\sigma^2+\lambda^2)
+-\sigma\cdot2\sigma}
+{(\sigma^2+\lambda^2)^2} \\
+&amp;=\frac{\lambda^2-\sigma^2}
+{(\sigma^2+\lambda^2)^2}
+\end{aligned}
+\]</div>
+<p><span class="arithmatex">\(\sigma\ge0\)</span>에서 <span class="arithmatex">\(g'(\sigma)=0\)</span>이면</p>
+<div class="arithmatex">\[
+\lambda^2-\sigma^2=0
+\quad\Longrightarrow\quad
+\sigma=\lambda
+\]</div>
+<p>이고, 그때의 gain은</p>
+<div class="arithmatex">\[
+g(\lambda)
+=\frac{\lambda}{\lambda^2+\lambda^2}
+=\frac{1}{2\lambda}
+\]</div>
+<p>이다. 양 끝의 극한도 직접 계산할 수 있다.</p>
+<div class="arithmatex">\[
+\lim_{\sigma\to0}
+\frac{\sigma}{\sigma^2+\lambda^2}=0,
+\qquad
+\lim_{\sigma\to\infty}
+\frac{\sigma}{\sigma^2+\lambda^2}=0
+\]</div>
+<table>
+<thead>
+<tr>
+<th>특이값 상태</th>
+<th>뜻</th>
+<th>순수 pseudoinverse</th>
+<th>DLS</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><span class="arithmatex">\(\sigma_i\)</span>가 큼</td>
+<td>손이 잘 움직이는 방향</td>
+<td>평범한 크기의 명령</td>
+<td>거의 같은 방향으로 움직임</td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(\sigma_i\approx\lambda\)</span></td>
+<td>민감도가 낮아지기 시작</td>
+<td>명령이 커짐</td>
+<td>gain이 최대값에 도달</td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(\sigma_i\to0\)</span></td>
+<td>사실상 움직일 수 없는 방향</td>
+<td><span class="arithmatex">\(1/\sigma_i\)</span>가 폭발</td>
+<td>gain이 0으로 내려가 방향을 포기</td>
+</tr>
+</tbody>
+</table>
+<p>순수 역은 <span class="arithmatex">\(\sigma_i\to0\)</span>일 때 무한대로 커지지만 DLS는 위 전개처럼 0으로
+내려간다. 즉 로봇이 거의 움직일 수 없는 방향을 억지로 만들기 위해 관절을 크게
+휘두르지 않는다.</p>
+<figure>
+<p><img alt="의사역행렬과 DLS의 특이값 방향별 증폭 비교" src="../assets/dls-singular-value-gain.svg" />
+  </p>
+<figcaption>빨강은 순수 pseudoinverse, 초록은 λ=0.1인 DLS 예시다. 그래프 위쪽 범위를 넘는 빨강 곡선은 σ→0에서 계속 발산한다.</figcaption>
+</figure>
+<p>예를 들어 <span class="arithmatex">\(\sigma=0.001\)</span>, <span class="arithmatex">\(\lambda=0.1\)</span>이면 다음과 같다.</p>
+<div class="arithmatex">\[
+\frac{1}{\sigma}=1000,
+\qquad
+\frac{\sigma}{\sigma^2+\lambda^2}
+=\frac{0.001}{0.010001}
+\approx0.1
+\]</div>
+<p>같은 아주 작은 손 오차가 순수 pseudoinverse에서는 관절 공간에서 크게 증폭되지만,
+DLS에서는 해당 특이 방향이 강하게 억제된다.</p>
+<div class="admonition summary">
+<p class="admonition-title">그래프의 한 줄 결론</p>
+<p><strong>움직일 수 없는 방향일수록 더 세게 명령하는 것이 아니라, 그 방향의 명령을
+포기하는 것</strong>이 DLS가 특이점에서 안전한 이유다.</p>
+</div>
+<h2 id="5">5. 왜 위치와 자세를 한 번에 풀지 않는가<a class="headerlink" href="#5" title="Permanent link">&para;</a></h2>
+<p>가장 단순한 pose IK는 위치와 자세 오차, Jacobian을 각각 세로로 쌓는다.</p>
+<div class="arithmatex">\[
+e=
+\begin{bmatrix}e_p\\e_R\end{bmatrix},
+\qquad
+J=
+\begin{bmatrix}J_p\\J_R\end{bmatrix}
+\]</div>
+<p>하지만 하나의 least-squares 문제에서는 위치와 자세가 같은 단계에서 경쟁한다.
+가중치 <span class="arithmatex">\(w_p\gg w_R\)</span>를 주어도 “위치를 절대 보존하라”가 아니라 “위치를 더 비싸게
+취급하라”는 절충일 뿐이다.</p>
+<p>이 solver는 <strong>위치를 먼저 풀고</strong>, 자세는 위치 task가 쓰지 않는 관절 방향으로만
+보정하는 task-priority 구조를 사용한다.</p>
+<div class="admonition example">
+<p class="admonition-title">책상 위 컵으로 생각하기</p>
+<p>먼저 컵을 목표 지점으로 옮기는 동작이 위치 보정 <span class="arithmatex">\(\Delta q_{pos}\)</span>다. 그다음
+컵을 제자리에서 돌리고 싶다. 자세 보정이 컵을 옆으로 밀면 방금 맞춘 위치가
+깨진다. Null-space projection은 자세 보정에서 <strong>컵을 미는 성분을 빼고,
+제자리 회전에 해당하는 성분만 남기는 필터</strong>라고 생각할 수 있다.</p>
+</div>
+<div class="arithmatex">\[
+\Delta q=\Delta q_{pos}+\Delta q_{ori}
+\]</div>
+<p>자세 보정이 위치에 영향을 주지 않으려면 이상적으로 다음을 만족해야 한다.</p>
+<div class="arithmatex">\[
+J_p\Delta q_{ori}=0
+\]</div>
+<h2 id="6-null-space-projector">6. Null-space projector<a class="headerlink" href="#6-null-space-projector" title="Permanent link">&para;</a></h2>
+<p>Moore–Penrose pseudoinverse <span class="arithmatex">\(J_p^+\)</span>를 사용한 정확한 projector는 다음과 같다.</p>
+<div class="arithmatex">\[
+\boxed{N_p=I-J_p^+J_p}
+\]</div>
+<p>projector가 임의의 후보 관절 방향 <span class="arithmatex">\(z\)</span>를 처리하는 순서는 다음과 같다.</p>
+<div class="arithmatex">\[
+\boxed{
+N_pz
+=\underbrace{z}_{\text{원래 후보}}
+-\underbrace{J_p^+(J_pz)}_{\text{손 위치를 움직이는 성분}}
+}
+\]</div>
+<ol>
+<li><span class="arithmatex">\(J_pz\)</span>: 후보 <span class="arithmatex">\(z\)</span>가 손 위치를 얼마나 움직이는지 계산한다.</li>
+<li><span class="arithmatex">\(J_p^+(J_pz)\)</span>: 그 움직임을 만드는 관절 성분을 다시 구한다.</li>
+<li>원래 후보에서 그 성분을 빼 위치 변화가 없는 쪽만 남긴다.</li>
+</ol>
+<p>임의의 관절 방향 <span class="arithmatex">\(z\)</span>에 <span class="arithmatex">\(N_p\)</span>를 곱하면 위치를 움직이는 성분이 제거된다.
+이를 projector 정의에서 직접 확인하면</p>
+<div class="arithmatex">\[
+\begin{aligned}
+J_pN_p
+&amp;=J_p(I-J_p^+J_p) \\
+&amp;=J_pI-J_pJ_p^+J_p \\
+&amp;=J_p-J_pJ_p^+J_p
+\end{aligned}
+\]</div>
+<p>이다. Moore–Penrose pseudoinverse의 정의 성질 중 하나가</p>
+<div class="arithmatex">\[
+J_pJ_p^+J_p=J_p
+\]</div>
+<p>이므로 이를 바로 대입하면</p>
+<div class="arithmatex">\[
+\boxed{
+J_pN_p=J_p-J_p=0
+}
+\]</div>
+<p>을 얻는다. 따라서 모든 <span class="arithmatex">\(z\)</span>에 대해 <span class="arithmatex">\(J_p(N_pz)=(J_pN_p)z=0\)</span>이다.</p>
+<p>자세 오차 <span class="arithmatex">\(e_R\in\mathbb R^3\)</span>와 rotational Jacobian
+<span class="arithmatex">\(J_R\in\mathbb R^{3\times7}\)</span>에서 자세를 개선하는 단순 관절 방향은
+<span class="arithmatex">\(g_R=J_R^Te_R\)</span>다. 이 방향도 목적함수의 gradient에서 나온다. 작은 관절 변화
+<span class="arithmatex">\(\delta q\)</span>에 대한 orientation 비용을</p>
+<div class="arithmatex">\[
+F_R(\delta q)
+=\frac12\lVert e_R-J_R\delta q\rVert^2
+\]</div>
+<p>라고 하면</p>
+<div class="arithmatex">\[
+\begin{aligned}
+\nabla_{\delta q}F_R
+&amp;=\frac12\cdot2(-J_R)^T(e_R-J_R\delta q) \\
+&amp;=-J_R^T(e_R-J_R\delta q)
+\end{aligned}
+\]</div>
+<p>이다. 현재점 <span class="arithmatex">\(\delta q=0\)</span>에서 비용을 줄이는 negative-gradient 방향은</p>
+<div class="arithmatex">\[
+-\nabla_{\delta q}F_R\big|_{\delta q=0}
+=J_R^Te_R
+=g_R
+\]</div>
+<p>가 된다. 이를 위치 null space에 투영하면 다음과 같다.</p>
+<div class="arithmatex">\[
+\Delta q_{ori}=\alpha N_pJ_R^Te_R
+\]</div>
+<p>일반식의 <span class="arithmatex">\(\alpha\)</span>는 자세 보정 gain이다. 현재 <code>src/ik.py</code>는 별도 gain을 곱하지 않아
+사실상 <span class="arithmatex">\(\alpha=1\)</span>이다. <code>ori_weight=0.3</code>은 line search의 후보 비용을 비교할 때만
+사용하며 orientation gradient gain이 아니다.</p>
+<h3 id="damped-projector">중요한 주의점: damped projector는 근사다<a class="headerlink" href="#damped-projector" title="Permanent link">&para;</a></h3>
+<p>실제 코드는 안정성을 위해 정확한 <span class="arithmatex">\(J_p^+\)</span> 대신 damped pseudoinverse를 재사용한다.</p>
+<div class="arithmatex">\[
+J_{p,\lambda}^+
+=J_p^T(J_pJ_p^T+\lambda^2I)^{-1},
+\qquad
+N_{p,\lambda}=I-J_{p,\lambda}^+J_p
+\]</div>
+<p>이 경우 <span class="arithmatex">\(J_pN_{p,\lambda}=0\)</span>이 엄밀하게 성립하지 않는다. 따라서 문서와 코드를
+해석할 때는 “자세 보정이 위치를 전혀 움직이지 않는다”가 아니라
+<strong>“자세 보정이 위치에 미치는 1차 영향을 크게 억제한다”</strong>가 정확하다.</p>
+<p>얼마나 남는지도 생략 없이 계산할 수 있다. 정의를 대입하면</p>
+<div class="arithmatex">\[
+\begin{aligned}
+J_pN_{p,\lambda}
+&amp;=J_p(I-J_{p,\lambda}^+J_p) \\
+&amp;=J_p-J_pJ_p^T
+(J_pJ_p^T+\lambda^2I)^{-1}J_p
+\end{aligned}
+\]</div>
+<p><span class="arithmatex">\(A=J_pJ_p^T\)</span>라고 놓고 <span class="arithmatex">\(J_p\)</span>를 오른쪽으로 묶으면</p>
+<div class="arithmatex">\[
+\begin{aligned}
+J_pN_{p,\lambda}
+&amp;=\left[I-A(A+\lambda^2I)^{-1}\right]J_p \\
+&amp;=\left[(A+\lambda^2I)(A+\lambda^2I)^{-1}
+-A(A+\lambda^2I)^{-1}\right]J_p \\
+&amp;=\left[(A+\lambda^2I-A)(A+\lambda^2I)^{-1}\right]J_p \\
+&amp;=\lambda^2(A+\lambda^2I)^{-1}J_p
+\end{aligned}
+\]</div>
+<p>이다. 다시 <span class="arithmatex">\(A=J_pJ_p^T\)</span>를 대입하면 정확한 잔차는</p>
+<div class="arithmatex">\[
+\boxed{
+J_pN_{p,\lambda}
+=\lambda^2(J_pJ_p^T+\lambda^2I)^{-1}J_p
+}
+\]</div>
+<p>다. SVD 방향 <span class="arithmatex">\(i\)</span>에서 이 잔차의 gain은</p>
+<div class="arithmatex">\[
+\boxed{
+\frac{\lambda^2\sigma_i}{\sigma_i^2+\lambda^2}
+}
+\]</div>
+<p>이므로 <span class="arithmatex">\(\lambda&gt;0\)</span>에서는 일반적으로 0이 아니다. 이것이 damped projector가
+정확한 null-space projector가 아니라는 수학적 이유다.</p>
+<p>다음 상황에서는 작은 위치 변화가 남을 수 있다.</p>
+<ul>
+<li>damping <span class="arithmatex">\(\lambda\)</span>가 큰 경우</li>
+<li>singularity 또는 joint limit 근처</li>
+<li>관절 변화량 clamp가 성분별로 걸린 경우</li>
+<li>한 iteration의 변화가 커서 Jacobian 선형근사가 부정확한 경우</li>
+</ul>
+<h2 id="7-solver-iteration">7. 실제 solver의 한 iteration<a class="headerlink" href="#7-solver-iteration" title="Permanent link">&para;</a></h2>
+<p>현재 구현의 핵심 계산은 다음 식으로 요약된다.</p>
+<p>먼저 damped projector에 <span class="arithmatex">\(g_R\)</span>를 대입해 orientation 보정식을 전개하면</p>
+<div class="arithmatex">\[
+\begin{aligned}
+\Delta q_{ori}
+&amp;=N_{p,\lambda}g_R \\
+&amp;=(I-J_{p,\lambda}^+J_p)g_R \\
+&amp;=g_R-J_{p,\lambda}^+(J_pg_R) \\
+&amp;=g_R-J_p^T(J_pJ_p^T+\lambda^2I)^{-1}(J_pg_R)
+\end{aligned}
+\]</div>
+<p>이다. 반복해서 나타나는 system을 <span class="arithmatex">\(A=J_pJ_p^T+\lambda^2I\)</span>로 줄여 쓰면</p>
+<div class="arithmatex">\[
+\begin{aligned}
+A
+&amp;=J_pJ_p^T+\lambda^2I \\
+\Delta q_{pos}
+&amp;=J_p^TA^{-1}e_p \\
+g_R
+&amp;=J_R^Te_R \\
+\Delta q_{ori}
+&amp;=g_R-J_p^TA^{-1}(J_pg_R) \\
+\Delta q
+&amp;=\operatorname{clip}(\Delta q_{pos}+\Delta q_{ori})
+\end{aligned}
+\]</div>
+<table>
+<thead>
+<tr>
+<th>계산 조각</th>
+<th>말로 읽기</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><span class="arithmatex">\(A=J_pJ_p^T+\lambda^2I\)</span></td>
+<td>위치 Jacobian에 damping을 더한 공통 system</td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(J_p^TA^{-1}e_p\)</span></td>
+<td>위치 오차를 안정적인 관절 변화로 변환</td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(g_R=J_R^Te_R\)</span></td>
+<td>자세 오차를 줄이고 싶은 관절 방향 생성</td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(g_R-J_p^TA^{-1}(J_pg_R)\)</span></td>
+<td>자세 방향에서 위치를 움직이는 성분 제거</td>
+</tr>
+<tr>
+<td><span class="arithmatex">\(\operatorname{clip}(\cdot)\)</span></td>
+<td>각 관절의 한 iteration 최대 이동량 제한</td>
+</tr>
+</tbody>
+</table>
+<p>수식의 <span class="arithmatex">\(A^{-1}x\)</span>는 개념 표기다. 코드는 역행렬을 직접 만들지 않고
+<code>np.linalg.solve(A, x)</code>로 선형계를 푼다.</p>
+<pre class="mermaid"><code>flowchart TD
+    POS["위치 오차 e_p"] --&gt; DLS["DLS로 Δq_pos 계산"]
+    ORI["자세 오차 e_R"] --&gt; GRAD["J_Rᵀe_R로 자세 방향 g_R 계산"]
+    JP["position Jacobian J_p"] --&gt; PROJECT["damped null-space projection"]
+    GRAD --&gt; PROJECT
+    PROJECT --&gt; DQORI["위치 영향을 억제한 Δq_ori"]
+    DLS --&gt; SUM["Δq_pos + Δq_ori"]
+    DQORI --&gt; SUM
+    SUM --&gt; CLAMP["관절별 max_joint_delta clamp"]
+    CLAMP --&gt; SEARCH["step=1, 1/2, … 후보 비용 비교"]
+    SEARCH --&gt; UPDATE["가장 나은 후보 q로 갱신"]</code></pre>
+<p>clamp 뒤에는 backtracking으로 step을 최대 6번 절반씩 줄이며 실제 forward
+kinematics 비용을 비교한다.</p>
+<div class="arithmatex">\[
+C(q)=\lVert e_p(q)\rVert+\text{ori\_weight}\,\lVert e_R(q)\rVert
+\]</div>
+<p>비용이 현재보다 낮은 후보를 찾으면 탐색을 멈춘다. 여섯 후보가 모두 개선되지
+않으면 구현은 그중 비용이 가장 작은 후보를 채택한다. 따라서 line search는 큰
+비선형 step의 위험을 줄이지만, 모든 iteration의 단조 감소를 수학적으로 보장하는
+구조는 아니다.</p>
+<h2 id="8-2-null-space">8. 2관절로 보는 null space<a class="headerlink" href="#8-2-null-space" title="Permanent link">&para;</a></h2>
+<p>위치 task가 하나이고 Jacobian이 다음과 같다고 하자.</p>
+<div class="arithmatex">\[
+J_p=\begin{bmatrix}1&amp;1\end{bmatrix},
+\qquad
+\Delta x=\Delta q_1+\Delta q_2
+\]</div>
+<p>관절을 반대 방향으로 같은 양만큼 움직이는 벡터는 null space에 있다.</p>
+<div class="arithmatex">\[
+z=\begin{bmatrix}1\\-1\end{bmatrix},
+\qquad
+J_pz=
+\begin{bmatrix}1&amp;1\end{bmatrix}
+\begin{bmatrix}1\\-1\end{bmatrix}=0
+\]</div>
+<p>이 예제의 pseudoinverse와 projector도 끝까지 계산해보자.</p>
+<div class="arithmatex">\[
+\begin{aligned}
+J_pJ_p^T
+&amp;=\begin{bmatrix}1&amp;1\end{bmatrix}
+\begin{bmatrix}1\\1\end{bmatrix}
+=2, \\
+J_p^+
+&amp;=J_p^T(J_pJ_p^T)^{-1} \\
+&amp;=\begin{bmatrix}1\\1\end{bmatrix}\frac{1}{2} \\
+&amp;=\begin{bmatrix}\frac12\\\frac12\end{bmatrix}
+\end{aligned}
+\]</div>
+<p>따라서</p>
+<div class="arithmatex">\[
+\begin{aligned}
+N_p
+&amp;=I-J_p^+J_p \\
+&amp;=\begin{bmatrix}1&amp;0\\0&amp;1\end{bmatrix}
+-\begin{bmatrix}\frac12\\\frac12\end{bmatrix}
+ \begin{bmatrix}1&amp;1\end{bmatrix} \\
+&amp;=\begin{bmatrix}1&amp;0\\0&amp;1\end{bmatrix}
+-\begin{bmatrix}\frac12&amp;\frac12\\\frac12&amp;\frac12\end{bmatrix} \\
+&amp;=\begin{bmatrix}\frac12&amp;-\frac12\\-\frac12&amp;\frac12\end{bmatrix}
+\end{aligned}
+\]</div>
+<p>이다. 임의의 후보 <span class="arithmatex">\(c=[1,0]^T\)</span>를 투영하면</p>
+<div class="arithmatex">\[
+\begin{aligned}
+N_pc
+&amp;=\begin{bmatrix}\frac12&amp;-\frac12\\-\frac12&amp;\frac12\end{bmatrix}
+\begin{bmatrix}1\\0\end{bmatrix} \\
+&amp;=\begin{bmatrix}\frac12\\-\frac12\end{bmatrix}
+\end{aligned}
+\]</div>
+<p>이고 실제 위치 변화는</p>
+<div class="arithmatex">\[
+J_pN_pc
+=\begin{bmatrix}1&amp;1\end{bmatrix}
+\begin{bmatrix}\frac12\\-\frac12\end{bmatrix}
+=\frac12-\frac12
+=0
+\]</div>
+<p>이다.</p>
+<p>즉 첫 관절을 <span class="arithmatex">\(+1\)</span>, 둘째 관절을 <span class="arithmatex">\(-1\)</span> 움직이면 이 단순 모델에서 손 위치는
+그대로다. 자세를 개선하는 관절 방향 중 이 성분만 남기는 것이 null-space
+projection이다.</p>
+<p>7자유도 팔은 위치 3자유도를 맞춘 뒤 일반적으로 약 4자유도가 남는다. 위치와 자세
+6자유도를 모두 맞추고 나면 약 1자유도의 redundancy가 남지만, 특이 자세나 관절
+한계에서는 <span class="arithmatex">\(\operatorname{rank}(J_RN_p)&lt;3\)</span>이 되어 자세를 완전히 맞추지 못할 수 있다.
+이는 버그가 아니라 위치 우선순위를 지킨 결과일 수 있다.</p>
+<h2 id="9-dls">9. 현재 방식과 더 엄밀한 계층형 DLS<a class="headerlink" href="#9-dls" title="Permanent link">&para;</a></h2>
+<p>현재 구현은 계산이 단순한 <strong>gradient projection method</strong>다.</p>
+<div class="arithmatex">\[
+\boxed{
+\Delta q
+=J_{p,\lambda}^+e_p
++N_{p,\lambda}J_R^Te_R
+}
+\]</div>
+<table>
+<thead>
+<tr>
+<th>장점</th>
+<th>한계</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>계산량이 작고 구현 의도가 분명하다.</td>
+<td>자세 오차를 가장 빨리 줄이는 해는 아닐 수 있다.</td>
+</tr>
+<tr>
+<td>위치 우선의 부가 task를 쉽게 넣을 수 있다.</td>
+<td>damped projector라 위치 보존은 근사적이다.</td>
+</tr>
+<tr>
+<td>특이점에서 안정적인 DLS를 재사용한다.</td>
+<td>null space가 부족하면 자세 보정이 거의 사라질 수 있다.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_3">더 엄밀한 계층형 식의 전개<a class="headerlink" href="#_3" title="Permanent link">&para;</a></h3>
+<p>더 엄밀한 방법은 위치 해가 자세에 이미 미친 영향까지 뺀 뒤, 남은 자세 오차를
+위치 null space 안에서 다시 푼다. 먼저 primary 위치 해를</p>
+<div class="arithmatex">\[
+\Delta q_p=J_p^+e_p
+\]</div>
+<p>로 둔다. 위치를 보존하는 추가 움직임은 어떤 벡터 <span class="arithmatex">\(y\)</span>에 대해</p>
+<div class="arithmatex">\[
+\Delta q_{secondary}=N_py
+\]</div>
+<p>로 쓸 수 있다. 최종 관절 변화는</p>
+<div class="arithmatex">\[
+\Delta q=\Delta q_p+N_py
+\]</div>
+<p>다. 이를 orientation의 선형 근사 <span class="arithmatex">\(J_R\Delta q\approx e_R\)</span>에 대입하면</p>
+<div class="arithmatex">\[
+\begin{aligned}
+J_R\Delta q&amp;\approx e_R \\
+J_R(\Delta q_p+N_py)&amp;\approx e_R \\
+J_R\Delta q_p+J_RN_py&amp;\approx e_R \\
+J_RN_py&amp;\approx e_R-J_R\Delta q_p
+\end{aligned}
+\]</div>
+<p>가 된다. 마지막 식에서 <span class="arithmatex">\(y\)</span>의 최소 노름 해는</p>
+<div class="arithmatex">\[
+y=(J_RN_p)^+(e_R-J_R\Delta q_p)
+\]</div>
+<p>다. 이를 <span class="arithmatex">\(\Delta q=\Delta q_p+N_py\)</span>에 다시 대입하면</p>
+<div class="arithmatex">\[
+\begin{aligned}
+\Delta q
+&amp;=\Delta q_p+N_py \\
+&amp;=\Delta q_p
++N_p(J_RN_p)^+(e_R-J_R\Delta q_p)
+\end{aligned}
+\]</div>
+<p>이므로 최종식은</p>
+<div class="arithmatex">\[
+\boxed{
+\Delta q
+=\Delta q_p
++N_p(J_RN_p)^+
+(e_R-J_R\Delta q_p)
+}
+\]</div>
+<p>이다. 순서는 “위치를 먼저 풂 → 그 해가 자세에 준 영향 <span class="arithmatex">\(J_R\Delta q_p\)</span>를 뺌 →
+남은 자세 오차를 위치 null space 안에서 다시 풂”이다. 우선순위는 더 명확하지만
+projector와 두 번째 pseudoinverse의 damping, rank 변화, joint limit를 함께
+설계해야 하므로 구현 복잡도가 커진다.</p>
+<h2 id="_4">핵심만 다시 보기<a class="headerlink" href="#_4" title="Permanent link">&para;</a></h2>
+<div class="arithmatex">\[
+\boxed{
+\Delta q
+=\underbrace{J_{p,\lambda}^+e_p}_{\text{위치를 맞추는 움직임}}
++\underbrace{N_{p,\lambda}J_R^Te_R}_{\text{위치 영향을 억제한 자세 보정}}
+}
+\]</div>
+<ul>
+<li>DLS는 오차와 관절 변화량을 함께 최소화한다.</li>
+<li>특이값이 0에 가까운 방향의 gain을 유한하게 만들어 관절 폭주를 억제한다.</li>
+<li>위치를 먼저 풀고 자세 방향을 위치 null space에 투영한다.</li>
+<li>damped projector의 위치 보존은 정확한 등식이 아니라 근사다.</li>
+<li>clamp와 backtracking은 damping과 별개의 추가 안전층이다.</li>
+</ul>
+<p>다음으로 <a href="ik.html">단일 팔 IK 구현</a>에서 이 식이 함수와 제어 흐름에 어떻게 대응하는지
+확인할 수 있다.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  맨위로
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="하단/푸터" >
+        
+          
+          <a href="base_teleop.html" class="md-footer__link md-footer__link--prev" aria-label="이전: 모바일 스워브 제어">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                이전
+              </span>
+              <div class="md-ellipsis">
+                모바일 스워브 제어
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="ik.html" class="md-footer__link md-footer__link--next" aria-label="다음: 단일 팔 IK">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                다음
+              </span>
+              <div class="md-ellipsis">
+                단일 팔 IK
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Copyright &copy; 2026 ggh-png
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/ggh-png/ffw-sh5-grasp" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "navigation.indexes", "navigation.footer", "navigation.tracking", "content.code.copy", "content.code.annotate", "search.highlight", "search.suggest", "toc.follow"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "\ud074\ub9bd\ubcf4\ub4dc\uc5d0 \ubcf5\uc0ac\ub428", "clipboard.copy": "\ud074\ub9bd\ubcf4\ub4dc\ub85c \ubcf5\uc0ac", "search.result.more.one": "\uc774 \ubb38\uc11c\uc5d0\uc11c 1\uac1c\uc758 \uac80\uc0c9 \uacb0\uacfc \ub354 \ubcf4\uae30", "search.result.more.other": "\uc774 \ubb38\uc11c\uc5d0\uc11c #\uac1c\uc758 \uac80\uc0c9 \uacb0\uacfc \ub354 \ubcf4\uae30", "search.result.none": "\uac80\uc0c9\uc5b4\uc640 \uc77c\uce58\ud558\ub294 \ubb38\uc11c\uac00 \uc5c6\uc2b5\ub2c8\ub2e4", "search.result.one": "1\uac1c\uc758 \uc77c\uce58\ud558\ub294 \ubb38\uc11c", "search.result.other": "#\uac1c\uc758 \uc77c\uce58\ud558\ub294 \ubb38\uc11c", "search.result.placeholder": "\uac80\uc0c9\uc5b4\ub97c \uc785\ub825\ud558\uc138\uc694", "search.result.term.missing": "\ud3ec\ud568\ub418\uc9c0 \uc54a\uc740 \uac80\uc0c9\uc5b4", "select.version": "\ubc84\uc804 \uc120\ud0dd"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../javascripts/mathjax.js"></script>
+      
+        <script src="https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>
