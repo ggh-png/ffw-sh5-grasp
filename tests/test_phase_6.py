@@ -60,6 +60,125 @@ def run_model_gate(model):
     return ok
 
 
+def run_robot_camera_gate(model):
+    """Mounted cameras must follow their joints and be selectable by the live viewer."""
+    data = mujoco.MjData(model)
+    home_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, "home")
+    mujoco.mj_resetDataKeyframe(model, data, home_id)
+    mujoco.mj_forward(model, data)
+
+    expected_bodies = {
+        "head_camera": "head_link2",
+        "left_hand_camera": "arm_l_link7",
+        "right_hand_camera": "arm_r_link7",
+    }
+    camera_ids = {}
+    attached = True
+    aligned = True
+    for camera_name, body_name in expected_bodies.items():
+        camera_id = mujoco.mj_name2id(
+            model, mujoco.mjtObj.mjOBJ_CAMERA, camera_name)
+        body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body_name)
+        camera_ids[camera_name] = camera_id
+        attached &= camera_id >= 0 and int(model.cam_bodyid[camera_id]) == body_id
+        camera_mat = data.cam_xmat[camera_id].reshape(3, 3)
+        aligned &= (
+            np.dot(-camera_mat[:, 2], [1.0, 0.0, 0.0]) > 0.999
+            and np.dot(camera_mat[:, 1], [0.0, 0.0, 1.0]) > 0.999
+        )
+
+    viewer_camera = mujoco.MjvCamera()
+    mujoco.mjv_defaultCamera(viewer_camera)
+    preset_ok = True
+    for preset in range(len(teleop_render.CAMERA_PRESETS)):
+        teleop_render.set_camera_preset(model, viewer_camera, preset)
+        expected_fixed_id = -1 if preset < 2 else preset - 2
+        preset_ok &= int(viewer_camera.fixedcamid) == expected_fixed_id
+
+    head_id = camera_ids["head_camera"]
+    wrist_id = camera_ids["right_hand_camera"]
+    head_forward_before = -data.cam_xmat[head_id].reshape(3, 3)[:, 2].copy()
+    wrist_forward_before = -data.cam_xmat[wrist_id].reshape(3, 3)[:, 2].copy()
+    for joint_name, delta in (("head_joint2", 0.2), ("arm_r_joint7", 0.25)):
+        joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, joint_name)
+        data.qpos[model.jnt_qposadr[joint_id]] += delta
+    mujoco.mj_forward(model, data)
+    follows_joints = (
+        np.dot(head_forward_before, -data.cam_xmat[head_id].reshape(3, 3)[:, 2]) < 0.999
+        and np.dot(wrist_forward_before, -data.cam_xmat[wrist_id].reshape(3, 3)[:, 2]) < 0.999
+    )
+
+    ok = attached and aligned and preset_ok and follows_joints
+    print(f"Robot camera gate: count={model.ncam} attached={attached} "
+          f"aligned={aligned} presets={preset_ok} follows_joints={follows_joints}: "
+          f"{'OK' if ok else 'FAIL'}")
+    return ok
+
+
+def run_direct_joint_control_gate():
+    """All actuator-backed joints are exposed and direct mode owns their commands."""
+    app = _make_sim_only_app()
+    app.frame_dt = 1.0 / teleop_app.LOOP_HZ
+    app.steps_per_frame = round(app.frame_dt / app.model.opt.timestep)
+    app.q_des_r = HOME_Q_R.copy()
+    app.q_des_l = HOME_Q_L.copy()
+    app.arm_mode = {"r": "ik", "l": "ik"}
+    app.fk_q_deg = {
+        "r": np.degrees(app.q_des_r).tolist(),
+        "l": np.degrees(app.q_des_l).tolist(),
+    }
+    group_counts = {
+        group: sum(spec["group"] == group for spec in app.direct_joint_specs)
+        for group in ("Head / Lift", "Left arm", "Right arm",
+                      "Left hand", "Right hand", "Mobile base")
+    }
+    coverage_ok = len(app.direct_joint_specs) == app.model.nu == 59 and group_counts == {
+        "Head / Lift": 3,
+        "Left arm": 7,
+        "Right arm": 7,
+        "Left hand": 18,
+        "Right hand": 18,
+        "Mobile base": 6,
+    }
+
+    app.set_joint_control_enabled(True)
+    names = ("head_joint1", "arm_r_joint7", "finger_l_joint6")
+    initial = {
+        name: float(app.data.qpos[teleop_app._joint_address(
+            app.model, name, app.model.jnt_qposadr)])
+        for name in names
+    }
+    requested = {
+        "head_joint1": 0.25,
+        "arm_r_joint7": 0.30,
+        "finger_l_joint6": 0.70,
+    }
+    app.direct_joint_targets.update(requested)
+    for _ in range(20):
+        app._step_physics({})
+    final = {
+        name: float(app.data.qpos[teleop_app._joint_address(
+            app.model, name, app.model.jnt_qposadr)])
+        for name in names
+    }
+    tracks = all(
+        abs(final[name] - requested[name]) < 0.02
+        and abs(final[name] - initial[name]) > 0.1
+        for name in names)
+
+    app.set_joint_control_enabled(False)
+    handover_ok = (
+        not app.joint_control_enabled
+        and app.arm_mode == {"r": "fk", "l": "fk"}
+        and np.allclose(np.radians(app.fk_q_deg["r"]), app.q_des_r)
+        and np.allclose(np.radians(app.fk_q_deg["l"]), app.q_des_l)
+    )
+    ok = coverage_ok and tracks and handover_ok
+    print(f"Direct joint control gate: coverage={coverage_ok} groups={group_counts} "
+          f"tracks={tracks} handover={handover_ok}: {'OK' if ok else 'FAIL'}")
+    return ok
+
+
 def run_cyclo_marker_jog_gate():
     class FakeApp:
         arm_mode = {"l": "ik", "r": "ik"}
@@ -463,10 +582,12 @@ def run_split_ui_and_tree_gate():
     windows = teleop_ui._ensure_window_state(app)
     titles = [spec["title"] for spec in teleop_ui.UI_WINDOW_SPECS.values()]
     windows_ok = (
-        set(windows) == {"control", "diagnostics"}
+        set(windows) == {"control", "diagnostics", "cameras", "joints"}
         and len(titles) == len(set(titles))
         and windows["control"]
         and windows["diagnostics"]
+        and windows["cameras"]
+        and windows["joints"]
     )
 
     tree = app.whole_body_solver.kinematic_tree
@@ -498,6 +619,8 @@ def run_split_ui_and_tree_gate():
 def main():
     model = mujoco.MjModel.from_xml_path(str(MODEL_PATH))
     ok = (run_model_gate(model)
+          and run_robot_camera_gate(model)
+          and run_direct_joint_control_gate()
           and run_split_ui_and_tree_gate()
           and run_initial_ik_target_origin_gate()
           and run_cyclo_marker_jog_gate()

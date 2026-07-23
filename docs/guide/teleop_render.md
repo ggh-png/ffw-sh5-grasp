@@ -12,18 +12,20 @@ UI·목표 상태와 gizmo가 연결되는 전체 흐름은
 | Window | MuJoCo용 주 GLFW window와 ImGui 플랫폼 window 생성/종료 |
 | UI backend | ImGui 네이티브 GLFW/OpenGL3 backend + multi-viewport OS 창 |
 | Scene | MuJoCo `MjvScene`, `MjrContext` 렌더링 |
-| Camera | mouse orbit/pan/zoom |
+| Camera | 외부 시점 mouse orbit/pan/zoom, 머리/양손 관절 고정 시점 |
 | Gizmo | ImGuizmo translate/rotate 조작 |
 
 ## 함수
 
 | 함수 | 역할 |
 |---|---|
-| `set_camera_preset(cam, preset)` | overview/right-hand close-up 카메라 설정 |
+| `set_camera_preset(model, cam, preset)` | 외부 시점과 머리/양손 장착 카메라 설정 |
+| `_setup_camera_feed_textures(app)` | 세 camera feed용 공유 OpenGL texture 생성 |
+| `_update_camera_feed_textures(app)` | 세 시점을 offscreen RGB로 렌더링해 texture 갱신 |
 | `setup_render(app, window_w, window_h)` | GLFW, ImGui multi-viewport backend, MuJoCo render context 생성 |
 | `begin_frame(app)` | event poll, ImGui input 처리, 새 frame 시작 |
 | `shutdown(app)` | 모든 플랫폼 창, ImGui backend와 GLFW 종료 |
-| `handle_camera_mouse(app, io)` | 마우스 입력을 MuJoCo camera move로 변환 |
+| `handle_camera_mouse(app, io)` | 외부 시점에서만 마우스 입력을 MuJoCo camera move로 변환 |
 | `pose_to_imguizmo_matrix(app, world_pos, world_quat)` | world pose를 ImGuizmo matrix로 변환 |
 | `imguizmo_matrix_to_pose(app, matrix)` | ImGuizmo matrix를 world pose로 변환 |
 | `_imguizmo_camera_matrices(app, viewport)` | ImGuizmo용 view/projection matrix 생성 |
@@ -42,7 +44,8 @@ flowchart TD
     E --> F["mjv_moveCamera()<br>MuJoCo 카메라 pose 갱신"]
     A --> G["render_scene()<br>3D scene, gizmo, UI를 그리는 메인 함수"]
     G --> H["app._sync_ik_mocaps_from_targets()<br>target에 맞춰 marker mocap 동기화"]
-    H --> I["mjv_updateScene()<br>MuJoCo scene geometry 갱신"]
+    H --> CF["camera feed offscreen render<br>세 RGB texture 갱신"]
+    CF --> I["mjv_updateScene()<br>MuJoCo main scene geometry 갱신"]
     I --> J["mjr_render()<br>MuJoCo 3D 화면 렌더링"]
     J --> K["draw_transform_gizmo()<br>현재 target의 이동/회전 gizmo 표시"]
     K --> L["pose_to_imguizmo_matrix()<br>world pose를 gizmo matrix로 변환"]

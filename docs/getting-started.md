@@ -21,7 +21,7 @@
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install mujoco numpy glfw imgui-bundle
+python -m pip install mujoco numpy glfw imgui-bundle PyOpenGL
 ```
 
 이미 시스템 환경에 설치되어 있다면 가상환경은 생략할 수 있다. 이미지 생성과 일부
@@ -51,13 +51,15 @@ python tests/test_whole_body.py
 python src/teleop_app.py
 ```
 
-정상이라면 주 창에는 3D 장면과 상태 창이 보이고, 두 워크스페이스가 주 창 오른쪽
+정상이라면 주 창에는 3D 장면과 상태 창이 보이고, 네 워크스페이스가 주 창 오른쪽
 바깥의 별도 OS 창으로 보인다.
 
 - 3D 장면: 로봇, table, can, 손 목표 marker와 gizmo
 - `Status & Windows`: 상태와 다른 창의 표시 여부
 - `Control Center`: Target, Right Arm, Left Arm, Robot/Grasp 탭
 - `Diagnostics`: Kinematic Tree, Joint Monitor 탭
+- `Camera Feeds`: 머리와 양손목 RGB 영상
+- `Joint Control`: actuator-backed joint의 그룹별 direct slider
 
 창이 열리지 않으면 바로 [문제 해결의 창/그래픽 항목](troubleshooting.md#window-startup)으로
 이동한다.

@@ -18,9 +18,48 @@ from imgui_bundle import imgui
 from imgui_bundle import imguizmo
 import mujoco
 import numpy as np
+from OpenGL import GL
 
 
-def set_camera_preset(cam, preset):
+CAMERA_FEED_WIDTH = 320
+CAMERA_FEED_HEIGHT = 240
+ROBOT_CAMERAS = (
+    ("Head", "head_camera"),
+    ("Left hand", "left_hand_camera"),
+    ("Right hand", "right_hand_camera"),
+)
+
+
+CAMERA_PRESETS = (
+    ("Overview", None),
+    ("Right-hand close-up", None),
+    ("Head camera", "head_camera"),
+    ("Left hand camera", "left_hand_camera"),
+    ("Right hand camera", "right_hand_camera"),
+)
+
+
+def camera_preset_label(preset):
+    """Human-readable name for a (possibly wrapped) camera preset index."""
+    return CAMERA_PRESETS[preset % len(CAMERA_PRESETS)][0]
+
+
+def set_camera_preset(model, cam, preset):
+    """Select an external view or one of the three robot-mounted cameras."""
+    preset %= len(CAMERA_PRESETS)
+    _, camera_name = CAMERA_PRESETS[preset]
+    if camera_name is not None:
+        camera_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, camera_name)
+        if camera_id < 0:
+            raise ValueError(f"MuJoCo camera not found: {camera_name!r}")
+        cam.type = mujoco.mjtCamera.mjCAMERA_FIXED
+        cam.fixedcamid = camera_id
+        cam.trackbodyid = -1
+        return
+
+    cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+    cam.fixedcamid = -1
+    cam.trackbodyid = -1
     if preset == 0:  # overview
         cam.lookat[:] = [0.3, 0.0, 1.0]
         cam.distance = 2.2
@@ -31,6 +70,65 @@ def set_camera_preset(cam, preset):
         cam.distance = 0.5
         cam.azimuth = 90
         cam.elevation = -15
+
+
+def _setup_camera_feed_textures(app):
+    """Allocate shared OpenGL textures used by the detached camera-feed window."""
+    app.camera_feed_textures = {}
+    app.camera_feed_texture_refs = {}
+    app.camera_feed_cameras = {}
+    app.camera_feed_rgb = np.empty(
+        (CAMERA_FEED_HEIGHT, CAMERA_FEED_WIDTH, 3), dtype=np.uint8)
+    GL.glPixelStorei(GL.GL_UNPACK_ALIGNMENT, 1)
+    for _, camera_name in ROBOT_CAMERAS:
+        texture_id = int(GL.glGenTextures(1))
+        GL.glBindTexture(GL.GL_TEXTURE_2D, texture_id)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MIN_FILTER, GL.GL_LINEAR)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_MAG_FILTER, GL.GL_LINEAR)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_S, GL.GL_CLAMP_TO_EDGE)
+        GL.glTexParameteri(GL.GL_TEXTURE_2D, GL.GL_TEXTURE_WRAP_T, GL.GL_CLAMP_TO_EDGE)
+        GL.glTexImage2D(
+            GL.GL_TEXTURE_2D, 0, GL.GL_RGB8,
+            CAMERA_FEED_WIDTH, CAMERA_FEED_HEIGHT, 0,
+            GL.GL_RGB, GL.GL_UNSIGNED_BYTE, None)
+        app.camera_feed_textures[camera_name] = texture_id
+        app.camera_feed_texture_refs[camera_name] = imgui.ImTextureRef(texture_id)
+
+        camera_id = mujoco.mj_name2id(
+            app.model, mujoco.mjtObj.mjOBJ_CAMERA, camera_name)
+        camera = mujoco.MjvCamera()
+        mujoco.mjv_defaultCamera(camera)
+        camera.type = mujoco.mjtCamera.mjCAMERA_FIXED
+        camera.fixedcamid = camera_id
+        app.camera_feed_cameras[camera_name] = camera
+    GL.glBindTexture(GL.GL_TEXTURE_2D, 0)
+
+
+def _update_camera_feed_textures(app):
+    """Render the three mounted cameras offscreen and upload their latest RGB frames."""
+    if not getattr(app, "camera_feeds_enabled", True):
+        return
+    if not getattr(app, "ui_windows", {}).get("cameras", True):
+        return
+
+    viewport = mujoco.MjrRect(0, 0, CAMERA_FEED_WIDTH, CAMERA_FEED_HEIGHT)
+    mujoco.mjr_setBuffer(mujoco.mjtFramebuffer.mjFB_OFFSCREEN, app.context)
+    GL.glPixelStorei(GL.GL_UNPACK_ALIGNMENT, 1)
+    for _, camera_name in ROBOT_CAMERAS:
+        mujoco.mjv_updateScene(
+            app.model, app.data, app.opt, app.pert,
+            app.camera_feed_cameras[camera_name],
+            mujoco.mjtCatBit.mjCAT_ALL, app.scene)
+        mujoco.mjr_render(viewport, app.scene, app.context)
+        mujoco.mjr_readPixels(app.camera_feed_rgb, None, viewport, app.context)
+        GL.glBindTexture(
+            GL.GL_TEXTURE_2D, app.camera_feed_textures[camera_name])
+        GL.glTexSubImage2D(
+            GL.GL_TEXTURE_2D, 0, 0, 0,
+            CAMERA_FEED_WIDTH, CAMERA_FEED_HEIGHT,
+            GL.GL_RGB, GL.GL_UNSIGNED_BYTE, app.camera_feed_rgb)
+    GL.glBindTexture(GL.GL_TEXTURE_2D, 0)
+    mujoco.mjr_setBuffer(mujoco.mjtFramebuffer.mjFB_WINDOW, app.context)
 
 
 def setup_render(app, window_w, window_h):
@@ -65,11 +163,13 @@ def setup_render(app, window_w, window_h):
     app.scene = mujoco.MjvScene(app.model, maxgeom=10000)
     app.cam = mujoco.MjvCamera()
     mujoco.mjv_defaultCamera(app.cam)
-    set_camera_preset(app.cam, 0)
+    set_camera_preset(app.model, app.cam, 0)
     app.opt = mujoco.MjvOption()
     mujoco.mjv_defaultOption(app.opt)
     app.pert = mujoco.MjvPerturb()
     app.context = mujoco.MjrContext(app.model, mujoco.mjtFontScale.mjFONTSCALE_150)
+    app.camera_feeds_enabled = True
+    _setup_camera_feed_textures(app)
 
 
 def begin_frame(app):
@@ -81,6 +181,9 @@ def begin_frame(app):
 
 
 def shutdown(app):
+    texture_ids = list(getattr(app, "camera_feed_textures", {}).values())
+    if texture_ids:
+        GL.glDeleteTextures(texture_ids)
     imgui.destroy_platform_windows()
     imgui.backends.opengl3_shutdown()
     imgui.backends.glfw_shutdown()
@@ -94,6 +197,10 @@ def handle_camera_mouse(app, io):
     dx, dy = cur_mouse[0] - app.last_mouse[0], cur_mouse[1] - app.last_mouse[1]
     app.last_mouse = cur_mouse
     if io.want_capture_mouse or app.gizmo_mouse_active:
+        return
+    # Robot-mounted cameras are rigid sensors.  Mouse orbit/pan/zoom applies only to
+    # the two external free-camera presets and must not detach an onboard viewpoint.
+    if app.cam.type == mujoco.mjtCamera.mjCAMERA_FIXED:
         return
 
     left = glfw.get_mouse_button(app.window, glfw.MOUSE_BUTTON_LEFT) == glfw.PRESS
@@ -266,6 +373,7 @@ def render_scene(app):
     # Model collision geometry lives in group 3 and is hidden by MuJoCo's default option.
     # The CBF overlay uses the same toggle but remains independent of contact-force viz.
     app.opt.geomgroup[3] = bool(getattr(app, "collision_viz", False))
+    _update_camera_feed_textures(app)
     fb_w, fb_h = glfw.get_framebuffer_size(app.window)
     viewport = mujoco.MjrRect(0, 0, fb_w, fb_h)
     mujoco.mjv_updateScene(app.model, app.data, app.opt, app.pert, app.cam,

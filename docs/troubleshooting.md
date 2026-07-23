@@ -30,7 +30,7 @@ python -c "import mujoco, numpy, glfw; from imgui_bundle import imgui; print('im
 
 ```bash
 source .venv/bin/activate
-python -m pip install mujoco numpy glfw imgui-bundle
+python -m pip install mujoco numpy glfw imgui-bundle PyOpenGL
 python -c "import mujoco, glfw; from imgui_bundle import imgui"
 ```
 

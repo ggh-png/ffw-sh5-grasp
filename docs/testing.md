@@ -67,9 +67,9 @@ mkdocs build --strict
 
 ### Compact multi-viewport UI gate
 
-UI 상태는 `control`, `diagnostics` 두 워크스페이스만 허용한다. 실제 GUI smoke에서는
-MuJoCo 주 viewport 하나와 외부 플랫폼 viewport 두 개가 생성되고, Return/Detach에서
-각각 1개/3개로 병합·분리되는지 확인한다.
+UI 상태는 `control`, `diagnostics`, `cameras`, `joints` 네 워크스페이스를 관리한다.
+실제 GUI smoke에서는 MuJoCo 주 viewport 하나와 외부 플랫폼 viewport 네 개가 생성되고, Return/Detach에서
+각각 1개/5개로 병합·분리되는지 확인한다.
 
 ### Arm-only hard gate
 
