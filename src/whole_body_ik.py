@@ -81,6 +81,15 @@ class WholeBodyIK:
             side: np.array([self.index[name] for name in names], dtype=int)
             for side, names in self.arm_joint_names.items()
         }
+        # Parse the compiled MJCF topology once, then share the immutable tree between
+        # both end-effector solvers.  FK/Jacobian evaluation below is independent of the
+        # live MjData and does not call a MuJoCo forward/Jacobian solver.
+        self.kinematic_tree = kinematics.KinematicTree(model)
+        self.kinematics_solvers = {
+            side: kinematics.KinematicsSolver(
+                model, site_names[side], self.joint_names, tree=self.kinematic_tree)
+            for side in self.site_ids
+        }
 
         self.position_weight = float(position_weight)
         self.orientation_weight = float(orientation_weight)
@@ -147,16 +156,15 @@ class WholeBodyIK:
         self._reference_base_yaw = float(current_q[self.index["base_yaw"]])
         self._reference_base_xy = current_q[:2].copy()
         target_poses = target_poses or {}
-        for side, site_id in self.site_ids.items():
+        for side in self.site_ids:
             if side in target_poses:
                 position, quaternion = target_poses[side]
                 position = np.asarray(position, dtype=float).copy()
                 quaternion = kinematics.normalize_quaternion(quaternion)
             else:
-                position = data.site_xpos[site_id].copy()
-                quaternion = np.zeros(4)
-                mujoco.mju_mat2Quat(quaternion, data.site_xmat[site_id])
-                quaternion = kinematics.normalize_quaternion(quaternion)
+                state = self.site_state(data, side, current_q)
+                position = state.position
+                quaternion = state.quaternion
             self._reference_hand_positions[side] = position
             self._reference_hand_quaternions[side] = quaternion
         self._previous_base_velocity_world[:] = 0.0
@@ -172,10 +180,9 @@ class WholeBodyIK:
         if not active:
             self._rigid_grasp_reference = None
             return
-        right = kinematics.evaluate_site(
-            self.model, data, self.site_ids["r"], self.dof_ids)
-        left = kinematics.evaluate_site(
-            self.model, data, self.site_ids["l"], self.dof_ids)
+        current_q = np.asarray(data.qpos[self.qpos_adrs], dtype=float)
+        right = self.site_state(data, "r", current_q)
+        left = self.site_state(data, "l", current_q)
         right_rotation = _quaternion_matrix(right.quaternion)
         left_rotation = _quaternion_matrix(left.quaternion)
         self._rigid_grasp_reference = {
@@ -205,15 +212,15 @@ class WholeBodyIK:
         site_states = {}
         for side in active_sides:
             target_pos, target_quat = target_poses[side]
-            full_state = kinematics.evaluate_site(self.model, data, self.site_ids[side])
-            site_states[side] = full_state
-            jac = full_state.jacobian[:, self.dof_ids]
-            site_velocity = full_state.jacobian @ data.qvel
+            state = self.site_state(data, side, current_q)
+            site_states[side] = state
+            jac = state.jacobian
+            site_velocity = jac @ data.qvel[self.dof_ids]
 
-            current_pos = full_state.position
+            current_pos = state.position
             pos_error = np.asarray(target_pos, dtype=float) - current_pos
             ori_error_world = kinematics.shortest_orientation_error(
-                target_quat, full_state.quaternion)
+                target_quat, state.quaternion)
 
             desired = np.concatenate((
                 _clip_norm(self.position_gain * pos_error
@@ -387,6 +394,15 @@ class WholeBodyIK:
             constraints.append((result, float(lower)))
         return constraints
 
+    def site_state(self, data, side, current_q=None):
+        """Evaluate one hand through the custom tree FK/Jacobian implementation."""
+        if side not in self.kinematics_solvers:
+            raise ValueError(f"unknown hand side: {side!r}")
+        if current_q is None:
+            current_q = np.asarray(data.qpos[self.qpos_adrs], dtype=float)
+        return self.kinematics_solvers[side].forward(
+            current_q, context_qpos=data.qpos)
+
     def collision_distances(self, data, max_distance=None):
         """Return monitored pair distances for control diagnostics/visualization.
 
@@ -398,7 +414,8 @@ class WholeBodyIK:
         results = []
         for pair in self.collision_pairs:
             result = kinematics.collision_distance_gradient(
-                self.model, data, pair, self.dof_ids, distance_limit)
+                self.model, data, pair, self.kinematic_tree,
+                self.joint_ids, distance_limit)
             if result is not None:
                 results.append(result)
         return tuple(results)
@@ -411,9 +428,7 @@ class WholeBodyIK:
         right_to_left_world = right_rotation @ reference["position_right"]
         transform = np.eye(6)
         transform[:3, 3:] = -_skew(right_to_left_world)
-        right_jacobian = right.jacobian[:, self.dof_ids]
-        left_jacobian = left.jacobian[:, self.dof_ids]
-        grasp_jacobian = left_jacobian - transform @ right_jacobian
+        grasp_jacobian = left.jacobian - transform @ right.jacobian
 
         desired_left_position = right.position + right_to_left_world
         desired_left_rotation = right_rotation @ reference["rotation_right"]

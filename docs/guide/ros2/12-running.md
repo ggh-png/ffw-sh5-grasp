@@ -17,11 +17,12 @@ pip install --break-system-packages mujoco numpy trimesh pillow glfw imgui-bundl
 python3 src/teleop_app.py
 ```
 
-하나의 네이티브 창에 3D 뷰 + ImGui 패널이 함께 뜬다(`mujoco.viewer.launch_passive`를
-안 쓰고 GLFW+MuJoCo 저수준 렌더 API+ImGui를 직접 합성하는 이유는
+MuJoCo 3D 뷰는 주 GLFW 창에 뜨고 `Control Center`와 `Diagnostics`는 멀티 뷰포트가
+만든 별도 네이티브 OS 창으로 주 창 밖에 뜬다. (`mujoco.viewer.launch_passive`를 안 쓰고
+GLFW+MuJoCo 저수준 렌더 API+ImGui를 직접 합성하는 이유는
 `teleop_app.py` 모듈 docstring의 "Rendering note" 참고 — 요약하면 커스텀
 위젯을 그 창 안에 같이 그리기 위해서다). 마우스로 카메라를 돌리고, 방향키로
-베이스를 몰고, 왼쪽 패널의 "Cyclo / Marker Control"에서 조작할 손(Right/Left
+베이스를 몰고, `Control Center → Target` 탭에서 조작할 손(Right/Left
 goal)을 고른 뒤 화면 안 3D gizmo를 드래그하면 그 손의 목표 pose가 움직인다.
 
 ---

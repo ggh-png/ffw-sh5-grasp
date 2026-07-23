@@ -6,6 +6,7 @@ orthogonal to teleop state, IK, grasping, and base driving.  It deliberately wor
 duck-typed boundary and avoiding a circular import.
 """
 
+import ctypes
 import time
 
 import glfw
@@ -15,7 +16,6 @@ glfw.init_hint(glfw.PLATFORM, glfw.PLATFORM_X11)
 
 from imgui_bundle import imgui
 from imgui_bundle import imguizmo
-from imgui_bundle.python_backends.glfw_backend import GlfwRenderer
 import mujoco
 import numpy as np
 
@@ -46,7 +46,21 @@ def setup_render(app, window_w, window_h):
     app.window_h = window_h
 
     imgui.create_context()
-    app.impl = GlfwRenderer(window)
+    io = imgui.get_io()
+    io.config_flags |= imgui.ConfigFlags_.viewports_enable
+    window_address = ctypes.cast(window, ctypes.c_void_p).value
+    if not imgui.backends.glfw_init_for_opengl(window_address, True):
+        imgui.destroy_context()
+        glfw.destroy_window(window)
+        glfw.terminate()
+        raise RuntimeError("ImGui GLFW backend initialization failed")
+    if not imgui.backends.opengl3_init("#version 130"):
+        imgui.backends.glfw_shutdown()
+        imgui.destroy_context()
+        glfw.destroy_window(window)
+        glfw.terminate()
+        raise RuntimeError("ImGui OpenGL3 backend initialization failed")
+    app.imgui_multi_viewport = True
 
     app.scene = mujoco.MjvScene(app.model, maxgeom=10000)
     app.cam = mujoco.MjvCamera()
@@ -60,13 +74,18 @@ def setup_render(app, window_w, window_h):
 
 def begin_frame(app):
     glfw.poll_events()
-    app.impl.process_inputs()
+    imgui.backends.opengl3_new_frame()
+    imgui.backends.glfw_new_frame()
     imgui.new_frame()
     return imgui.get_io()
 
 
 def shutdown(app):
-    app.impl.shutdown()
+    imgui.destroy_platform_windows()
+    imgui.backends.opengl3_shutdown()
+    imgui.backends.glfw_shutdown()
+    imgui.destroy_context()
+    glfw.destroy_window(app.window)
     glfw.terminate()
 
 
@@ -150,16 +169,26 @@ def _imguizmo_camera_matrices(app, viewport):
 
 
 def draw_transform_gizmo(app, viewport):
+    """Draw ImGuizmo over the active target in the MuJoCo main viewport.
+
+    ``MjrRect`` is expressed in framebuffer-local pixels, while ImGui multi-viewport
+    draw lists use desktop-space logical coordinates.  Using ``viewport.left/bottom``
+    here therefore moves the gizmo away from the rendered target as soon as the main
+    GLFW window is not at desktop origin.  The camera aspect is still taken from the
+    MuJoCo framebuffer; drawing is anchored to ImGui's main viewport rectangle.
+    """
     target = app._active_gizmo_target()
     world_pos, world_quat = app._gizmo_target_world_pose(target)
     object_matrix = pose_to_imguizmo_matrix(app, world_pos, world_quat)
     view_matrix, proj_matrix = _imguizmo_camera_matrices(app, viewport)
+    main_viewport = imgui.get_main_viewport()
 
     gizmo = imguizmo.im_guizmo
     gizmo.begin_frame()
-    gizmo.set_drawlist(imgui.get_foreground_draw_list())
-    gizmo.set_rect(float(viewport.left), float(viewport.bottom),
-                   float(viewport.width), float(viewport.height))
+    gizmo.set_drawlist(imgui.get_foreground_draw_list(main_viewport))
+    gizmo.set_rect(
+        float(main_viewport.pos.x), float(main_viewport.pos.y),
+        float(main_viewport.size.x), float(main_viewport.size.y))
     gizmo.set_orthographic(False)
     gizmo.set_gizmo_size_clip_space(0.18)
     changed_translate = gizmo.manipulate(
@@ -248,7 +277,12 @@ def render_scene(app):
     draw_transform_gizmo(app, viewport)
 
     imgui.render()
-    app.impl.render(imgui.get_draw_data())
+    imgui.backends.opengl3_render_draw_data(imgui.get_draw_data())
+    if imgui.get_io().config_flags & imgui.ConfigFlags_.viewports_enable:
+        main_context = glfw.get_current_context()
+        imgui.update_platform_windows()
+        imgui.render_platform_windows_default()
+        glfw.make_context_current(main_context)
     glfw.swap_buffers(app.window)
 
 

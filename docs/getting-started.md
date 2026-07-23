@@ -9,8 +9,9 @@
 - `python3`, `pip`, `venv`
 - 저장소 루트에서 명령 실행
 
-현재 앱은 GLFW 창 하나에 MuJoCo 3D 화면과 ImGui 패널을 함께 띄운다. ROS2 workspace,
-`colcon`, MoveIt, controller manager는 필요하지 않다.
+현재 앱은 주 GLFW 창에 MuJoCo 3D 화면을 띄우고, ImGui multi-viewport로 기능별
+패널을 별도 OS 창에 띄운다. ROS2 workspace, `colcon`, MoveIt, controller manager는
+필요하지 않다.
 
 ## 2. 가상환경과 설치
 
@@ -50,10 +51,13 @@ python tests/test_whole_body.py
 python src/teleop_app.py
 ```
 
-정상이라면 다음 두 영역이 한 창에 보인다.
+정상이라면 주 창에는 3D 장면과 상태 창이 보이고, 두 워크스페이스가 주 창 오른쪽
+바깥의 별도 OS 창으로 보인다.
 
 - 3D 장면: 로봇, table, can, 손 목표 marker와 gizmo
-- `FFW-SH5 Teleop` 패널: 상태, Cyclo/Marker, 양팔, grasp, lift/utilities
+- `Status & Windows`: 상태와 다른 창의 표시 여부
+- `Control Center`: Target, Right Arm, Left Arm, Robot/Grasp 탭
+- `Diagnostics`: Kinematic Tree, Joint Monitor 탭
 
 창이 열리지 않으면 바로 [문제 해결의 창/그래픽 항목](troubleshooting.md#window-startup)으로
 이동한다.
@@ -72,10 +76,10 @@ python src/teleop_app.py
 
 ## 6. 첫 조작: 오른손 MoveL
 
-1. `Cyclo / Marker Control`에서 controller가 `MoveL`인지 확인한다.
+1. `Control Center → Target` 탭에서 controller가 `MoveL`인지 확인한다.
 2. marker를 `Right goal`로 선택한다.
 3. Position jog의 `X+`를 몇 번 누르거나 3D gizmo의 X 화살표를 조금 끈다.
-4. `Right Arm`의 IK error가 줄어드는지 확인한다.
+4. 상태 창 또는 `Right Arm` 탭에서 IK error가 줄어드는지 확인한다.
 
 한 번에 큰 값을 주면 앱이 frame당 최대 3 cm/8°로 target을 ramp한다. marker가 먼저
 가고 실제 손이 뒤따라오는 것은 정상이다.

@@ -58,14 +58,14 @@ while not glfw.window_should_close(self.window):
 | `_setup_sim()` | model/data 로드, solver/controller/id/target 상태 생성 |
 | `_setup_render()` | `teleop_render.setup_render()` 호출 |
 | `_setup_loop_state()` | q_des, FK slider, timing, input 상태 생성 |
-| `reset_can()` | 캔 위치 리셋 후 `mj_forward()` |
+| `reset_can()` | 캔 free-joint qpos/qvel만 리셋; 파생 물리 상태는 다음 `mj_step()`에서 갱신 |
 | `reset_active_object()` | 캔/grab/Cyclo 상태 리셋 |
 | `_disable_legacy_box_asset()` | XML에 남은 box asset 비활성화 |
 | `cycle_camera()` | 카메라 preset 전환 |
-| `set_arm_mode(side, mode)` | 손별 IK/FK 전환과 target 동기화 |
+| `set_arm_mode(side, mode)` | 손별 IK/FK 전환; FK→IK는 자체 `site_state()` pose로 target 동기화 |
 | `set_whole_body_enabled(enabled)` | world target을 보존하며 whole-body/arm-only 전환 |
 | `toggle_whole_body_control()` | UI 버튼용 전신 제어 토글 |
-| `_draw_ui_panel()` | `teleop_ui.draw_panel(self)` 호출 |
+| `_draw_ui_panel()` | `teleop_ui.draw_panel(self)`로 탭형 Control/Diagnostics 렌더링 |
 | `_handle_edge_keys(io)` | `R/G/V/C` edge key 처리 |
 | `_read_drive_and_lift_keys(io)` | 주행/리프트 continuous key 처리 |
 | `_read_base_feedback()` | wheel 상태, body twist, base pose를 한 번에 읽기 |
@@ -90,7 +90,7 @@ flowchart TD
     H --> I["_handle_edge_keys()<br>R/G/V/C 같은 edge key 처리"]
     I --> J["_read_drive_and_lift_keys()<br>주행/리프트 continuous key 읽기"]
     J --> K["_draw_ui_panel()<br>UI 모듈 호출 wrapper"]
-    K --> L["teleop_ui.draw_panel()<br>조작 패널을 그리고 target 갱신"]
+    K --> L["teleop_ui.draw_panel()<br>상태·제어·트리 창을 그리고 target 갱신"]
     L --> M["_step_physics()<br>frame 제어 순서 조율"]
     M --> N["_read_base_feedback()<br>wheel · body · base 상태"]
     N --> O["target carry · grasp ramp · smoothing"]

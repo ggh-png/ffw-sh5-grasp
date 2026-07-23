@@ -1,6 +1,6 @@
 """Single-window teleoperation app for ``models/full_scene.xml``.
 
-Reproduces the reference video's interface directly in the same window as the 3D view:
+Reproduces the reference video's interface as movable ImGui tool windows over the 3D view:
 EE pose target sliders (home-relative X/Y/Z/Roll/Pitch/Yaw) drive ROS-free whole-body IK
 (base/lift/both arms), arm torque control, grasp/thumb synergy, a joint monitor, and an HUD.
 
@@ -25,7 +25,7 @@ Keyboard: Up/Down = base forward/back (robot-local), Left/Right = base yaw,
 [ / ] = base strafe left/right, Q/E = lift down/up, R = reset can (+-2cm random),
 G = toggle contact force/point visualization, V = toggle collision geometry/CBF visualization,
 C = cycle camera preset (overview / right-hand close-up). R/G/V/C also have
-buttons in the on-screen panel.
+buttons in the on-screen tool windows.
 
 """
 
@@ -140,7 +140,7 @@ class KeyEdge:
 
 
 class TeleopApp:
-    """단일 네이티브 창 텔레옵 앱. `run()`의 메인 루프가 매 프레임 아래 단계를
+    """MuJoCo 주 창과 분리형 도구 창을 쓰는 텔레옵 앱. `run()`의 메인 루프가 매 프레임 아래 단계를
     순서대로 실행한다: 마우스 카메라 -> 엣지 키(R/G/V/C) -> 연속 키(주행/리프트) ->
     UI 패널 -> 물리 스텝 -> 렌더링. 상태는 전부 인스턴스 속성(self.*)에 있다."""
 
@@ -160,7 +160,6 @@ class TeleopApp:
         data = mujoco.MjData(model)
         key_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, "home")
         mujoco.mj_resetDataKeyframe(model, data, key_id)
-        mujoco.mj_forward(model, data)
         self.model = model
         self.data = data
 
@@ -241,12 +240,6 @@ class TeleopApp:
         }
         self.rng = np.random.default_rng()
 
-        self.site_r = _named_id(
-            model, mujoco.mjtObj.mjOBJ_SITE, "grasp_target_r"
-        )
-        self.site_l = _named_id(
-            model, mujoco.mjtObj.mjOBJ_SITE, "grasp_target_l"
-        )
         self.ik_target_mocap_ids = {
             side: model.body_mocapid[
                 _named_id(
@@ -331,8 +324,7 @@ class TeleopApp:
         self.reset_can()
 
     def _setup_render(self):
-        """창/렌더링 초기화: GLFW 창 하나 + 그 위에 ImGui, MuJoCo 저수준 렌더 API로
-        3D 장면을 직접 그린다(모듈 docstring의 "Rendering note" 참고)."""
+        """MuJoCo 주 GLFW 창과 ImGui 플랫폼 창, 저수준 렌더 context를 만든다."""
         teleop_render.setup_render(self, WINDOW_W, WINDOW_H)
 
     def _setup_loop_state(self):
@@ -364,7 +356,6 @@ class TeleopApp:
 
     def reset_can(self):
         _reset_can_random(self.model, self.data, self.rng)
-        mujoco.mj_forward(self.model, self.data)
 
     def reset_active_object(self):
         self.reset_can()
@@ -417,12 +408,9 @@ class TeleopApp:
         if mode == "fk":
             self.fk_q_deg[side] = [math.degrees(v) for v in q_des]
         else:
-            site_id = self.site_r if side == "r" else self.site_l
-            world_pos = self.data.site_xpos[site_id]
-            world_quat = np.zeros(4)
-            mujoco.mju_mat2Quat(world_quat, self.data.site_xmat[site_id])
-            target_pos = self._world_to_target_pos(side, world_pos)
-            rpy_deg = self._world_quat_to_target_rpy(side, world_quat)
+            state = self.whole_body_solver.site_state(self.data, side)
+            target_pos = self._world_to_target_pos(side, state.position)
+            rpy_deg = self._world_quat_to_target_rpy(side, state.quaternion)
 
             self.targets[f"pos_{side}"] = target_pos
             self.targets[f"rpy_{side}"] = rpy_deg
@@ -616,8 +604,8 @@ class TeleopApp:
         return drive_keys
 
     def _draw_ui_panel(self):
-        """슬라이더 패널 -- HUD, 양손 EE 포즈, grasp/thumb, 리프트, 관절 모니터.
-        실제 위젯 배치는 teleop_ui.draw_panel로 옮겼다(그 모듈 docstring 참고) --
+        """상태 창과 탭형 Control/Diagnostics 워크스페이스를 그린다.
+        실제 창 배치는 teleop_ui.draw_panel로 옮겼다(그 모듈 docstring 참고) --
         여기서 바뀌는 값은 전부 self.targets로만 들어가고, 물리 반영은
         _step_physics에서 이뤄진다."""
         teleop_ui.draw_panel(self)

@@ -6,20 +6,25 @@
 ## 화면 구성
 
 ```text
-┌──────────────────────────── 3D scene ─────────────────────────────┐
-│ robot · can · table · hand goal marker · virtual object · gizmo  │
-│                                                                   │
-│ ┌──── FFW-SH5 Teleop ────┐                                      │
-│ │ Status                  │  ← 현재 controller/mode/error/command │
-│ │ Cyclo / Marker Control  │  ← MoveL/Bimanual, marker jog         │
-│ │ Right Arm               │  ← IK pose 또는 FK joints             │
-│ │ Left Arm                │                                      │
-│ │ Can Grasp               │                                      │
-│ │ Lift / Utilities        │  ← Whole-body ON/OFF, collision       │
-│ │ Joint Monitor           │                                      │
-│ └─────────────────────────┘                                      │
-└───────────────────────────────────────────────────────────────────┘
+┌────────────── MuJoCo main ──────────────┐  ┌──── Control Center ────┐
+│ 3D scene · target marker · gizmo        │  │ Target | R Arm | L Arm │
+│ ┌ Status & Windows ┐                    │  │       | Robot/Grasp     │
+│ └──────────────────┘                    │  └─────────────────────────┘
+└─────────────────────────────────────────┘  ┌──── Diagnostics ────────┐
+                                             │ Kinematic Tree | Joints │
+                                             └─────────────────────────┘
 ```
+
+두 워크스페이스는 별도 OS 창으로 메인 3D 창 밖에 뜨며 drag/resize/close할 수 있다.
+닫은 창은 **Status & Windows → Workspaces**에서 다시 연다. **Detach tools outside**와
+**Return tools to main**으로
+외부 창 배치와 주 창 내부 배치를 즉시 전환할 수 있다.
+
+### Kinematic Tree
+
+기본값은 양손 IK target에 실제로 연결된 body chain만 표시한다. `Right`, `Left`,
+`Both arms`로 범위를 바꾸거나 **Show full MJCF tree**로 전체 body/joint/site 구조를
+볼 수 있다. `[controlled]`는 Whole-Body IK가 푸는 관절, `[IK target]`은 손끝 site다.
 
 ## 키보드와 마우스
 
@@ -60,7 +65,7 @@
 `body cmd`가 zero인데 base가 잠깐 움직이는 것은 물리 제동일 수 있다. 반대로 command가
 계속 nonzero면 입력 우선순위나 WBIK target을 확인한다.
 
-## Cyclo / Marker Control
+## Control Center → Target
 
 ### Controller 선택
 
@@ -92,7 +97,7 @@
 marker에서 translation 화살표 또는 rotation ring을 drag한다. gizmo는 world pose를
 출력하고 `teleop_targets.py`가 현재 Whole-body mode의 target 좌표계로 역변환한다.
 
-## Right Arm / Left Arm
+## Control Center → Right Arm / Left Arm
 
 각 팔은 독립적으로 IK와 FK를 선택할 수 있다.
 

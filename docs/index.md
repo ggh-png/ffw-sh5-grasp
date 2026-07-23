@@ -10,7 +10,7 @@ FFW-SH5 양팔 모바일 로봇을 MuJoCo 물리에서 조작하는 ROS-free 텔
 </figure>
 
 [![GitHub](https://img.shields.io/badge/GitHub-Repository-black?logo=github)](https://github.com/ggh-png/ffw-sh5-grasp)
-[![Release](https://img.shields.io/badge/release-1.1.1-indigo)](https://github.com/ggh-png/ffw-sh5-grasp/releases/tag/1.1.1)
+[![Release](https://img.shields.io/badge/release-1.2.0-indigo)](https://github.com/ggh-png/ffw-sh5-grasp/releases/tag/1.2.0)
 
 ## 처음이라면 이 순서로 읽기
 

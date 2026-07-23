@@ -56,22 +56,22 @@ def quat_to_rpy_deg(q):
 
 
 def set_home_references(app):
-    for side in SIDES:
-        quaternion = np.zeros(4)
-        site_id = getattr(app, f"site_{side}")
-        mujoco.mju_mat2Quat(quaternion, app.data.site_xmat[site_id])
-        setattr(app, f"home_quat_{side}", quaternion)
+    site_states = {
+        side: app.whole_body_solver.site_state(app.data, side)
+        for side in SIDES
+    }
+    for side, state in site_states.items():
+        setattr(app, f"home_quat_{side}", state.quaternion.copy())
     app.home_pos_local = {
-        "r": world_to_base_pos(app, app.data.site_xpos[app.site_r]),
-        "l": world_to_base_pos(app, app.data.site_xpos[app.site_l]),
+        side: world_to_base_pos(app, state.position)
+        for side, state in site_states.items()
     }
     base_x, base_y, base_yaw, _cy, _sy, base_quat = base_pose(app)
     app.target_anchor_xy = np.array([base_x, base_y], dtype=float)
     app.target_anchor_yaw = float(base_yaw)
     app.target_anchor_quat = base_quat.copy()
     app.home_pos_world = {
-        "r": app.data.site_xpos[app.site_r].copy(),
-        "l": app.data.site_xpos[app.site_l].copy(),
+        side: state.position.copy() for side, state in site_states.items()
     }
     app.home_quat_world = {
         "r": app.home_quat_r.copy(),

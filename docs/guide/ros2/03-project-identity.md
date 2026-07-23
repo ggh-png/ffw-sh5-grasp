@@ -53,8 +53,8 @@ MoveL 상태와 화면 안 3D gizmo를 제공한다.
 
 ## 3.4 현재 상태 스냅샷 {: #part-3-4 }
 
-- 최신 버전 태그: `1.1.1` (`1.1.0`에는 ROS-free WBIK와 모바일 안정화, `1.1.1`에는
-  IK/FK·collision 개선과 whole-body/arm-only 전환이 포함된다.)
+- 최신 버전 태그: `1.2.0` (`1.1.1`의 whole-body/arm-only 제어에 이어, `1.2.0`에는
+  MJCF tree 기반 자체 FK/Jacobian, 실제 multi-viewport와 compact tabbed UI가 포함된다.)
 - 캔 시나리오만 라이브 — 한때 있었던 "상자 양손 들기(box scenario)" teleop 경로와
   사용되지 않던 양손 제약 파이썬 코드는 제거됐다. XML에 남은 `box_body` 자산은
   `teleop_app.py`가 시작 시 `_disable_legacy_box_asset()`로 비활성화한다.

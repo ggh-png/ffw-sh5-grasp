@@ -1,6 +1,7 @@
 # DLS와 위치 우선 IK 수학
 
-이 페이지는 `src/ik.py`를 읽을 때 가장 헷갈리기 쉬운 두 질문에 답한다.
+이 페이지는 `src/kinematics.py`의 `KinematicsSolver.solve_pose()`를 읽을 때 가장
+헷갈리기 쉬운 두 질문에 답한다.
 
 1. DLS는 왜 특이점 근처에서 관절 움직임이 폭발하지 않게 하는가?
 2. 자세 보정은 어떻게 이미 맞춘 손 위치를 거의 망치지 않고 더할 수 있는가?
@@ -11,8 +12,9 @@
 
 !!! note "현재 텔레옵과 이 페이지의 관계"
     현재 텔레옵은 [`src/whole_body_ik.py`](whole_body_ik.md)의 bounded solver를
-    사용한다. 여기서 설명하는 `src/ik.py`는 legacy 단일 팔 solver지만, DLS·특이점·
-    null space를 이해하는 데 가장 작은 예제이므로 회귀 테스트와 학습용으로 유지한다.
+    사용한다. 여기서 설명하는 반복 DLS는 단일 팔 회귀·오프라인 경로지만, FK와
+    Jacobian은 실시간 경로와 같은 `KinematicTree` 구현을 공유한다. `src/ik.py`는
+    기존 `InverseKinematics` 이름만 제공한다.
 
 ## 먼저 보는 전체 흐름
 
@@ -271,21 +273,26 @@ J^T(JJ^T+\lambda^2I_m)^{-1}
 
 ## 3. 수식과 코드의 대응
 
-`InverseKinematics.solve_pose()`는 위 식을 다음 코드로 직접 구현한다. 별도 helper로
+`KinematicsSolver.solve_pose()`는 위 식을 다음 코드로 직접 구현한다. 별도 helper로
 감싸지 않아 수식의 각 항이 iteration 안에서 그대로 보인다.
 
 ```python
-lam2 = self.damping ** 2
-position_system = jacp @ jacp.T + lam2 * np.eye(3)
-dq_pos = jacp.T @ np.linalg.solve(position_system, pos_err)
+damping_squared = self.damping ** 2
+position_system = (
+    position_jacobian @ position_jacobian.T
+    + damping_squared * np.eye(3)
+)
+position_delta = position_jacobian.T @ np.linalg.solve(
+    position_system, position_error
+)
 ```
 
 | 코드 | 수식 | 역할 |
 |---|---|---|
-| `jacp @ jacp.T` | \(J_pJ_p^T\) | task-space sensitivity를 모은다. |
-| `+ lam2 * I` | \(J_pJ_p^T+\lambda^2I\) | 0에 가까운 방향의 분모를 안정화한다. |
-| `solve(position_system, pos_err)` | \((J_pJ_p^T+\lambda^2I)^{-1}e_p\) | 역행렬을 만들지 않고 선형계를 푼다. |
-| `jacp.T @ ...` | \(J_p^T(\cdots)\) | 결과를 관절 공간으로 돌려보낸다. |
+| `position_jacobian @ position_jacobian.T` | \(J_pJ_p^T\) | task-space sensitivity를 모은다. |
+| `+ damping_squared * I` | \(J_pJ_p^T+\lambda^2I\) | 0에 가까운 방향의 분모를 안정화한다. |
+| `solve(position_system, position_error)` | \((J_pJ_p^T+\lambda^2I)^{-1}e_p\) | 역행렬을 만들지 않고 선형계를 푼다. |
+| `position_jacobian.T @ ...` | \(J_p^T(\cdots)\) | 결과를 관절 공간으로 돌려보낸다. |
 
 기본 감쇠는 `DEFAULT_DAMPING = 0.05`, iteration당 관절 변화 제한은
 `DEFAULT_MAX_JOINT_DELTA = 0.05 rad`다. 두 값은 역할이 다르다. damping은 해를

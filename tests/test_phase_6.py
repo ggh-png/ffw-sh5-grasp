@@ -122,12 +122,11 @@ def run_initial_ik_target_origin_gate():
     )
     pose_matches = True
     reports = []
-    for side, site_id in (("r", app.site_r), ("l", app.site_l)):
+    for side in ("r", "l"):
         pos, quat = app._target_world_pose(side)
-        site_quat = np.zeros(4)
-        mujoco.mju_mat2Quat(site_quat, app.data.site_xmat[site_id])
-        pos_err = float(np.linalg.norm(pos - app.data.site_xpos[site_id]))
-        quat_dot = abs(float(np.dot(quat, site_quat)))
+        state = app.whole_body_solver.site_state(app.data, side)
+        pos_err = float(np.linalg.norm(pos - state.position))
+        quat_dot = abs(float(np.dot(quat, state.quaternion)))
         case_ok = pos_err < 1e-12 and (1.0 - quat_dot) < 1e-12
         pose_matches = pose_matches and case_ok
         reports.append(f"{side}: pos_err={pos_err*1000:.6f}mm quat_dot={quat_dot:.12f}")
@@ -458,9 +457,48 @@ def run_manual_xyz_rpy_ik_gate(model):
     return ok
 
 
+def run_split_ui_and_tree_gate():
+    """Tabbed workspaces stay compact and the tree filter follows hand chains."""
+    app = _make_sim_only_app()
+    windows = teleop_ui._ensure_window_state(app)
+    titles = [spec["title"] for spec in teleop_ui.UI_WINDOW_SPECS.values()]
+    windows_ok = (
+        set(windows) == {"control", "diagnostics"}
+        and len(titles) == len(set(titles))
+        and windows["control"]
+        and windows["diagnostics"]
+    )
+
+    tree = app.whole_body_solver.kinematic_tree
+    right = teleop_ui.kinematic_tree_body_ids(app, "r", False)
+    left = teleop_ui.kinematic_tree_body_ids(app, "l", False)
+    both = teleop_ui.kinematic_tree_body_ids(app, "both", False)
+    full = teleop_ui.kinematic_tree_body_ids(app, "both", True)
+    right_site = app.whole_body_solver.kinematics_solvers["r"].site_id
+    left_site = app.whole_body_solver.kinematics_solvers["l"].site_id
+    tree_ok = (
+        both == right | left
+        and right != left
+        and tree.sites[right_site].body_id in right
+        and tree.sites[left_site].body_id in left
+        and len(full) == len(tree.bodies)
+        and all(tree.bodies[child].parent_id == parent
+                for parent, children in enumerate(tree.children_by_body)
+                for child in children)
+        and all(joint.kind_name in {"free", "ball", "slide", "hinge"}
+                for joint in tree.joints)
+    )
+    ok = windows_ok and tree_ok
+    print(f"Tabbed UI/tree gate: workspaces={len(windows)} compact={windows_ok} "
+          f"chain_bodies=R{len(right)}/L{len(left)}/both{len(both)} "
+          f"full={len(full)}: {'OK' if ok else 'FAIL'}")
+    return ok
+
+
 def main():
     model = mujoco.MjModel.from_xml_path(str(MODEL_PATH))
     ok = (run_model_gate(model)
+          and run_split_ui_and_tree_gate()
           and run_initial_ik_target_origin_gate()
           and run_cyclo_marker_jog_gate()
           and run_cyclo_bimanual_virtual_object_gate()

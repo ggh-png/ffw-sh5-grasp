@@ -76,7 +76,7 @@ CAN_NOISE = 0.005
 
 
 def run_fk_jacobian_test(solver):
-    """Public FK and world-aligned Jacobian must agree with finite differences."""
+    """Parsed-tree FK/Jacobian must match finite differences and engine pose."""
     state = solver.forward_kinematics(HOME_Q)
     epsilon = 1e-6
     numerical = np.zeros_like(state.jacobian)
@@ -94,8 +94,28 @@ def run_fk_jacobian_test(solver):
     quaternion_unit = abs(np.linalg.norm(state.quaternion) - 1.0) < 1e-12
     double_cover_error = np.linalg.norm(
         kinematics.shortest_orientation_error(state.quaternion, -state.quaternion))
-    ok = max_error < 1e-5 and quaternion_unit and double_cover_error < 1e-12
+    reference = mujoco.MjData(solver.model)
+    reference.qpos[:] = solver.tree.qpos0
+    reference.qpos[solver.qpos_adrs] = HOME_Q
+    mujoco.mj_forward(solver.model, reference)
+    engine_position = np.asarray(reference.site_xpos[solver.site_id]).copy()
+    engine_quaternion = np.zeros(4)
+    mujoco.mju_mat2Quat(
+        engine_quaternion, reference.site_xmat[solver.site_id])
+    engine_error = max(
+        float(np.max(np.abs(state.position - engine_position))),
+        float(np.linalg.norm(kinematics.shortest_orientation_error(
+            state.quaternion, engine_quaternion))),
+    )
+    tree_ok = (
+        solver.tree.site_by_name[solver.site_name].id == solver.site_id
+        and all(name in solver.tree.joint_by_name for name in solver.joint_names)
+        and not hasattr(solver, "data")
+    )
+    ok = (max_error < 1e-5 and engine_error < 1e-10 and tree_ok
+          and quaternion_unit and double_cover_error < 1e-12)
     print(f"FK/Jacobian test: max_fd_error={max_error:.2e} quaternion_unit={quaternion_unit} "
+          f"engine_pose_error={engine_error:.2e} parsed_tree={tree_ok} "
           f"double_cover={double_cover_error:.1e}: {'OK' if ok else 'FAIL'}")
     return ok
 

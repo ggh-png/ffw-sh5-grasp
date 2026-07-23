@@ -64,7 +64,7 @@ p_{hand} = p_{obj} + R_{obj}\,p_{\text{offset}}, \quad R_{hand} = R_{obj}\,R_{\t
 |---|---|
 | `rpy_deg_to_quat(rpy_deg)` | RPY degree를 quaternion으로 변환 |
 | `quat_to_rpy_deg(q)` | quaternion을 RPY degree로 변환 |
-| `set_home_references(app)` | 양손 시작 위치/자세를 target 기준으로 저장 |
+| `set_home_references(app)` | 자체 `site_state()` FK로 양손 시작 위치/자세를 계산해 target 기준으로 저장 |
 | `base_pose(app)` | base x/y/yaw, sin/cos, yaw quaternion 반환 |
 | `local_to_world_pos(app, p_local)` | base-local 위치를 world 위치로 변환 |
 | `world_to_base_pos(app, p_world)` | world 위치를 base-local 위치로 변환 |

@@ -164,7 +164,7 @@ def _step_physics(self, drive_keys):
 | `teleop_ui.py` | `rqt` 플러그인 하나, 단 별도 프로세스가 아니라 인프로세스 위젯 |
 | `teleop_render.py` | RViz(3D 뷰) + 그 안의 InteractiveMarkerServer를 한 파일에 합친 것 |
 | `teleop_targets.py` | tf2 buffer/lookup + MoveIt의 "pose goal 계산"을 대신하는 순수 함수 모음 |
-| `kinematics.py` | Pinocchio `framesForwardKinematics`/`LOCAL_WORLD_ALIGNED` Jacobian 계층의 MuJoCo 버전 |
+| `kinematics.py` | 컴파일된 MJCF 트리를 복사해 직접 구현한 FK/`LOCAL_WORLD_ALIGNED` Jacobian 계층 |
 | `ik.py` | MoveIt의 IK 플러그인(KDL/TRAC-IK 자리) 하나만 떼어낸 것. 플래닝은 없다 |
 | `arm_control.py` | `ros2_control`의 `effort_controllers` 플러그인 하나 |
 | `grasp.py` | 그리퍼 액션 서버 + `/gripper/force_torque` 센서 판정 로직을 합친 것 |

@@ -34,7 +34,7 @@ flowchart TB
         BASE["base_teleop.py<br>body twist · swerve"]
         ARM["arm_control.py<br>팔 torque"]
         GRASP["grasp.py<br>손가락 synergy · contact"]
-        IK["ik.py<br>단일 팔 scratch IK"]
+        IK["ik.py<br>단일 팔 IK 호환 이름"]
     end
 
     KIN["kinematics.py<br>pose · Jacobian · collision gradient"]
@@ -82,12 +82,12 @@ flowchart TB
 | `teleop_ui.py` | ImGui 입력을 target과 mode 상태로 변환 | app target/mode |
 | `teleop_render.py` | scene, camera, gizmo, collision overlay 렌더링 | render state, gizmo target |
 | `teleop_targets.py` | UI 값과 world pose를 왕복 변환 | target/marker state |
-| `kinematics.py` | pose, Jacobian, signed-distance gradient 계산 | scratch `MjData`만 |
+| `kinematics.py` | MJCF 트리, FK, Jacobian, 단일 팔 IK, signed-distance gradient | 자체 트리 계산; collision helper만 live data 읽기 |
 | `whole_body_ik.py` | 허용된 DOF의 안전한 differential command 계산 | 반환 command만 |
 | `base_teleop.py` | body twist를 steer/drive command로 변환 | controller 내부 상태 |
 | `arm_control.py` | 목표 관절각을 torque로 변환 | arm `data.ctrl` |
 | `grasp.py` | synergy를 finger command로 바꾸고 contact force 판정 | finger `data.ctrl` |
-| `ik.py` | 단일 팔 pose를 scratch state에서 풀이 | scratch `MjData`만 |
+| `ik.py` | 기존 `InverseKinematics` import를 공용 `KinematicsSolver`에 연결 | 없음 |
 | `mj_util.py` | joint에서 actuator를 찾는 공용 MuJoCo helper | 없음 |
 
 ## 반드시 지킬 불변식

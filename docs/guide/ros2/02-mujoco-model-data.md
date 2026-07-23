@@ -17,7 +17,7 @@ ROS2 생태계에서 로봇 모델은 URDF(또는 xacro로 조립되는 URDF)로
 | `<link>` | `<body>` | body는 관성(mass/inertia)뿐 아니라 그 안에 자식 body/joint/geom을 중첩해서 담을 수 있다(트리 구조가 XML 중첩 그 자체) |
 | `<joint type="revolute">` | `<joint type="hinge">` | 개념 동일. MJCF는 `range`, `damping`, `armature`, `frictionloss` 등을 훨씬 세밀하게 노출 |
 | `<visual>`/`<collision>` mesh | `<geom>` (visual/collision 겸용, `contype`/`conaffinity`로 구분) | URDF는 시각/충돌을 별도 태그로 분리, MJCF는 태그 하나에 role을 플래그로 표시 |
-| 없음(tf가 대신함) | `<site>` | **이 프로젝트에서 가장 중요한 개념 중 하나** — 질량도 충돌도 없는 순수 "참조 좌표계" 마커. IK 목표점(`grasp_target_r/l`)이 바로 이 site다. tf frame과 비슷하지만 tf처럼 전역 트리로 자동 발행되지 않고, 코드가 필요할 때 `mj_jacSite` 등으로 직접 계산한다 |
+| 없음(tf가 대신함) | `<site>` | **이 프로젝트에서 가장 중요한 개념 중 하나** — 질량도 충돌도 없는 순수 "참조 좌표계" 마커. IK 목표점(`grasp_target_r/l`)이 바로 이 site다. tf frame과 비슷하지만 자동 발행되지 않으며, `KinematicTree`가 body–joint 경로를 순회해 pose와 Jacobian을 직접 계산한다 |
 | `<transmission>` + ros2_control `<ros2_control>` 블록 | `<actuator>` | 관절을 "무엇으로 어떻게 구동하는지" 지정. 아래 2.5 |
 | 없음(Gazebo SDF에서 따로) | `<keyframe>` | qpos/ctrl의 스냅샷을 이름 붙여 저장(`home`, `pregrasp` 등) — 리셋할 때 그 상태로 즉시 복원 |
 
@@ -56,10 +56,10 @@ ROS2에서 URDF는 한 번 파싱되면 불변이고, 실제로 시시각각 변
 | `mj_forward(model, data)` | 지금 `qpos` 기준으로 운동학(forward kinematics)/힘/접촉을 다시 계산 | 아니오 |
 | `mj_step(model, data)` | 한 타임스텝만큼 물리를 적분 — `qpos`/`qvel`이 실제로 바뀜 | 예 |
 
-IK 솔버(`ik.py`)는 `mj_forward`만 반복 호출한다 — "이 관절각이면 손끝이 어디에
-있을까"를 계산만 할 뿐 시간을 흘려보내지 않는다. 실제 로봇이 움직이는 건 메인
-루프가 `mj_step`을 부를 때뿐이다. 이 구분이 "IK는 그냥 계산, 실제 이동은 물리
-엔진이 담당"이라는 이 프로젝트 전체의 핵심 원칙이다.
+기구학 솔버는 `MjModel`에서 body–joint–site 트리를 한 번 복사한 뒤 NumPy로 FK와
+Jacobian을 직접 계산하므로 `mj_forward`를 반복 호출하지 않는다. 앱 초기화/reset과
+물리 검증 테스트에서는 여전히 `mj_forward`가 필요하다. 실제 로봇이 움직이는 것은
+메인 루프가 actuator command를 쓰고 `mj_step`을 부를 때뿐이라는 원칙은 같다.
 
 ## 2.5 액추에이터 3종 — `ros2_control` command interface와 비교 {: #part-2-5 }
 

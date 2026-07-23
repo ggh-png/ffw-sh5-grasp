@@ -3,7 +3,7 @@
 # Part 9 — Cyclo Control UI: 3D 마커 텔레옵 {: #part-9 }
 
 !!! info "함께 볼 개발자 가이드"
-    패널 이벤트는 [`teleop_ui.py`](../teleop_ui.md), 창·카메라·gizmo는
+    탭형 워크스페이스 이벤트는 [`teleop_ui.py`](../teleop_ui.md), 네이티브 창·카메라·gizmo는
     [`teleop_render.py`](../teleop_render.md), 목표 상태 변환은
     [`teleop_targets.py`](../teleop_targets.md)에서 각각 확인할 수 있다.
 
@@ -14,7 +14,7 @@
 | 해결할 문제 | 사용자가 두 손을 독립적으로 움직이거나 가상 물체 하나로 함께 움직이고, UI·3D gizmo·IK가 같은 목표 상태를 보도록 해야 한다. |
 | 해결 방법 | `app.targets`를 단일 명령 상태로 두고 MoveL과 Bimanual MoveL의 상태 전이를 함수로 분리한다. 렌더러는 world pose만 편집하고 변환 계층이 다시 target 값으로 환산한다. |
 | 사용 수식 | 이 페이지의 모드 전환과 UI 상태 관리에는 별도 최적화 수식이 없다. pose 변환 수식은 Part 10, 변환된 목표를 푸는 IK 수식은 Part 6에 있다. |
-| 코드 구현 과정 | `teleop_ui.draw_panel()`이 입력을 받고 → `capture_grasp()` 또는 `release_grasp()`가 모드를 바꾸고 → `apply_virtual_object_target()`이 양손 목표를 만들고 → `draw_transform_gizmo()`와 `set_gizmo_target_world_pose()`가 3D 조작 결과를 되돌려 쓴다. |
+| 코드 구현 과정 | `teleop_ui.draw_panel()`이 Control/Diagnostics 탭을 그리고 입력을 받은 뒤 → `capture_grasp()` 또는 `release_grasp()`가 모드를 바꾸고 → `apply_virtual_object_target()`이 양손 목표를 만들고 → `draw_transform_gizmo()`와 `set_gizmo_target_world_pose()`가 3D 조작 결과를 되돌려 쓴다. |
 | 수식 없이 사용하는 함수 | `sync_virtual_object_to_hand_targets()`, `active_gizmo_target()`, `gizmo_target_world_pose()`, `sync_marker_visibility()`, `sync_ik_mocaps_from_targets()`, `teleop_render.render_scene()` |
 
 이 구조는 ROS2의 RViz Interactive Marker + MoveIt Cartesian 목표 처리와 가장
@@ -141,6 +141,35 @@ if changed:
 `app.gizmo_mouse_active`(gizmo를 드래그 중이거나 마우스가 그 위에 있는지)는
 `handle_camera_mouse`가 카메라 조작과 gizmo 조작을 혼동하지 않도록 막는
 플래그다 — 마우스가 gizmo 위에 있으면 카메라 orbit이 동작하지 않는다.
+
+multi-viewport에서는 ImGui draw list가 desktop 절대 좌표를 사용한다. 따라서 gizmo의
+렌더 사각형도 MuJoCo의 창 내부 `(0, 0)`이 아니라 `get_main_viewport().pos/size`로
+지정한다. 그래야 목표 marker를 camera matrix로 투영한 화면 위치와 이동 화살표·회전
+링의 중심이 정확히 일치한다.
+
+## 9.5 도구 패널을 메인 창 밖으로 분리하는 흐름 {: #part-9-5 }
+
+기능별 `imgui.begin()`만 나누면 창이 너무 많아지고 주 GLFW 영역 밖으로도 나갈 수 없다.
+그래서 `teleop_render.setup_render()`가 ImGui `viewports_enable`을 켜고 네이티브
+GLFW/OpenGL3 backend를 초기화한다. `teleop_ui.draw_panel()`은 상태 창은 주 viewport에
+남기고, 관련 기능을 탭으로 합친 `Control Center`와 `Diagnostics` 두 창만 첫 프레임에
+주 창 오른쪽 바깥으로 배치한다.
+
+```mermaid
+flowchart LR
+    U["teleop_ui.draw_panel<br>두 tabbed workspace"] --> D{"배치 요청"}
+    D -->|Detach| O["주 viewport 오른쪽<br>desktop 좌표 지정"]
+    D -->|Return| I["주 viewport 내부<br>상대 좌표 지정"]
+    O --> P["update_platform_windows<br>별도 GLFW OS 창 생성"]
+    I --> M["주 MuJoCo 창에 merge"]
+    P --> R["render_platform_windows_default<br>각 OpenGL context 렌더"]
+```
+
+이 기능에는 제어 수식이 없다. 사용하는 핵심 함수는
+`imgui.update_platform_windows()`, `imgui.render_platform_windows_default()`,
+`glfw.make_context_current()`이며, 마지막 함수로 주 context를 복원해야 다음 MuJoCo
+frame이 올바른 창에 그려진다. 상태 창의 **Detach tools outside**와 **Return tools to
+main** 버튼으로 두 배치를 즉시 오갈 수 있다.
 
 ---
 

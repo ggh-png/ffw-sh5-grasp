@@ -8,8 +8,12 @@
 | `TeleopApp.toggle_whole_body_control()` | UI 버튼용 ON/OFF wrapper |
 | `WholeBodyIK.solve(..., whole_body_enabled=True)` | base/lift/active arms bounded solve; false면 base/lift hard pin |
 | `WholeBodyIK.rebase(data, target_poses)` | 현재 base/hand를 공통 motion reference로 재설정 |
+| `WholeBodyIK.site_state(data, side)` | live qpos를 자체 트리에 넣어 손 pose와 Jacobian 계산 |
 | `WholeBodyIK.collision_distances(data)` | controller와 visualization이 공유하는 active distance query |
-| `kinematics.evaluate_site(...)` | 정규화 world pose + world-aligned geometric Jacobian |
+| `KinematicTree(model)` | 컴파일된 MJCF의 body–joint–site 구조와 고정 변환 복사 |
+| `KinematicTree.point_jacobian(...)` | body에 고정된 world 점의 3×N Jacobian을 조상 관절 축으로 직접 계산 |
+| `KinematicsSolver.from_mjcf(...)` | MJCF 파일에서 자체 FK·Jacobian·IK solver 생성 |
+| `KinematicsSolver.forward(...)` | 자체 트리에서 정규화 world pose + 6×N world Jacobian 계산 |
 | `kinematics.collision_distance_gradient(...)` | signed distance, 최근접점, controlled-DOF gradient |
 | `teleop_targets.target_world_pose(app, side)` | 현재 mode 표현의 hand target을 world pose로 변환 |
 | `teleop_targets.world_to_target_pos(...)` | world position을 현재 mode의 target offset으로 역변환 |
@@ -37,14 +41,13 @@
 | API | 사용 위치 | 역할 |
 |---|---|---|
 | `MjModel.from_xml_path()` | `teleop_app.py`, tests | XML 모델 로드 |
-| `MjData(model)` | app, IK, tests | 시뮬레이션 상태 생성 |
-| `mj_forward()` | app, IK, tests | 현재 qpos 기준 계산 갱신 |
+| `MjData(model)` | app, physics tests | 시뮬레이션 상태 생성 |
+| `mj_forward()` | physics 검증용 tests | 물리 엔진 결과를 독립 검증할 때만 사용; 앱 런타임과 자체 기구학 solver는 사용하지 않음 |
 | `mj_step()` | app, tests | 물리 timestep 진행 |
-| `mj_resetData()` | IK, tests | data 초기화 |
+| `mj_resetData()` | tests | data 초기화 |
 | `mj_resetDataKeyframe()` | app, tests | keyframe으로 초기화 |
 | `mj_name2id()` | 대부분 모듈 | 이름을 id로 변환 |
 | `mj_id2name()` | `grasp.py` | id를 이름으로 변환 |
-| `mj_jacSite()` | `kinematics.py`, `ik.py` | site Jacobian 계산 |
 | `mj_contactForce()` | `grasp.py` | contact force 읽기 |
 | `mju_mat2Quat()` | target/render/IK | matrix를 quaternion으로 변환 |
 | `mju_quat2Mat()` | `teleop_targets.py` | quaternion을 matrix로 변환 |

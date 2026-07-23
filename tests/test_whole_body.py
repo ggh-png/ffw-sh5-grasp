@@ -53,6 +53,42 @@ def run_ros_free_dependency_gate():
     return ok
 
 
+def run_tree_kinematics_dependency_gate():
+    """Keep all runtime hand FK/Jacobians on the custom kinematic tree."""
+    runtime_files = (
+        "kinematics.py", "whole_body_ik.py", "teleop_targets.py", "teleop_app.py")
+    modules = {}
+    for filename in runtime_files:
+        source = (REPO_ROOT / "src" / filename).read_text(encoding="utf-8")
+        modules[filename] = ast.parse(source, filename=filename)
+    module = modules["kinematics.py"]
+    solver_classes = {
+        node.name: node for node in module.body
+        if isinstance(node, ast.ClassDef)
+        and node.name in {"KinematicTree", "KinematicsSolver"}
+    }
+    solver_forbidden = {"MjData", "mj_forward"}
+    runtime_forbidden = {
+        "mj_forward", "mj_jacSite", "mj_jac", "site_xpos", "site_xmat"}
+    violations = set()
+    for filename, parsed in modules.items():
+        for child in ast.walk(parsed):
+            if not isinstance(child, ast.Attribute):
+                continue
+            is_mujoco_call = (
+                isinstance(child.value, ast.Name) and child.value.id == "mujoco")
+            if child.attr in runtime_forbidden:
+                violations.add(f"{filename}:{child.attr}")
+            if filename == "kinematics.py" and is_mujoco_call:
+                if child.attr in solver_forbidden:
+                    violations.add(f"{filename}:{child.attr}")
+    violations = sorted(violations)
+    ok = set(solver_classes) == {"KinematicTree", "KinematicsSolver"} and not violations
+    print(f"Tree-kinematics dependency gate: forbidden runtime FK={violations}: "
+          f"{'OK' if ok else 'FAIL'}")
+    return ok
+
+
 def _reset(model, data):
     key = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_KEY, "home")
     mujoco.mj_resetDataKeyframe(model, data, key)
@@ -225,7 +261,7 @@ def run_collision_gradient_gate(model):
     """Closest-point Jacobian must match a numerical signed-distance derivative."""
     data, solver, pair = _self_collision_fixture(model)
     result = kinematics.collision_distance_gradient(
-        model, data, pair, solver.dof_ids, 0.10)
+        model, data, pair, solver.kinematic_tree, solver.joint_ids, 0.10)
     step = 1e-6
     numerical = np.zeros(len(solver.dof_ids))
     for index, qpos_adr in enumerate(solver.qpos_adrs):
@@ -236,7 +272,8 @@ def run_collision_gradient_gate(model):
             scratch.qpos[qpos_adr] += sign * step
             mujoco.mj_forward(model, scratch)
             perturbed = kinematics.collision_distance_gradient(
-                model, scratch, pair, solver.dof_ids, 0.10)
+                model, scratch, pair, solver.kinematic_tree,
+                solver.joint_ids, 0.10)
             distances.append(perturbed.distance)
         numerical[index] = (distances[1] - distances[0]) / (2.0 * step)
     error = float(np.max(np.abs(result.gradient - numerical)))
@@ -248,7 +285,7 @@ def run_collision_gradient_gate(model):
     hand_pair = next(pair for pair in solver.collision_pairs
                      if "hx5_r_base/hx5_l_base" in pair.name)
     hand_result = kinematics.collision_distance_gradient(
-        model, data, hand_pair, solver.dof_ids, 0.10)
+        model, data, hand_pair, solver.kinematic_tree, solver.joint_ids, 0.10)
     hand_numerical = np.zeros(len(solver.dof_ids))
     for index, qpos_adr in enumerate(solver.qpos_adrs):
         distances = []
@@ -258,7 +295,8 @@ def run_collision_gradient_gate(model):
             scratch.qpos[qpos_adr] += sign * step
             mujoco.mj_forward(model, scratch)
             perturbed = kinematics.collision_distance_gradient(
-                model, scratch, hand_pair, solver.dof_ids, 0.10)
+                model, scratch, hand_pair, solver.kinematic_tree,
+                solver.joint_ids, 0.10)
             distances.append(perturbed.distance)
         hand_numerical[index] = (distances[1] - distances[0]) / (2.0 * step)
     hand_error = float(np.max(np.abs(
@@ -289,7 +327,8 @@ def run_self_collision_cbf_gate(model):
     pair = next(pair for pair in probe_solver.collision_pairs
                 if "hx5_r_base/hx5_l_base" in pair.name)
     result = kinematics.collision_distance_gradient(
-        model, data, pair, probe_solver.dof_ids, 0.10)
+        model, data, pair, probe_solver.kinematic_tree,
+        probe_solver.joint_ids, 0.10)
     normal = result.point_b - result.point_a
     normal /= np.linalg.norm(normal)
     sites = _sites(model)
@@ -412,8 +451,7 @@ def run_rigid_grasp_gate(model):
     rigid = rigid_solver.solve(data, targets, 0.04, rigid_grasp=True)
 
     states = {
-        side: kinematics.evaluate_site(model, data, sites[side])
-        for side in ("r", "l")
+        side: rigid_solver.site_state(data, side) for side in ("r", "l")
     }
     grasp_jacobian, desired_velocity = rigid_solver._rigid_grasp_task(states, 0.04)
     free_residual = float(np.linalg.norm(
@@ -444,15 +482,19 @@ def run_rigid_grasp_physical_gate():
 
     app.capture_grasp()
     reference = app.whole_body_solver._rigid_grasp_reference
+    start_states = {
+        side: app.whole_body_solver.site_state(app.data, side)
+        for side in ("r", "l")
+    }
     start_midpoint = 0.5 * (
-        app.data.site_xpos[app.site_r] + app.data.site_xpos[app.site_l])
+        start_states["r"].position + start_states["l"].position)
     app.targets["virtual_object_pos"][0] -= 0.08
     app.targets["virtual_object_rpy"][2] += 12.0
     for _ in range(50):
         app._step_physics(no_keys)
 
-    right = kinematics.evaluate_site(app.model, app.data, app.site_r)
-    left = kinematics.evaluate_site(app.model, app.data, app.site_l)
+    right = app.whole_body_solver.site_state(app.data, "r")
+    left = app.whole_body_solver.site_state(app.data, "l")
     right_rotation = whole_body_ik._quaternion_matrix(right.quaternion)
     position_right = right_rotation.T @ (left.position - right.position)
     rotation_right = right_rotation.T @ whole_body_ik._quaternion_matrix(left.quaternion)
@@ -492,7 +534,8 @@ def run_world_anchor_gate():
                   and abs(abs(np.dot(hand_after[1], hand_before[1])) - 1.0) < 1e-12)
     virtual_fixed = (np.linalg.norm(virtual_after[0] - virtual_before[0]) < 1e-12
                      and abs(abs(np.dot(virtual_after[1], virtual_before[1])) - 1.0) < 1e-12)
-    actual_hand_moved = np.linalg.norm(app.data.site_xpos[app.site_r] - hand_before[0]) > 0.1
+    actual_hand = app.whole_body_solver.site_state(app.data, "r")
+    actual_hand_moved = np.linalg.norm(actual_hand.position - hand_before[0]) > 0.1
     ok = hand_fixed and virtual_fixed and actual_hand_moved
     print(f"World target anchor gate: hand_fixed={hand_fixed} virtual_fixed={virtual_fixed} "
           f"actual_robot_moved={actual_hand_moved}: {'OK' if ok else 'FAIL'}")
@@ -913,6 +956,7 @@ def run_physical_whole_body_gate(model):
 def main():
     model = mujoco.MjModel.from_xml_path(str(MODEL_PATH))
     ok = (run_ros_free_dependency_gate()
+          and run_tree_kinematics_dependency_gate()
           and run_swerve_kinematics_gate()
           and run_box_qp_gate()
           and run_joint_limit_cbf_gate(model)

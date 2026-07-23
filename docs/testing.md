@@ -52,7 +52,24 @@ mkdocs build --strict
 | Phase 6 | marker, gizmo, Bimanual, mode toggle | pose round-trip과 ON/OFF 불변성 |
 | Whole-body | BVLS, joint/collision CBF, rigid grasp, mobile WBIK | 수치/물리/latency 통합 gate |
 
-## 1.1.1 핵심 회귀가 증명하는 것
+## 1.2.0 핵심 회귀가 증명하는 것
+
+### Custom kinematics hard gate
+
+`test_whole_body.py`는 앱 런타임의 FK/Jacobian 경로에서 다음 우회를 금지한다.
+
+- `mj_forward`, MuJoCo site/point Jacobian API
+- `data.site_xpos`, `data.site_xmat` 직접 참조
+- `KinematicTree`/`KinematicsSolver` 내부의 `MjData` 생성
+
+`test_phase_3.py`는 자체 FK pose를 독립 엔진 결과와 비교하고, 자체 Jacobian을
+관절별 중앙 유한차분과 비교한다. 현재 최대 Jacobian 오차는 `2.33e-10`이다.
+
+### Compact multi-viewport UI gate
+
+UI 상태는 `control`, `diagnostics` 두 워크스페이스만 허용한다. 실제 GUI smoke에서는
+MuJoCo 주 viewport 하나와 외부 플랫폼 viewport 두 개가 생성되고, Return/Detach에서
+각각 1개/3개로 병합·분리되는지 확인한다.
 
 ### Arm-only hard gate
 

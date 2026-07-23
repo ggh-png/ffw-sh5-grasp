@@ -150,7 +150,8 @@ whole-body IK 두 소스를 `teleop_app.py`가 직접 중재한다. 키를
 
 ## 8.5 Whole-body IK와 연결 {: #part-8-5 }
 
-`whole_body_ik.py`는 MuJoCo의 full Jacobian에서 base x/y/yaw 열도 함께 사용한다.
+`whole_body_ik.py`는 `KinematicTree`가 직접 만든 full Jacobian에서 base x/y/yaw 열도
+함께 사용한다.
 해에서 나온 world base velocity는 현재 yaw의 역회전으로 body frame에 바꾼 뒤
 `SwerveDrive.update_twist()`에 전달된다. solver가 base qpos를 직접 적는 것은 아니다.
 UI의 **Whole-body Control**을 OFF로 바꾸면 base x/y/yaw와 lift의 velocity bound를

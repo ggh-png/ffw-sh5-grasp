@@ -1,12 +1,13 @@
-"""Phase 4 -- the ImGui slider panel for teleop_app.TeleopApp.
+"""Compact ImGui control and diagnostics workspaces for TeleopApp.
 
 Split out of teleop_app.py because it's the one genuinely independent piece of that
 file: this module only reads/writes the app's already-public state (`app.targets`,
 `app.contact_viz`, ...) and never touches physics or the 3D render -- it doesn't need to
 know how IK, grasp synergy, or mj_step work, only what a slider's current value is. This
 module doesn't import teleop_app (avoids a circular import); it just duck-types on
-whatever `app` object `draw_panel` is called with, so the only supported way to add a
-new slider/button is to look here, not in teleop_app.py's physics/render code.
+whatever `app` object `draw_panel` is called with. Related controls are grouped into tabs
+inside one Control Center, while joint/tree inspection shares one Diagnostics window. This
+keeps native multi-viewport support without creating a separate OS window for every feature.
 """
 
 import math
@@ -19,7 +20,20 @@ JOG_RPY_STEP_DEFAULT = 2.0
 HAND_POS_OFFSET_RANGE = (-0.35, 0.35)
 POS_AXES = ("X", "Y", "Z")
 RPY_AXES = ("Roll", "Pitch", "Yaw")
-SIDE_LABELS = {"r": "Right", "l": "Left", "virtual": "Virtual object"}
+UI_WINDOW_SPECS = {
+    "control": {
+        "title": "FFW-SH5 Control Center",
+        "position": (575, 10),
+        "size": (470, 720),
+        "visible": True,
+    },
+    "diagnostics": {
+        "title": "FFW-SH5 Diagnostics",
+        "position": (10, 295),
+        "size": (650, 390),
+        "visible": True,
+    },
+}
 
 
 def _begin_expanded(title, flags=0):
@@ -29,6 +43,62 @@ def _begin_expanded(title, flags=0):
     if isinstance(result, tuple):
         return result[0]
     return result
+
+
+def _ensure_window_state(app):
+    """Initialize persistent visibility/filter state without requiring render setup."""
+    if not hasattr(app, "ui_windows") or set(app.ui_windows) != set(UI_WINDOW_SPECS):
+        previous = getattr(app, "ui_windows", {})
+        app.ui_windows = {
+            "control": any(previous.get(key, False)
+                           for key in ("control", "marker", "right_arm",
+                                       "left_arm", "robot")),
+            "diagnostics": any(previous.get(key, False)
+                               for key in ("diagnostics", "joints", "tree")),
+        }
+        if not previous:
+            app.ui_windows = {
+                key: spec["visible"] for key, spec in UI_WINDOW_SPECS.items()
+            }
+    if not hasattr(app, "kinematic_tree_scope"):
+        app.kinematic_tree_scope = "both"
+    if not hasattr(app, "kinematic_tree_show_full"):
+        app.kinematic_tree_show_full = False
+    if not hasattr(app, "ui_layout_request"):
+        # The status window remains in the MuJoCo viewport; all tools start as native
+        # platform windows just beyond its right edge.  This one-shot request also
+        # overrides an older imgui.ini layout that kept them trapped in the main window.
+        app.ui_layout_request = "detach"
+    return app.ui_windows
+
+
+def _begin_tool_window(app, key):
+    """Open one movable/resizable tool window and persist its close-button state."""
+    spec = UI_WINDOW_SPECS[key]
+    layout_request = app.ui_layout_request
+    main_viewport = imgui.get_main_viewport()
+    if layout_request == "detach":
+        index = tuple(UI_WINDOW_SPECS).index(key)
+        # Cascade title bars so every detached OS window remains individually reachable.
+        position = (
+            main_viewport.pos.x + main_viewport.size.x + 24.0 + 36.0 * index,
+            main_viewport.pos.y + 24.0 + 36.0 * index,
+        )
+        imgui.set_next_window_pos(position, imgui.Cond_.always)
+    elif layout_request == "main":
+        imgui.set_next_window_pos(
+            (main_viewport.pos.x + spec["position"][0],
+             main_viewport.pos.y + spec["position"][1]),
+            imgui.Cond_.always)
+    else:
+        imgui.set_next_window_pos(
+            (main_viewport.pos.x + spec["position"][0],
+             main_viewport.pos.y + spec["position"][1]),
+            imgui.Cond_.first_use_ever)
+    imgui.set_next_window_size(spec["size"], imgui.Cond_.first_use_ever)
+    expanded, opened = imgui.begin(spec["title"], app.ui_windows[key])
+    app.ui_windows[key] = bool(opened)
+    return expanded
 
 
 def _ik_err_text(app, side):
@@ -45,11 +115,6 @@ def _note_manual_pose_edit(app):
 
 def _clamp(value, lo, hi):
     return min(hi, max(lo, value))
-
-
-def _section(title, default_open=True):
-    flags = imgui.TreeNodeFlags_.default_open if default_open else 0
-    return imgui.collapsing_header(title, flags)
 
 
 def _slider_float_clamped(label, value, lo, hi, fmt):
@@ -157,9 +222,6 @@ def _selected_marker_label(app):
 
 def _draw_cyclo_control_panel(app):
     _ensure_jog_state(app)
-    if not _section("Cyclo / Marker Control"):
-        return
-
     imgui.text("Controller")
     for controller, label in (("movel", "MoveL"), ("bimanual_movel", "Bimanual MoveL")):
         if controller != "movel":
@@ -246,7 +308,6 @@ def _draw_status_panel(app, data):
         imgui.text(f"Collision CBF viz ON  |  active {active}  |  {distance_text}  |  "
                    f"slack {violation:.4f}m/s")
     imgui.text("Keys: arrows drive/yaw, [/] strafe, Q/E lift, R reset, G contacts, V collision, C camera")
-    imgui.separator()
 
 
 def _draw_ik_pose_controls(app, targets, side):
@@ -272,9 +333,6 @@ def _draw_fk_joint_controls(app, side):
 
 
 def _draw_arm_panel(app, targets, side):
-    label = f"{SIDE_LABELS[side]} Arm"
-    if not _section(label):
-        return
     mode = app.arm_mode[side]
     imgui.text(f"Mode: {'IK pose' if mode == 'ik' else 'FK joints'}")
     imgui.same_line()
@@ -288,8 +346,6 @@ def _draw_arm_panel(app, targets, side):
 
 
 def _draw_can_grasp_panel(app, targets):
-    if not _section("Can Grasp"):
-        return
     for side, label in (("r", "Right"), ("l", "Left")):
         if side == "l":
             imgui.separator()
@@ -306,8 +362,6 @@ def _draw_can_grasp_panel(app, targets):
 
 
 def _draw_lift_utils_panel(app, targets):
-    if not _section("Lift / Utilities"):
-        return
     whole_body_enabled = getattr(app, "whole_body_enabled", True)
     button_label = ("Whole-body Control: ON##wholebody"
                     if whole_body_enabled else "Whole-body Control: OFF (arm-only)##wholebody")
@@ -333,9 +387,7 @@ def _draw_lift_utils_panel(app, targets):
 
 
 def _draw_joint_monitor(app, data):
-    if not _section("Joint Monitor", default_open=False):
-        return
-    imgui.begin_child("joint_monitor", (0, 260), True)
+    imgui.begin_child("joint_monitor", (0, 0), True)
     for name in app.monitor_qposadr:
         val = float(data.qpos[app.monitor_qposadr[name]])
         lo, hi = app.monitor_ranges[name]
@@ -345,25 +397,191 @@ def _draw_joint_monitor(app, data):
     imgui.end_child()
 
 
-def draw_panel(app):
-    """Draw the whole "FFW-SH5 Teleop" panel for this frame and write any slider/button
-    interaction straight back into `app`'s state (same one-way-data-flow contract as the
-    rest of the app: this panel writes targets, the physics step reads them)."""
-    targets = app.targets
-    data = app.data
+def kinematic_tree_body_ids(app, scope=None, show_full=None):
+    """Return body ids visible in the tree window for a side/full-tree selection."""
+    _ensure_window_state(app)
+    tree = app.whole_body_solver.kinematic_tree
+    scope = app.kinematic_tree_scope if scope is None else scope
+    show_full = app.kinematic_tree_show_full if show_full is None else show_full
+    if scope not in {"both", "r", "l"}:
+        raise ValueError(f"invalid kinematic tree scope: {scope!r}")
+    if show_full:
+        return frozenset(range(len(tree.bodies)))
 
-    imgui.set_next_window_pos((10, 10), imgui.Cond_.first_use_ever)
-    imgui.set_next_window_size((460, app.window_h - 20), imgui.Cond_.first_use_ever)
-    if not _begin_expanded("FFW-SH5 Teleop"):
-        imgui.end()
+    visible = {0}
+    sides = ("r", "l") if scope == "both" else (scope,)
+    for side in sides:
+        site_id = app.whole_body_solver.kinematics_solvers[side].site_id
+        visible.update(tree.site_paths[site_id])
+    return frozenset(visible)
+
+
+def _joint_state_text(app, joint):
+    value = float(app.data.qpos[joint.qpos_adr])
+    if joint.kind_name == "hinge":
+        return f"{math.degrees(value):+.1f} deg"
+    if joint.kind_name == "slide":
+        return f"{value:+.3f} m"
+    return "multi-DOF state"
+
+
+def _draw_kinematic_body(app, body_id, visible_body_ids, controlled_joint_ids,
+                         target_site_ids):
+    tree = app.whole_body_solver.kinematic_tree
+    body = tree.bodies[body_id]
+    body_name = body.name or "world"
+    flags = (imgui.TreeNodeFlags_.span_avail_width
+             | imgui.TreeNodeFlags_.draw_lines_to_nodes)
+    if not app.kinematic_tree_show_full or body_id == 0:
+        flags |= imgui.TreeNodeFlags_.default_open
+    expanded = imgui.tree_node_ex(f"{body_name}  [body {body_id}]##kinbody{body_id}", flags)
+    if not expanded:
         return
 
-    _draw_status_panel(app, data)
-    _draw_cyclo_control_panel(app)
-    _draw_arm_panel(app, targets, "r")
-    _draw_arm_panel(app, targets, "l")
+    for joint_id in body.joint_ids:
+        joint = tree.joints[joint_id]
+        marker = "[controlled] " if joint_id in controlled_joint_ids else ""
+        name = joint.name or f"joint {joint_id}"
+        imgui.bullet_text(
+            f"{marker}{name} <{joint.kind_name}>  {_joint_state_text(app, joint)}")
+    for site_id in tree.sites_by_body[body_id]:
+        site = tree.sites[site_id]
+        marker = "[IK target] " if site_id in target_site_ids else ""
+        name = site.name or f"site {site_id}"
+        imgui.bullet_text(f"{marker}{name} <site>")
+    for child_id in tree.children_by_body[body_id]:
+        if child_id in visible_body_ids:
+            _draw_kinematic_body(
+                app, child_id, visible_body_ids, controlled_joint_ids, target_site_ids)
+    imgui.tree_pop()
 
-    _draw_can_grasp_panel(app, targets)
-    _draw_lift_utils_panel(app, targets)
-    _draw_joint_monitor(app, data)
+
+def _draw_kinematic_tree(app):
+    tree = app.whole_body_solver.kinematic_tree
+    imgui.text("Scope")
+    for index, (scope, label) in enumerate(
+            (("both", "Both arms"), ("r", "Right"), ("l", "Left"))):
+        if index:
+            imgui.same_line()
+        if imgui.radio_button(f"{label}##tree_scope_{scope}",
+                              app.kinematic_tree_scope == scope):
+            app.kinematic_tree_scope = scope
+    changed, show_full = imgui.checkbox(
+        "Show full MJCF tree", app.kinematic_tree_show_full)
+    if changed:
+        app.kinematic_tree_show_full = show_full
+
+    visible = kinematic_tree_body_ids(app)
+    controlled_joint_ids = set(map(int, app.whole_body_solver.joint_ids))
+    target_site_ids = {
+        solver.site_id for solver in app.whole_body_solver.kinematics_solvers.values()
+    }
+    imgui.text(
+        f"Showing {len(visible)}/{len(tree.bodies)} bodies  |  "
+        f"{len(controlled_joint_ids)} controlled joints")
+    imgui.text("[controlled] solver column   [IK target] grasp site")
+    imgui.separator()
+    imgui.begin_child("kinematic_tree_scroll", (0, 0), True)
+    _draw_kinematic_body(
+        app, 0, visible, controlled_joint_ids, target_site_ids)
+    imgui.end_child()
+
+
+def _draw_window_visibility(app):
+    imgui.separator_text("Workspaces")
+    if imgui.button("Detach tools outside"):
+        app.ui_layout_request = "detach"
+    imgui.same_line()
+    if imgui.button("Return tools to main"):
+        app.ui_layout_request = "main"
+
+    if imgui.button("Show all"):
+        for key in app.ui_windows:
+            app.ui_windows[key] = True
+    imgui.same_line()
+    if imgui.button("Control only"):
+        for key in app.ui_windows:
+            app.ui_windows[key] = key == "control"
+    imgui.same_line()
+    if imgui.button("Hide all"):
+        for key in app.ui_windows:
+            app.ui_windows[key] = False
+
+    for index, (key, spec) in enumerate(UI_WINDOW_SPECS.items()):
+        if index % 2:
+            imgui.same_line()
+        changed, visible = imgui.checkbox(
+            f"{spec['title']}##window_{key}", app.ui_windows[key])
+        if changed:
+            app.ui_windows[key] = visible
+
+
+def _draw_status_window(app, data):
+    main_viewport = imgui.get_main_viewport()
+    imgui.set_next_window_pos(
+        (main_viewport.pos.x + 10.0, main_viewport.pos.y + 10.0),
+        imgui.Cond_.always)
+    imgui.set_next_window_size((550, 275), imgui.Cond_.first_use_ever)
+    if _begin_expanded("FFW-SH5 Status & Windows"):
+        _draw_status_panel(app, data)
+        _draw_window_visibility(app)
     imgui.end()
+
+
+def _draw_if_visible(app, key, draw_contents):
+    if not app.ui_windows[key]:
+        return
+    expanded = _begin_tool_window(app, key)
+    if expanded:
+        draw_contents()
+    imgui.end()
+
+
+def _draw_tab(label, draw_contents):
+    """Draw one selected tab while keeping binding-specific tuple handling local."""
+    selected, _ = imgui.begin_tab_item(label)
+    if selected:
+        draw_contents()
+        imgui.end_tab_item()
+
+
+def _draw_control_center(app, targets):
+    """Group the normal operator workflow into one tabbed native window."""
+    if not imgui.begin_tab_bar("control_center_tabs"):
+        return
+    _draw_tab("Target", lambda: _draw_cyclo_control_panel(app))
+    _draw_tab(
+        f"Right Arm ({app.arm_mode['r'].upper()})###right_arm_tab",
+        lambda: _draw_arm_panel(app, targets, "r"))
+    _draw_tab(
+        f"Left Arm ({app.arm_mode['l'].upper()})###left_arm_tab",
+        lambda: _draw_arm_panel(app, targets, "l"))
+
+    def draw_robot_controls():
+        imgui.separator_text("Lift / Utilities")
+        _draw_lift_utils_panel(app, targets)
+        imgui.separator_text("Can Grasp")
+        _draw_can_grasp_panel(app, targets)
+
+    _draw_tab("Robot / Grasp", draw_robot_controls)
+    imgui.end_tab_bar()
+
+
+def _draw_diagnostics(app, data):
+    """Keep infrequent, scroll-heavy inspection tools out of the control workflow."""
+    if not imgui.begin_tab_bar("diagnostics_tabs"):
+        return
+    _draw_tab("Kinematic Tree", lambda: _draw_kinematic_tree(app))
+    _draw_tab("Joint Monitor", lambda: _draw_joint_monitor(app, data))
+    imgui.end_tab_bar()
+
+
+def draw_panel(app):
+    """Draw two tabbed workspaces and write UI changes to app state."""
+    targets = app.targets
+    data = app.data
+    _ensure_window_state(app)
+    _draw_status_window(app, data)
+    _draw_if_visible(app, "control", lambda: _draw_control_center(app, targets))
+    _draw_if_visible(app, "diagnostics", lambda: _draw_diagnostics(app, data))
+    app.ui_layout_request = None

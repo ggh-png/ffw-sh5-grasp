@@ -1,13 +1,17 @@
-"""ROS-free MuJoCo forward kinematics shared by arm and whole-body IK.
+"""MJCF-derived kinematics shared by arm and whole-body IK.
 
-Cyclo Control keeps pose and ``LOCAL_WORLD_ALIGNED`` Jacobian evaluation behind one
-kinematics interface.  This module provides the same useful boundary for this project using
-only MuJoCo and NumPy: every pose quaternion is normalized, every rotational Jacobian is in
-the world frame, and callers may evaluate either live state or an isolated scratch state.
+MuJoCo still compiles the MJCF, resolving defaults and includes, but :class:`KinematicTree`
+copies the resulting body/joint/site topology and fixed transforms.  FK, the world-aligned
+geometric Jacobian, and iterative IK then run from that immutable tree with NumPy only;
+they do not allocate ``MjData`` or call ``mujoco.mj_forward``.
+
+Collision-distance helpers intentionally remain live-state MuJoCo queries.  They depend on
+the physics engine's current contacts and geometry closest points, unlike tree kinematics.
 """
 
 from dataclasses import dataclass
 import itertools
+from pathlib import Path
 
 import mujoco
 import numpy as np
@@ -20,6 +24,46 @@ class SiteKinematics:
     position: np.ndarray
     quaternion: np.ndarray
     jacobian: np.ndarray
+
+
+@dataclass(frozen=True)
+class KinematicJoint:
+    """One joint copied from a compiled MJCF model."""
+
+    id: int
+    name: str
+    body_id: int
+    kind: int
+    kind_name: str
+    qpos_adr: int
+    dof_adr: int
+    position: np.ndarray
+    axis: np.ndarray
+    limited: bool
+    range: np.ndarray
+
+
+@dataclass(frozen=True)
+class KinematicBody:
+    """One body node and its fixed parent-to-body transform."""
+
+    id: int
+    name: str
+    parent_id: int
+    position: np.ndarray
+    quaternion: np.ndarray
+    joint_ids: tuple
+
+
+@dataclass(frozen=True)
+class KinematicSite:
+    """A fixed site transform attached to a body node."""
+
+    id: int
+    name: str
+    body_id: int
+    position: np.ndarray
+    quaternion: np.ndarray
 
 
 @dataclass(frozen=True)
@@ -78,27 +122,268 @@ def shortest_orientation_error(target_quaternion, current_quaternion):
     return error[1:] * (angle / vector_norm)
 
 
-def evaluate_site(model, data, site_id, dof_ids=None):
-    """Read a site's pose and geometric Jacobian from an already-forwarded state."""
-    if site_id < 0 or site_id >= model.nsite:
-        raise ValueError(f"invalid site id: {site_id}")
-    jacp = np.zeros((3, model.nv))
-    jacr = np.zeros((3, model.nv))
-    mujoco.mj_jacSite(model, data, jacp, jacr, site_id)
-    columns = slice(None) if dof_ids is None else np.asarray(dof_ids, dtype=int)
-    quaternion = np.zeros(4)
-    mujoco.mju_mat2Quat(quaternion, data.site_xmat[site_id])
-    return SiteKinematics(
-        position=data.site_xpos[site_id].copy(),
-        quaternion=normalize_quaternion(quaternion),
-        jacobian=np.vstack((jacp[:, columns], jacr[:, columns])),
-    )
+def _rotation_from_quaternion(quaternion):
+    """Convert a ``(w, x, y, z)`` quaternion to a 3x3 rotation matrix."""
+    w, x, y, z = normalize_quaternion(quaternion)
+    return np.array([
+        [1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - z * w),
+         2.0 * (x * z + y * w)],
+        [2.0 * (x * y + z * w), 1.0 - 2.0 * (x * x + z * z),
+         2.0 * (y * z - x * w)],
+        [2.0 * (x * z - y * w), 2.0 * (y * z + x * w),
+         1.0 - 2.0 * (x * x + y * y)],
+    ])
 
 
-def collision_distance_gradient(model, data, pair, dof_ids, max_distance):
+def _quaternion_from_rotation(rotation):
+    """Convert a 3x3 rotation matrix to a canonical ``(w, x, y, z)`` quaternion."""
+    matrix = np.asarray(rotation, dtype=float).reshape(3, 3)
+    trace = float(np.trace(matrix))
+    if trace > 0.0:
+        scale = 2.0 * np.sqrt(max(trace + 1.0, 0.0))
+        quaternion = np.array([
+            0.25 * scale,
+            (matrix[2, 1] - matrix[1, 2]) / scale,
+            (matrix[0, 2] - matrix[2, 0]) / scale,
+            (matrix[1, 0] - matrix[0, 1]) / scale,
+        ])
+    else:
+        diagonal = np.diag(matrix)
+        index = int(np.argmax(diagonal))
+        if index == 0:
+            scale = 2.0 * np.sqrt(max(1.0 + matrix[0, 0] - matrix[1, 1]
+                                      - matrix[2, 2], 0.0))
+            quaternion = np.array([
+                (matrix[2, 1] - matrix[1, 2]) / scale,
+                0.25 * scale,
+                (matrix[0, 1] + matrix[1, 0]) / scale,
+                (matrix[0, 2] + matrix[2, 0]) / scale,
+            ])
+        elif index == 1:
+            scale = 2.0 * np.sqrt(max(1.0 + matrix[1, 1] - matrix[0, 0]
+                                      - matrix[2, 2], 0.0))
+            quaternion = np.array([
+                (matrix[0, 2] - matrix[2, 0]) / scale,
+                (matrix[0, 1] + matrix[1, 0]) / scale,
+                0.25 * scale,
+                (matrix[1, 2] + matrix[2, 1]) / scale,
+            ])
+        else:
+            scale = 2.0 * np.sqrt(max(1.0 + matrix[2, 2] - matrix[0, 0]
+                                      - matrix[1, 1], 0.0))
+            quaternion = np.array([
+                (matrix[1, 0] - matrix[0, 1]) / scale,
+                (matrix[0, 2] + matrix[2, 0]) / scale,
+                (matrix[1, 2] + matrix[2, 1]) / scale,
+                0.25 * scale,
+            ])
+    return normalize_quaternion(quaternion)
+
+
+def _axis_rotation(axis, angle):
+    """Rodrigues rotation for a normalized joint axis."""
+    axis = np.asarray(axis, dtype=float)
+    norm = float(np.linalg.norm(axis))
+    if norm < 1e-12:
+        raise ValueError("kinematic joint axis must be non-zero")
+    x, y, z = axis / norm
+    sine, cosine = np.sin(angle), np.cos(angle)
+    one_minus_cosine = 1.0 - cosine
+    return np.array([
+        [cosine + x * x * one_minus_cosine,
+         x * y * one_minus_cosine - z * sine,
+         x * z * one_minus_cosine + y * sine],
+        [y * x * one_minus_cosine + z * sine,
+         cosine + y * y * one_minus_cosine,
+         y * z * one_minus_cosine - x * sine],
+        [z * x * one_minus_cosine - y * sine,
+         z * y * one_minus_cosine + x * sine,
+         cosine + z * z * one_minus_cosine],
+    ])
+
+
+class KinematicTree:
+    """Immutable body/joint/site tree copied from a compiled MJCF model.
+
+    The MuJoCo compiler remains the source of truth for MJCF defaults, nested includes,
+    angles, and asset-independent transforms.  Once copied, site FK and its geometric
+    Jacobian are evaluated directly from this tree without a MuJoCo runtime state.
+    """
+
+    def __init__(self, model):
+        self.nq = int(model.nq)
+        self.qpos0 = np.asarray(model.qpos0, dtype=float).copy()
+        self.bodies = tuple(self._copy_body(model, body_id)
+                            for body_id in range(model.nbody))
+        self.joints = tuple(self._copy_joint(model, joint_id)
+                            for joint_id in range(model.njnt))
+        self.sites = tuple(self._copy_site(model, site_id)
+                           for site_id in range(model.nsite))
+        self.body_by_name = {body.name: body for body in self.bodies if body.name}
+        self.joint_by_name = {joint.name: joint for joint in self.joints if joint.name}
+        self.site_by_name = {site.name: site for site in self.sites if site.name}
+        children_by_body = [[] for _ in self.bodies]
+        for body in self.bodies[1:]:
+            children_by_body[body.parent_id].append(body.id)
+        sites_by_body = [[] for _ in self.bodies]
+        for site in self.sites:
+            sites_by_body[site.body_id].append(site.id)
+        self.children_by_body = tuple(tuple(ids) for ids in children_by_body)
+        self.sites_by_body = tuple(tuple(ids) for ids in sites_by_body)
+        self.site_paths = {
+            site.id: self._body_path(site.body_id) for site in self.sites
+        }
+
+    @staticmethod
+    def _name(model, object_type, object_id):
+        return mujoco.mj_id2name(model, object_type, object_id) or ""
+
+    @classmethod
+    def _copy_body(cls, model, body_id):
+        joint_address = int(model.body_jntadr[body_id])
+        joint_count = int(model.body_jntnum[body_id])
+        joint_ids = (() if joint_count == 0 else
+                     tuple(range(joint_address, joint_address + joint_count)))
+        return KinematicBody(
+            id=body_id,
+            name=cls._name(model, mujoco.mjtObj.mjOBJ_BODY, body_id),
+            parent_id=int(model.body_parentid[body_id]),
+            position=np.asarray(model.body_pos[body_id], dtype=float).copy(),
+            quaternion=normalize_quaternion(model.body_quat[body_id]),
+            joint_ids=joint_ids,
+        )
+
+    @classmethod
+    def _copy_joint(cls, model, joint_id):
+        kind = int(model.jnt_type[joint_id])
+        kind_names = {
+            int(mujoco.mjtJoint.mjJNT_FREE): "free",
+            int(mujoco.mjtJoint.mjJNT_BALL): "ball",
+            int(mujoco.mjtJoint.mjJNT_SLIDE): "slide",
+            int(mujoco.mjtJoint.mjJNT_HINGE): "hinge",
+        }
+        return KinematicJoint(
+            id=joint_id,
+            name=cls._name(model, mujoco.mjtObj.mjOBJ_JOINT, joint_id),
+            body_id=int(model.jnt_bodyid[joint_id]),
+            kind=kind,
+            kind_name=kind_names[kind],
+            qpos_adr=int(model.jnt_qposadr[joint_id]),
+            dof_adr=int(model.jnt_dofadr[joint_id]),
+            position=np.asarray(model.jnt_pos[joint_id], dtype=float).copy(),
+            axis=np.asarray(model.jnt_axis[joint_id], dtype=float).copy(),
+            limited=bool(model.jnt_limited[joint_id]),
+            range=np.asarray(model.jnt_range[joint_id], dtype=float).copy(),
+        )
+
+    @classmethod
+    def _copy_site(cls, model, site_id):
+        return KinematicSite(
+            id=site_id,
+            name=cls._name(model, mujoco.mjtObj.mjOBJ_SITE, site_id),
+            body_id=int(model.site_bodyid[site_id]),
+            position=np.asarray(model.site_pos[site_id], dtype=float).copy(),
+            quaternion=normalize_quaternion(model.site_quat[site_id]),
+        )
+
+    def _body_path(self, body_id):
+        path = []
+        while body_id != 0:
+            path.append(body_id)
+            body_id = self.bodies[body_id].parent_id
+        path.reverse()
+        return tuple(path)
+
+    def _forward_body(self, qpos, body_id):
+        """Propagate one body path and return its world pose plus joint frames."""
+        position = np.zeros(3)
+        rotation = np.eye(3)
+        joint_frames = {}
+        hinge = int(mujoco.mjtJoint.mjJNT_HINGE)
+        slide = int(mujoco.mjtJoint.mjJNT_SLIDE)
+
+        for path_body_id in self._body_path(body_id):
+            body = self.bodies[path_body_id]
+            position = position + rotation @ body.position
+            rotation = rotation @ _rotation_from_quaternion(body.quaternion)
+            for joint_id in body.joint_ids:
+                joint = self.joints[joint_id]
+                axis_world = rotation @ joint.axis
+                anchor_world = position + rotation @ joint.position
+                joint_frames[joint_id] = (joint.kind, axis_world, anchor_world)
+                displacement = qpos[joint.qpos_adr] - self.qpos0[joint.qpos_adr]
+                if joint.kind == slide:
+                    position = position + axis_world * displacement
+                elif joint.kind == hinge:
+                    rotation = rotation @ _axis_rotation(joint.axis, displacement)
+                    position = anchor_world - rotation @ joint.position
+                else:
+                    raise NotImplementedError(
+                        f"body path contains unsupported joint {joint.name!r}; "
+                        "tree kinematics currently supports scalar hinge and slide joints")
+        return position, rotation, joint_frames
+
+    @staticmethod
+    def _point_jacobian_from_frames(point_world, joint_ids, joint_frames):
+        """Build a selected-column translational Jacobian for a world point."""
+        point_world = np.asarray(point_world, dtype=float)
+        jacobian = np.zeros((3, len(joint_ids)))
+        hinge = int(mujoco.mjtJoint.mjJNT_HINGE)
+        slide = int(mujoco.mjtJoint.mjJNT_SLIDE)
+        for column, joint_id in enumerate(joint_ids):
+            frame = joint_frames.get(int(joint_id))
+            if frame is None:
+                continue
+            kind, axis_world, anchor_world = frame
+            if kind == slide:
+                jacobian[:, column] = axis_world
+            elif kind == hinge:
+                jacobian[:, column] = np.cross(
+                    axis_world, point_world - anchor_world)
+        return jacobian
+
+    def point_jacobian(self, qpos, body_id, point_world, joint_ids):
+        """Return the 3xN Jacobian of a body-fixed world point from this tree."""
+        qpos = np.asarray(qpos, dtype=float)
+        if qpos.shape != (self.nq,):
+            raise ValueError(f"expected qpos shape ({self.nq},), got {qpos.shape}")
+        if body_id < 0 or body_id >= len(self.bodies):
+            raise ValueError(f"invalid body id: {body_id}")
+        _, _, joint_frames = self._forward_body(qpos, body_id)
+        return self._point_jacobian_from_frames(
+            point_world, joint_ids, joint_frames)
+
+    def forward_site(self, qpos, site_id, joint_ids):
+        """Return world pose and selected-column geometric Jacobian for one site."""
+        qpos = np.asarray(qpos, dtype=float)
+        if qpos.shape != (self.nq,):
+            raise ValueError(f"expected qpos shape ({self.nq},), got {qpos.shape}")
+        if site_id < 0 or site_id >= len(self.sites):
+            raise ValueError(f"invalid site id: {site_id}")
+
+        site = self.sites[site_id]
+        position, rotation, joint_frames = self._forward_body(qpos, site.body_id)
+        site_position = position + rotation @ site.position
+        site_rotation = rotation @ _rotation_from_quaternion(site.quaternion)
+        jacobian = np.zeros((6, len(joint_ids)))
+        jacobian[:3] = self._point_jacobian_from_frames(
+            site_position, joint_ids, joint_frames)
+        hinge = int(mujoco.mjtJoint.mjJNT_HINGE)
+        for column, joint_id in enumerate(joint_ids):
+            frame = joint_frames.get(int(joint_id))
+            if frame is not None and frame[0] == hinge:
+                jacobian[3:, column] = frame[1]
+        return SiteKinematics(
+            position=site_position,
+            quaternion=_quaternion_from_rotation(site_rotation),
+            jacobian=jacobian,
+        )
+
+
+def collision_distance_gradient(model, data, pair, tree, joint_ids, max_distance):
     """Return a Cyclo-style signed distance gradient, or ``None`` when far away.
 
-    MuJoCo supplies the closest points while ``mj_jac`` supplies their translational
+    MuJoCo supplies geometry closest points; :class:`KinematicTree` supplies both point
     Jacobians.  For separated geometry the derivative is
 
     ``n.T @ (J_b - J_a)``, where ``n`` points from A to B.  MuJoCo reverses the closest
@@ -111,10 +396,11 @@ def collision_distance_gradient(model, data, pair, dof_ids, max_distance):
     """
     max_distance = max(float(max_distance), 0.0)
     if pair.mode == "table_top":
-        return _table_top_distance_gradient(model, data, pair, dof_ids, max_distance)
+        return _table_top_distance_gradient(
+            model, data, pair, tree, joint_ids, max_distance)
     if pair.mode == "bounding_sphere":
         return _bounding_sphere_distance_gradient(
-            model, data, pair, dof_ids, max_distance)
+            model, data, pair, tree, joint_ids, max_distance)
     fromto = np.zeros(6)
     raw_distance = float(mujoco.mj_geomDistance(
         model, data, pair.geom_a, pair.geom_b, max_distance, fromto))
@@ -145,11 +431,9 @@ def collision_distance_gradient(model, data, pair, dof_ids, max_distance):
 
     body_a = int(model.geom_bodyid[pair.geom_a])
     body_b = int(model.geom_bodyid[pair.geom_b])
-    jacobian_a = np.zeros((3, model.nv))
-    jacobian_b = np.zeros((3, model.nv))
-    mujoco.mj_jac(model, data, jacobian_a, None, point_a, body_a)
-    mujoco.mj_jac(model, data, jacobian_b, None, point_b, body_b)
-    gradient = normal @ (jacobian_b[:, dof_ids] - jacobian_a[:, dof_ids])
+    jacobian_a = tree.point_jacobian(data.qpos, body_a, point_a, joint_ids)
+    jacobian_b = tree.point_jacobian(data.qpos, body_b, point_b, joint_ids)
+    gradient = normal @ (jacobian_b - jacobian_a)
     if raw_distance < 0.0:
         gradient *= -1.0
     if not np.isfinite(distance) or not np.isfinite(gradient).all():
@@ -237,7 +521,7 @@ def default_collision_pairs(model):
     return tuple(pairs.values())
 
 
-def _table_top_distance_gradient(model, data, pair, dof_ids, max_distance):
+def _table_top_distance_gradient(model, data, pair, tree, joint_ids, max_distance):
     """Stable support-point clearance above the finite table top.
 
     MuJoCo 3.10's generic convex distance occasionally jumps between zero and the correct
@@ -275,22 +559,18 @@ def _table_top_distance_gradient(model, data, pair, dof_ids, max_distance):
     if distance > max_distance:
         return None
 
-    jacobian_robot = np.zeros((3, model.nv))
-    jacobian_table = np.zeros((3, model.nv))
-    mujoco.mj_jac(
-        model, data, jacobian_robot, None, point_robot,
-        int(model.geom_bodyid[robot_geom]))
-    mujoco.mj_jac(
-        model, data, jacobian_table, None, point_table,
-        int(model.geom_bodyid[table_geom]))
-    gradient = table_normal @ (
-        jacobian_robot[:, dof_ids] - jacobian_table[:, dof_ids])
+    jacobian_robot = tree.point_jacobian(
+        data.qpos, int(model.geom_bodyid[robot_geom]), point_robot, joint_ids)
+    jacobian_table = tree.point_jacobian(
+        data.qpos, int(model.geom_bodyid[table_geom]), point_table, joint_ids)
+    gradient = table_normal @ (jacobian_robot - jacobian_table)
     return CollisionConstraint(
         pair.name, distance, np.asarray(gradient, dtype=float),
         point_robot.copy(), point_table.copy())
 
 
-def _bounding_sphere_distance_gradient(model, data, pair, dof_ids, max_distance):
+def _bounding_sphere_distance_gradient(model, data, pair, tree, joint_ids,
+                                       max_distance):
     """Continuous conservative distance for the palm-box/palm-box pair."""
     geom_a, geom_b = pair.geom_a, pair.geom_b
     rotation_a = data.geom_xmat[geom_a].reshape(3, 3)
@@ -309,13 +589,11 @@ def _bounding_sphere_distance_gradient(model, data, pair, dof_ids, max_distance)
     if distance > max_distance:
         return None
 
-    jacobian_a = np.zeros((3, model.nv))
-    jacobian_b = np.zeros((3, model.nv))
-    mujoco.mj_jac(
-        model, data, jacobian_a, None, center_a, int(model.geom_bodyid[geom_a]))
-    mujoco.mj_jac(
-        model, data, jacobian_b, None, center_b, int(model.geom_bodyid[geom_b]))
-    gradient = normal @ (jacobian_b[:, dof_ids] - jacobian_a[:, dof_ids])
+    jacobian_a = tree.point_jacobian(
+        data.qpos, int(model.geom_bodyid[geom_a]), center_a, joint_ids)
+    jacobian_b = tree.point_jacobian(
+        data.qpos, int(model.geom_bodyid[geom_b]), center_b, joint_ids)
+    gradient = normal @ (jacobian_b - jacobian_a)
     return CollisionConstraint(
         pair.name, float(distance), np.asarray(gradient, dtype=float),
         center_a + radius_a * normal, center_b - radius_b * normal)
@@ -332,46 +610,180 @@ def _contact_normal(data, geom_a, geom_b):
     return None
 
 
+DEFAULT_DAMPING = 0.05
+DEFAULT_MAX_JOINT_DELTA = 0.05
+DEFAULT_MAX_ITER = 50
+POSITION_TOLERANCE = 1e-4
+ORIENTATION_TOLERANCE = 1e-3
+
+
 class KinematicsSolver:
-    """Scratch-state FK/Jacobian evaluator that never mutates live simulation data."""
+    """MJCF-tree FK, geometric Jacobian, and damped least-squares IK solver."""
 
-    def __init__(self, model, site_name, joint_names):
+    def __init__(self, model, site_name, joint_names, damping=DEFAULT_DAMPING,
+                 max_joint_delta=DEFAULT_MAX_JOINT_DELTA, *, tree=None):
         self.model = model
-        self.site_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, site_name)
-        self.joint_ids = np.array([
-            mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
-            for name in joint_names
-        ], dtype=int)
-        if self.site_id < 0 or np.any(self.joint_ids < 0):
-            raise ValueError("kinematics solver references a site or joint absent from the model")
-        self.dof_ids = np.array([model.jnt_dofadr[jid] for jid in self.joint_ids], dtype=int)
-        self.qpos_adrs = np.array([model.jnt_qposadr[jid] for jid in self.joint_ids], dtype=int)
-        self.joint_ranges = np.array([model.jnt_range[jid] for jid in self.joint_ids], dtype=float)
-        self.joint_limited = np.array(
-            [bool(model.jnt_limited[jid]) for jid in self.joint_ids])
-        self.data = mujoco.MjData(model)
+        self.tree = KinematicTree(model) if tree is None else tree
+        try:
+            site = self.tree.site_by_name[site_name]
+            joints = tuple(self.tree.joint_by_name[name] for name in joint_names)
+        except KeyError as error:
+            raise ValueError(
+                f"kinematics solver references a site or joint absent from the model: "
+                f"{error.args[0]!r}") from error
+        unsupported = [joint.name for joint in joints if joint.kind not in (
+            int(mujoco.mjtJoint.mjJNT_HINGE), int(mujoco.mjtJoint.mjJNT_SLIDE))]
+        if unsupported:
+            raise ValueError(
+                "controlled joints must be scalar hinge/slide joints: "
+                + ", ".join(unsupported))
+        if len({joint.id for joint in joints}) != len(joints):
+            raise ValueError("controlled joint names must be unique")
 
-    def update(self, q, context_qpos=None):
-        """Update the private scratch state and return its site FK/Jacobian result."""
+        self.site_name = site_name
+        self.joint_names = tuple(joint_names)
+        self.site_id = site.id
+        self.joint_ids = np.array([joint.id for joint in joints], dtype=int)
+        self.dof_ids = np.array([joint.dof_adr for joint in joints], dtype=int)
+        self.qpos_adrs = np.array([joint.qpos_adr for joint in joints], dtype=int)
+        self.joint_ranges = np.array([joint.range for joint in joints], dtype=float)
+        self.joint_limited = np.array([joint.limited for joint in joints], dtype=bool)
+        self.damping = float(damping)
+        self.max_joint_delta = float(max_joint_delta)
+        self.n = len(joints)
+        if self.damping <= 0.0 or self.max_joint_delta <= 0.0:
+            raise ValueError("damping and max_joint_delta must be positive")
+
+    @classmethod
+    def from_mjcf(cls, path, site_name, joint_names, **kwargs):
+        """Compile an MJCF file, parse its kinematic tree, and construct a solver."""
+        model = mujoco.MjModel.from_xml_path(str(Path(path)))
+        return cls(model, site_name, joint_names, **kwargs)
+
+    def _configuration(self, q, context_qpos=None):
         q = np.asarray(q, dtype=float)
-        if q.shape != self.qpos_adrs.shape:
-            raise ValueError(f"expected {len(self.qpos_adrs)} joint positions, got {q.shape}")
-        mujoco.mj_resetData(self.model, self.data)
-        if context_qpos is not None:
+        if q.shape != (self.n,):
+            raise ValueError(f"expected {self.n} joint positions, got {q.shape}")
+        if context_qpos is None:
+            qpos = self.tree.qpos0.copy()
+        else:
             context = np.asarray(context_qpos, dtype=float)
-            if context.shape != self.data.qpos.shape:
+            if context.shape != (self.tree.nq,):
                 raise ValueError(
-                    f"expected context_qpos shape {self.data.qpos.shape}, got {context.shape}")
-            self.data.qpos[:] = context
-        bounded_q = q.copy()
-        bounded_q[self.joint_limited] = np.clip(
-            bounded_q[self.joint_limited],
-            self.joint_ranges[self.joint_limited, 0],
-            self.joint_ranges[self.joint_limited, 1])
-        self.data.qpos[self.qpos_adrs] = bounded_q
-        mujoco.mj_forward(self.model, self.data)
-        return evaluate_site(self.model, self.data, self.site_id, self.dof_ids)
+                    f"expected context_qpos shape ({self.tree.nq},), got {context.shape}")
+            qpos = context.copy()
+        qpos[self.qpos_adrs] = self._clamp_to_limits(q)
+        return qpos
 
     def forward(self, q, context_qpos=None):
-        """Compute a site pose and Jacobian without exposing the mutable scratch buffer."""
-        return self.update(q, context_qpos)
+        """Compute site FK and a 6xN world-aligned Jacobian from the parsed tree."""
+        return self.tree.forward_site(
+            self._configuration(q, context_qpos), self.site_id, self.joint_ids)
+
+    def forward_kinematics(self, q, context_qpos=None):
+        """Compatibility name used by the phase tests and older callers."""
+        return self.forward(q, context_qpos)
+
+    def _clamp_to_limits(self, q):
+        result = np.asarray(q, dtype=float).copy()
+        result[self.joint_limited] = np.clip(
+            result[self.joint_limited],
+            self.joint_ranges[self.joint_limited, 0],
+            self.joint_ranges[self.joint_limited, 1])
+        return result
+
+    @staticmethod
+    def _pose_error(state, target_position, target_quaternion):
+        position_error = np.asarray(target_position, dtype=float) - state.position
+        orientation_error = shortest_orientation_error(
+            target_quaternion, state.quaternion)
+        return position_error, orientation_error
+
+    def solve_pose(self, q_init, target_pos, target_quat, max_iter=DEFAULT_MAX_ITER,
+                   pos_tol=POSITION_TOLERANCE, ori_tol=ORIENTATION_TOLERANCE,
+                   ori_weight=0.3, context_qpos=None):
+        """Solve a pose with position-priority DLS and backtracking line search.
+
+        Position is solved first.  Orientation correction is projected away from the
+        position task, then every candidate step is evaluated through :meth:`forward`.
+        Returns ``(q_solution, position_error_norm, orientation_error_norm_radians)``.
+        """
+        q = self._clamp_to_limits(np.asarray(q_init, dtype=float))
+        if q.shape != (self.n,):
+            raise ValueError(f"expected {self.n} initial joint positions, got {q.shape}")
+        state = self.forward(q, context_qpos)
+        position_error, orientation_error = self._pose_error(
+            state, target_pos, target_quat)
+        position_norm = float(np.linalg.norm(position_error))
+        orientation_norm = float(np.linalg.norm(orientation_error))
+        damping_squared = self.damping ** 2
+
+        for _ in range(max(0, int(max_iter))):
+            if position_norm < pos_tol and orientation_norm < ori_tol:
+                break
+            position_jacobian = state.jacobian[:3]
+            rotation_jacobian = state.jacobian[3:]
+            position_system = (
+                position_jacobian @ position_jacobian.T
+                + damping_squared * np.eye(3))
+
+            position_delta = position_jacobian.T @ np.linalg.solve(
+                position_system, position_error)
+            orientation_gradient = rotation_jacobian.T @ orientation_error
+            projected_gradient = np.linalg.solve(
+                position_system, position_jacobian @ orientation_gradient)
+            orientation_delta = (
+                orientation_gradient - position_jacobian.T @ projected_gradient)
+            full_delta = np.clip(
+                position_delta + orientation_delta,
+                -self.max_joint_delta, self.max_joint_delta)
+
+            current_cost = position_norm + ori_weight * orientation_norm
+            best = None
+            step = 1.0
+            for _ in range(6):
+                candidate_q = self._clamp_to_limits(q + step * full_delta)
+                candidate_state = self.forward(candidate_q, context_qpos)
+                candidate_position_error, candidate_orientation_error = self._pose_error(
+                    candidate_state, target_pos, target_quat)
+                candidate_position_norm = float(
+                    np.linalg.norm(candidate_position_error))
+                candidate_orientation_norm = float(
+                    np.linalg.norm(candidate_orientation_error))
+                cost = (candidate_position_norm
+                        + ori_weight * candidate_orientation_norm)
+                if best is None or cost < best[0]:
+                    best = (cost, candidate_q, candidate_state,
+                            candidate_position_error, candidate_orientation_error,
+                            candidate_position_norm, candidate_orientation_norm)
+                if cost < current_cost:
+                    break
+                step *= 0.5
+
+            (_, q, state, position_error, orientation_error,
+             position_norm, orientation_norm) = best
+        return q, position_norm, orientation_norm
+
+    def solve_pose_multistart(self, q_init, target_pos, target_quat, rng, n_restarts=8,
+                              max_iter=250, success_pos_tol=0.005,
+                              success_ori_tol=np.radians(5), context_qpos=None):
+        """Retry pose IK from random valid configurations to escape local minima."""
+        initial = np.asarray(q_init, dtype=float)
+        if initial.shape != (self.n,):
+            raise ValueError(f"expected {self.n} initial joint positions, got {initial.shape}")
+        lower = np.where(self.joint_limited, self.joint_ranges[:, 0], initial - np.pi)
+        upper = np.where(self.joint_limited, self.joint_ranges[:, 1], initial + np.pi)
+        candidates = [initial]
+        candidates.extend(rng.uniform(lower, upper) for _ in range(max(0, int(n_restarts))))
+        best = None
+        for candidate in candidates:
+            q, position_error, orientation_error = self.solve_pose(
+                candidate, target_pos, target_quat, max_iter=max_iter,
+                context_qpos=context_qpos)
+            if (position_error < success_pos_tol
+                    and orientation_error < success_ori_tol):
+                return q, position_error, orientation_error, True
+            if (best is None
+                    or position_error + orientation_error < best[1] + best[2]):
+                best = (q, position_error, orientation_error)
+        return best[0], best[1], best[2], False

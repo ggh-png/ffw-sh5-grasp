@@ -145,7 +145,7 @@ wheel controller를 사용하지 않는다.
 | node/topic/action | 한 프로세스의 명시적 함수 호출과 app state |
 | tf2 | `teleop_targets.py`의 NumPy/quaternion 변환 |
 | MoveIt Servo/IK | `whole_body_ik.py` + `kinematics.py` |
-| collision checker | MuJoCo geom distance + Jacobian CBF |
+| collision checker | MuJoCo geom distance + 자체 점 Jacobian CBF |
 | `twist_mux` | `teleop_app.py`의 keyboard/WBIK arbitration |
 | swerve controller plugin | `base_teleop.py` |
 | `ros2_control` | MuJoCo actuator `data.ctrl` |

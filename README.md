@@ -7,7 +7,7 @@ collision avoidance를 하나의 Python 앱에서 실행합니다.
 [![demo video](https://img.youtube.com/vi/2LV_RsAGdz8/hqdefault.jpg)](https://www.youtube.com/watch?v=2LV_RsAGdz8)
 
 [문서 사이트](https://ggh-png.github.io/ffw-sh5-grasp/) ·
-[1.1.1 릴리스](https://github.com/ggh-png/ffw-sh5-grasp/releases/tag/1.1.1)
+[1.2.0 릴리스](https://github.com/ggh-png/ffw-sh5-grasp/releases/tag/1.2.0)
 
 ## 먼저 읽을 문서
 
@@ -24,12 +24,14 @@ collision avoidance를 하나의 Python 앱에서 실행합니다.
 
 - FFW-SH5 전신: 양팔 7DOF×2, HX5-D20 양손, 리프트, 헤드, 3모듈 스워브 베이스
 - Whole-body IK: base x/y/yaw + lift + 양팔 14축 bounded differential solve
+- Custom kinematics: MJCF body–joint–site 트리에서 FK와 geometric Jacobian 직접 계산
 - **Whole-body ON/OFF**: world target을 보존하며 전신 IK와 arm-only hard gate 전환
 - Bimanual MoveL: virtual object와 captured rigid-grasp relative-pose constraint
 - Collision avoidance: 팔-팔·팔-몸체·팔/손-table 3 cm 감시, 1 cm safe-distance CBF
 - 실제 mobile physics: steer/drive actuator와 wheel-ground friction으로만 base 이동
 - Contact grasp: 캔을 로봇에 붙이지 않고 finger contact force와 마찰로 파지
 - ROS-free: MoveIt, Pinocchio, FCL, OSQP 없이 NumPy + MuJoCo 알고리즘 구현
+- Compact multi-viewport UI: Control Center와 Diagnostics를 별도 OS 창·내부 탭으로 제공
 - Headless regression: Phase 0–6, randomized WBIK, collision gradient, 실제 바퀴 추종
 
 ## 빠른 실행
