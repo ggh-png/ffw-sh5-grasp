@@ -152,12 +152,12 @@ multi-viewport에서는 ImGui draw list가 desktop 절대 좌표를 사용한다
 기능별 `imgui.begin()`만 나누면 창이 너무 많아지고 주 GLFW 영역 밖으로도 나갈 수 없다.
 그래서 `teleop_render.setup_render()`가 ImGui `viewports_enable`을 켜고 네이티브
 GLFW/OpenGL3 backend를 초기화한다. `teleop_ui.draw_panel()`은 상태 창은 주 viewport에
-남기고, 관련 기능을 탭으로 합친 `Control Center`와 `Diagnostics` 두 창만 첫 프레임에
-주 창 오른쪽 바깥으로 배치한다.
+남기고, `Control Center`, `Diagnostics`, `Camera Feeds`, `Joint Control` 네 창을
+첫 프레임에 주 창 오른쪽 바깥으로 배치한다.
 
 ```mermaid
 flowchart LR
-    U["teleop_ui.draw_panel<br>두 tabbed workspace"] --> D{"배치 요청"}
+    U["teleop_ui.draw_panel<br>네 workspace"] --> D{"배치 요청"}
     D -->|Detach| O["주 viewport 오른쪽<br>desktop 좌표 지정"]
     D -->|Return| I["주 viewport 내부<br>상대 좌표 지정"]
     O --> P["update_platform_windows<br>별도 GLFW OS 창 생성"]

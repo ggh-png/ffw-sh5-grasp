@@ -1,7 +1,8 @@
 # `src/teleop_ui.py`
 
 ImGui 기반 텔레옵 UI를 그린다. 자주 쓰는 조작은 `Control Center`, 읽기 중심 도구는
-`Diagnostics` 탭으로 묶는다. 두 워크스페이스만 **네이티브 OS 창**으로 분리되므로
+`Diagnostics` 탭으로 묶고, camera feed와 direct joint control은 독립 workspace로
+둔다. 네 워크스페이스는 **네이티브 OS 창**으로 분리되므로
 메인 MuJoCo 창 밖으로 이동할 수 있으면서 작업 표시줄과 화면은 복잡해지지 않는다.
 
 MoveL/Bimanual MoveL 상태 전이 안에서 이 패널이 맡는 위치는
@@ -15,7 +16,7 @@ MoveL/Bimanual MoveL 상태 전이 안에서 이 패널이 맡는 위치는
 | 출력 | `app.targets`, mode, marker 선택, 버튼 상태 변경 |
 | 직접 물리 계산 | 없음 |
 | 렌더링 | ImGui widget만 담당 |
-| 창 상태 | `app.ui_windows`에 두 워크스페이스 표시 여부 저장 |
+| 창 상태 | `app.ui_windows`에 네 워크스페이스 표시 여부 저장 |
 
 ## 주요 함수
 
@@ -44,25 +45,29 @@ MoveL/Bimanual MoveL 상태 전이 안에서 이 패널이 맡는 위치는
 | `_draw_can_grasp_panel(app, targets)` | grasp/thumb synergy 패널 |
 | `_draw_lift_utils_panel(app, targets)` | 전신 ON/OFF, lift/reset/contact/collision/camera 패널 |
 | `_draw_joint_monitor(app, data)` | 관절 위치 monitor |
+| `_draw_camera_feeds(app)` | 머리/양손목 RGB texture를 동시에 표시 |
+| `_draw_joint_control(app)` | actuator-backed joint의 독점 direct-control GUI |
 | `kinematic_tree_body_ids(app, scope, show_full)` | 오른팔/왼팔 target의 조상 body 또는 전체 body id 선택 |
 | `_draw_kinematic_tree(app)` | body 아래 joint/site를 중첩한 실시간 기구학 트리 렌더링 |
 | `_draw_window_visibility(app)` | 표시 여부와 **Detach/Return** 배치 버튼 렌더링 |
 | `_draw_tab(label, draw_contents)` | 선택된 tab 내용만 렌더링 |
 | `_draw_control_center(app, targets)` | Target·양팔·Robot/Grasp 탭 구성 |
 | `_draw_diagnostics(app, data)` | Kinematic Tree·Joint Monitor 탭 구성 |
-| `draw_panel(app)` | 두 워크스페이스의 frame entry point |
+| `draw_panel(app)` | 네 워크스페이스의 frame entry point |
 
 ## 함수 흐름
 
 ```mermaid
 flowchart TD
-    A["teleop_app._draw_ui_panel<br>앱에서 UI 렌더링 진입"] --> B["draw_panel(app)<br>두 workspace 구성"]
+    A["teleop_app._draw_ui_panel<br>앱에서 UI 렌더링 진입"] --> B["draw_panel(app)<br>네 workspace 구성"]
     B --> C["Status & Windows<br>FPS/solver 상태 + 창 표시 관리"]
     B --> W["Control Center<br>운영자가 자주 쓰는 조작"]
     W --> D["Target tab<br>MoveL/Bimanual marker 제어"]
     W --> E["Right / Left Arm tabs<br>팔별 IK/FK 조작"]
     W --> F["Robot / Grasp tab<br>lift · utility · synergy"]
     B --> X["Diagnostics<br>읽기 중심 도구"]
+    B --> CAM["Camera Feeds<br>머리/양손목 RGB"]
+    B --> JCTL["Joint Control<br>59 actuator-backed joints"]
     X --> G["Joint Monitor tab<br>현재 관절값"]
     X --> H["Kinematic Tree tab<br>body → joint/site 계층"]
 
@@ -85,15 +90,17 @@ FFW-SH5 Status & Windows       항상 표시되는 상태/창 관리자
 │   ├── Target                 MoveL, capture/release, jog
 │   ├── Right / Left Arm       팔별 IK pose 또는 FK joint
 │   └── Robot / Grasp          전신·lift·시각화·손가락
-└── FFW-SH5 Diagnostics        기본 표시
-    ├── Kinematic Tree         world → body → joint/site
-    └── Joint Monitor          현재 관절값
+├── FFW-SH5 Diagnostics        기본 표시
+│   ├── Kinematic Tree         world → body → joint/site
+│   └── Joint Monitor          현재 관절값
+├── FFW-SH5 Camera Feeds       머리/양손목 RGB 동시 표시
+└── FFW-SH5 Joint Control      그룹별 direct joint slider
 ```
 
-첫 프레임에는 상태 창만 MuJoCo 주 창 안에 남고 두 워크스페이스는 주 창 오른쪽
+첫 프레임에는 상태 창만 MuJoCo 주 창 안에 남고 네 워크스페이스는 주 창 오른쪽
 바깥에 생성된다. 각 창을 다른 모니터로 옮길 수 있다. **Detach tools
 outside**는 현재 배치 파일과 관계없이 다시 외부로 내보내고, **Return tools to main**은
-두 워크스페이스를 주 창 안 기본 위치로 되돌린다.
+네 워크스페이스를 주 창 안 기본 위치로 되돌린다.
 
 각 워크스페이스 오른쪽 위 `×`로 닫아도 상태 창의 **Workspaces** 체크박스로 다시 열
 수 있다. **Show all**, **Control only**, **Hide all**은 표시 상태를 일괄 변경하며 창의
@@ -113,7 +120,7 @@ finger, 물체를 포함한 전체 모델 트리를 탐색한다.
 
 ## 데이터 변경 원칙
 
-- UI는 `app.targets`와 app 상태만 바꾼다.
+- UI는 `app.targets`, `app.direct_joint_targets`와 app mode 상태만 바꾼다.
 - `mj_step`, IK solve, actuator command는 수행하지 않는다.
 - 실제 반영은 `teleop_app.py`의 `_step_physics()`에서 한다.
 - **Whole-body Control** 버튼은 `toggle_whole_body_control()`을 호출하고 상태줄에는

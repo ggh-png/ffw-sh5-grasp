@@ -408,6 +408,11 @@
               <joint name="head_joint2" class="head_joint2"/>
               <geom type="mesh" mesh="head_link2" material="white" class="visual"/>
               <geom type="mesh" mesh="head_link2" class="collision"/>
+              <!-- RGB viewpoint mounted at the front of the pan/tilt head.  MuJoCo
+                   cameras look down their local -Z axis; this basis points -Z along
+                   the robot's +X (forward) direction and keeps world +Z image-up. -->
+              <camera name="head_camera" pos="0.066 0 0"
+                      xyaxes="0 -1 0  0 0 1" fovy="70"/>
             </body>
           </body>
 
@@ -454,6 +459,10 @@
                         <geom type="mesh" mesh="arm_l_link7" material="black" class="visual"/>
                         <geom type="mesh" mesh="arm_l_link7" class="collision"/>
                         <geom size="0.0115 0.021 0.021" pos="0.107944 0 -0.065588" quat="0.475435 -0.475435 0.523413 0.523413" type="box"/>
+                        <!-- Wrist camera: mounted just in front of the existing camera
+                             housing so the housing itself does not occlude the image. -->
+                        <camera name="left_hand_camera" pos="0.107944 0 -0.078"
+                                xyaxes="0 -1 0  1 0 0" fovy="75"/>
 
                         <!-- Left hand (HX5-D20) -->
                         <body name="hx5_l_base" pos="0 0 -0.078" quat="0 -0.7071068 0.7071068 0">
@@ -643,6 +652,8 @@
                         <geom type="mesh" mesh="arm_r_link7" material="black" class="visual"/>
                         <geom type="mesh" mesh="arm_r_link7" class="collision"/>
                         <geom size="0.0115 0.021 0.021" pos="0.107944 0 -0.065588" quat="0.475435 -0.475435 0.523413 0.523413" type="box"/>
+                        <camera name="right_hand_camera" pos="0.107944 0 -0.078"
+                                xyaxes="0 -1 0  1 0 0" fovy="75"/>
 
                         <!-- Right hand (HX5-D20) -->
                         <body name="hx5_r_base" pos="0 0 -0.078" quat="0 0.7071068 0.7071068 0">

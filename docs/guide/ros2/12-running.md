@@ -13,7 +13,7 @@
 손으로 조작해볼 때는 그 문서를 펼쳐두는 걸 권장한다.
 
 ```bash
-pip install --break-system-packages mujoco numpy trimesh pillow glfw imgui-bundle
+pip install --break-system-packages mujoco numpy trimesh pillow glfw imgui-bundle PyOpenGL
 python3 src/teleop_app.py
 ```
 

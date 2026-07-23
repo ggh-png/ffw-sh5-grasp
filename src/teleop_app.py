@@ -24,7 +24,7 @@ Mouse: left-drag orbit, right-drag pan, scroll zoom (standard MuJoCo camera cont
 Keyboard: Up/Down = base forward/back (robot-local), Left/Right = base yaw,
 [ / ] = base strafe left/right, Q/E = lift down/up, R = reset can (+-2cm random),
 G = toggle contact force/point visualization, V = toggle collision geometry/CBF visualization,
-C = cycle camera preset (overview / right-hand close-up). R/G/V/C also have
+C = cycle camera preset (two external views / head / left hand / right hand). R/G/V/C also have
 buttons in the on-screen tool windows.
 
 """
@@ -238,6 +238,7 @@ class TeleopApp:
             name: model.jnt_range[joint_id]
             for name, joint_id in monitor_joint_ids.items()
         }
+        self._setup_direct_joint_control()
         self.rng = np.random.default_rng()
 
         self.ik_target_mocap_ids = {
@@ -382,8 +383,103 @@ class TeleopApp:
         self.model.geom_rgba[gid][3] = 0.0
 
     def cycle_camera(self):
-        self.camera_preset = 1 - self.camera_preset
-        teleop_render.set_camera_preset(self.cam, self.camera_preset)
+        self.camera_preset = (self.camera_preset + 1) % len(teleop_render.CAMERA_PRESETS)
+        teleop_render.set_camera_preset(self.model, self.cam, self.camera_preset)
+
+    @property
+    def camera_preset_label(self):
+        return teleop_render.camera_preset_label(self.camera_preset)
+
+    def _setup_direct_joint_control(self):
+        """Describe every actuator-backed joint for the exclusive direct-control GUI."""
+        specs = []
+        for actuator_id in range(self.model.nu):
+            if self.model.actuator_trntype[actuator_id] != mujoco.mjtTrn.mjTRN_JOINT:
+                continue
+            joint_id = int(self.model.actuator_trnid[actuator_id, 0])
+            joint_name = mujoco.mj_id2name(
+                self.model, mujoco.mjtObj.mjOBJ_JOINT, joint_id)
+            actuator_name = mujoco.mj_id2name(
+                self.model, mujoco.mjtObj.mjOBJ_ACTUATOR, actuator_id)
+            if joint_name.startswith("arm_l_"):
+                group, command = "Left arm", "arm_position"
+            elif joint_name.startswith("arm_r_"):
+                group, command = "Right arm", "arm_position"
+            elif joint_name.startswith("finger_l_"):
+                group, command = "Left hand", "position"
+            elif joint_name.startswith("finger_r_"):
+                group, command = "Right hand", "position"
+            elif joint_name.startswith("head_") or joint_name == "lift_joint":
+                group, command = "Head / Lift", "position"
+            else:
+                group = "Mobile base"
+                command = "velocity" if actuator_name.endswith("_drive") else "position"
+
+            qpos_adr = int(self.model.jnt_qposadr[joint_id])
+            dof_adr = int(self.model.jnt_dofadr[joint_id])
+            if command == "velocity":
+                lower, upper = map(float, self.model.actuator_ctrlrange[actuator_id])
+            else:
+                lower, upper = map(float, self.model.jnt_range[joint_id])
+            specs.append({
+                "name": joint_name,
+                "actuator_id": actuator_id,
+                "joint_id": joint_id,
+                "qpos_adr": qpos_adr,
+                "dof_adr": dof_adr,
+                "group": group,
+                "command": command,
+                "joint_type": int(self.model.jnt_type[joint_id]),
+                "is_hinge": self.model.jnt_type[joint_id] == mujoco.mjtJoint.mjJNT_HINGE,
+                "range": (lower, upper),
+            })
+        self.direct_joint_specs = tuple(specs)
+        self.direct_joint_targets = {}
+        self.joint_control_enabled = False
+        self.sync_direct_joint_targets()
+
+    def sync_direct_joint_targets(self, home=False):
+        """Capture a jump-free current pose, or load the model's home pose."""
+        key_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_KEY, "home")
+        home_qpos = self.model.key_qpos[key_id]
+        for spec in self.direct_joint_specs:
+            if spec["command"] == "velocity":
+                target = 0.0
+            elif home:
+                target = float(home_qpos[spec["qpos_adr"]])
+            else:
+                target = float(self.data.qpos[spec["qpos_adr"]])
+            self.direct_joint_targets[spec["name"]] = target
+
+    def set_joint_control_enabled(self, enabled):
+        enabled = bool(enabled)
+        if enabled == self.joint_control_enabled:
+            return
+        if enabled:
+            self.sync_direct_joint_targets()
+            self.base_drive.base.reset_motion()
+            self._manual_override_active = False
+        else:
+            # Return to the normal stack without an arm/lift target jump.  Both arms
+            # hand over in FK at their measured pose; the operator can explicitly
+            # switch either arm back to IK afterward.
+            for side in SIDES:
+                joint_names = ARM_JOINTS[side]
+                current = np.array([
+                    self.data.qpos[_joint_address(
+                        self.model, name, self.model.jnt_qposadr)]
+                    for name in joint_names
+                ])
+                if side == "r":
+                    self.q_des_r = current.copy()
+                else:
+                    self.q_des_l = current.copy()
+                self.arm_mode[side] = "fk"
+                self.fk_q_deg[side] = np.degrees(current).tolist()
+            self.targets["lift"] = float(self.data.qpos[
+                _joint_address(self.model, "lift_joint", self.model.jnt_qposadr)])
+            self.lift_cmd = self.targets["lift"]
+        self.joint_control_enabled = enabled
 
     def toggle_collision_visualization(self):
         self.collision_viz = not self.collision_viz
@@ -689,6 +785,22 @@ class TeleopApp:
     def _step_actuators(self, wheel_commands):
         """Apply the current command set throughout one rendered frame."""
         data = self.data
+        if self.joint_control_enabled:
+            q_direct = {
+                side: np.array([
+                    self.direct_joint_targets[name] for name in ARM_JOINTS[side]
+                ])
+                for side in SIDES
+            }
+            for _ in range(self.steps_per_frame):
+                self.ctrl_r.apply(data, q_direct["r"])
+                self.ctrl_l.apply(data, q_direct["l"])
+                for spec in self.direct_joint_specs:
+                    if spec["command"] == "arm_position":
+                        continue
+                    data.ctrl[spec["actuator_id"]] = self.direct_joint_targets[spec["name"]]
+                mujoco.mj_step(self.model, data)
+            return
         for _ in range(self.steps_per_frame):
             self.ctrl_r.apply(data, self.q_des_r)
             self.ctrl_l.apply(data, self.q_des_l)
@@ -711,6 +823,14 @@ class TeleopApp:
         팔 torque/lift position/swerve/grasp actuator ctrl -> ``mj_step``. Solver는 live
         qpos를 읽기만 하며, robot qpos를 직접 쓰는 kinematic override는 없다."""
         data = self.data
+        if self.joint_control_enabled:
+            self.whole_body_base_twist = base_teleop.BodyTwist()
+            self.commanded_base_twist = base_teleop.BodyTwist()
+            self.collision_active_pairs = ()
+            self.collision_min_distance = math.inf
+            self.collision_constraint_violation = 0.0
+            self._step_actuators({})
+            return
         (
             steering_positions,
             wheel_velocities,

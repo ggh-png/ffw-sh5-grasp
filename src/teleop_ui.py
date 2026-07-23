@@ -33,6 +33,18 @@ UI_WINDOW_SPECS = {
         "size": (650, 390),
         "visible": True,
     },
+    "cameras": {
+        "title": "FFW-SH5 Camera Feeds",
+        "position": (10, 40),
+        "size": (1020, 315),
+        "visible": True,
+    },
+    "joints": {
+        "title": "FFW-SH5 Joint Control",
+        "position": (500, 40),
+        "size": (520, 720),
+        "visible": True,
+    },
 }
 
 
@@ -50,16 +62,18 @@ def _ensure_window_state(app):
     if not hasattr(app, "ui_windows") or set(app.ui_windows) != set(UI_WINDOW_SPECS):
         previous = getattr(app, "ui_windows", {})
         app.ui_windows = {
-            "control": any(previous.get(key, False)
-                           for key in ("control", "marker", "right_arm",
-                                       "left_arm", "robot")),
-            "diagnostics": any(previous.get(key, False)
-                               for key in ("diagnostics", "joints", "tree")),
+            key: bool(previous.get(key, spec["visible"]))
+            for key, spec in UI_WINDOW_SPECS.items()
         }
-        if not previous:
-            app.ui_windows = {
-                key: spec["visible"] for key, spec in UI_WINDOW_SPECS.items()
-            }
+        # Migrate layouts from the older many-window UI without confusing its old
+        # "joints" diagnostics key with the new direct Joint Control workspace.
+        if previous and "control" not in previous:
+            app.ui_windows["control"] = any(previous.get(key, False)
+                for key in ("marker", "right_arm", "left_arm", "robot"))
+        if previous and "diagnostics" not in previous:
+            app.ui_windows["diagnostics"] = any(previous.get(key, False)
+                for key in ("tree", "joints"))
+            app.ui_windows["joints"] = UI_WINDOW_SPECS["joints"]["visible"]
     if not hasattr(app, "kinematic_tree_scope"):
         app.kinematic_tree_scope = "both"
     if not hasattr(app, "kinematic_tree_show_full"):
@@ -298,6 +312,9 @@ def _draw_status_panel(app, data):
         whole_body_state = "ON" if getattr(app, "whole_body_enabled", True) else "OFF (arm-only)"
         imgui.text(f"Whole-body IK {whole_body_state}  |  body cmd vx={body_cmd.vx:+.2f} "
                    f"vy={body_cmd.vy:+.2f} wz={body_cmd.wz:+.2f}")
+    if getattr(app, "joint_control_enabled", False):
+        imgui.text_colored((1.0, 0.55, 0.15, 1.0),
+                           "DIRECT JOINT CONTROL: exclusive actuator command active")
     if getattr(app, "collision_viz", False):
         active = len(getattr(app, "collision_active_pairs", ()))
         distance = getattr(app, "collision_min_distance", math.inf)
@@ -384,6 +401,8 @@ def _draw_lift_utils_panel(app, targets):
     imgui.same_line()
     if imgui.button("Camera (C)"):
         app.cycle_camera()
+    imgui.same_line()
+    imgui.text(app.camera_preset_label)
 
 
 def _draw_joint_monitor(app, data):
@@ -395,6 +414,97 @@ def _draw_joint_monitor(app, data):
         frac = _clamp(frac, 0.0, 1.0)
         imgui.progress_bar(frac, (200, 0), f"{name} {math.degrees(val):+.1f}deg")
     imgui.end_child()
+
+
+def _draw_camera_feeds(app):
+    """Show all three robot-mounted RGB viewpoints without changing the main view."""
+    changed, enabled = imgui.checkbox(
+        "Live camera updates", getattr(app, "camera_feeds_enabled", True))
+    if changed:
+        app.camera_feeds_enabled = enabled
+    imgui.same_line()
+    imgui.text("320 x 240 RGB")
+
+    refs = getattr(app, "camera_feed_texture_refs", {})
+    if not refs:
+        imgui.text("Camera textures are created when the OpenGL renderer starts.")
+        return
+    for index, (label, camera_name) in enumerate(
+            (("Head", "head_camera"),
+             ("Left hand", "left_hand_camera"),
+             ("Right hand", "right_hand_camera"))):
+        if index:
+            imgui.same_line()
+        imgui.begin_group()
+        imgui.text(label)
+        # MuJoCo's readback starts at the OpenGL bottom-left; swap V coordinates so
+        # the feed appears upright in ImGui's top-left screen coordinate system.
+        imgui.image(refs[camera_name], (320, 240), (0, 1), (1, 0))
+        imgui.end_group()
+
+
+def _direct_joint_display_value(spec, value):
+    if spec["command"] != "velocity" and spec["is_hinge"]:
+        return math.degrees(value), "%.1f deg", math.degrees(spec["range"][0]), math.degrees(spec["range"][1])
+    if spec["command"] == "velocity":
+        return value, "%.1f rad/s", spec["range"][0], spec["range"][1]
+    return value, "%.3f m", spec["range"][0], spec["range"][1]
+
+
+def _direct_joint_native_value(spec, display_value):
+    if spec["command"] != "velocity" and spec["is_hinge"]:
+        return math.radians(display_value)
+    return display_value
+
+
+def _draw_direct_joint_group(app, group):
+    specs = [spec for spec in app.direct_joint_specs if spec["group"] == group]
+    imgui.begin_child(f"direct_{group}", (0, 0), True)
+    for spec in specs:
+        target = app.direct_joint_targets[spec["name"]]
+        display, fmt, lower, upper = _direct_joint_display_value(spec, target)
+        changed, display = _slider_float_clamped(
+            f"{spec['name']}##direct_{spec['name']}", display, lower, upper, fmt)
+        if changed:
+            app.direct_joint_targets[spec["name"]] = _direct_joint_native_value(
+                spec, display)
+        qpos = float(app.data.qpos[spec["qpos_adr"]])
+        if spec["command"] == "velocity":
+            measured = f"actual {float(app.data.qvel[spec['dof_adr']]):+.1f} rad/s"
+        elif spec["is_hinge"]:
+            measured = f"actual {math.degrees(qpos):+.1f} deg"
+        else:
+            measured = f"actual {qpos:+.3f} m"
+        imgui.text_disabled(measured)
+    imgui.end_child()
+
+
+def _draw_joint_control(app):
+    """Exclusive, actuator-backed control for all 59 driveable model joints."""
+    enabled = getattr(app, "joint_control_enabled", False)
+    changed, requested = imgui.checkbox("Enable exclusive direct control", enabled)
+    if changed:
+        app.set_joint_control_enabled(requested)
+        enabled = requested
+    imgui.text_wrapped(
+        "Direct mode bypasses IK, grasp synergy, collision CBF, and keyboard base commands. "
+        "Disable it to return with both arms held in FK at the measured pose.")
+    if not enabled:
+        imgui.text_colored((1.0, 0.65, 0.15, 1.0),
+                           "Enable direct control to unlock joint sliders.")
+        return
+    if imgui.button("Capture current pose"):
+        app.sync_direct_joint_targets()
+    imgui.same_line()
+    if imgui.button("Load home targets"):
+        app.sync_direct_joint_targets(home=True)
+
+    groups = ("Head / Lift", "Left arm", "Right arm",
+              "Left hand", "Right hand", "Mobile base")
+    if imgui.begin_tab_bar("direct_joint_groups"):
+        for group in groups:
+            _draw_tab(group, lambda group=group: _draw_direct_joint_group(app, group))
+        imgui.end_tab_bar()
 
 
 def kinematic_tree_body_ids(app, scope=None, show_full=None):
@@ -577,11 +687,13 @@ def _draw_diagnostics(app, data):
 
 
 def draw_panel(app):
-    """Draw two tabbed workspaces and write UI changes to app state."""
+    """Draw control, diagnostics, camera-feed, and direct-joint workspaces."""
     targets = app.targets
     data = app.data
     _ensure_window_state(app)
     _draw_status_window(app, data)
     _draw_if_visible(app, "control", lambda: _draw_control_center(app, targets))
     _draw_if_visible(app, "diagnostics", lambda: _draw_diagnostics(app, data))
+    _draw_if_visible(app, "cameras", lambda: _draw_camera_feeds(app))
+    _draw_if_visible(app, "joints", lambda: _draw_joint_control(app))
     app.ui_layout_request = None

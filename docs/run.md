@@ -13,12 +13,19 @@
 └─────────────────────────────────────────┘  ┌──── Diagnostics ────────┐
                                              │ Kinematic Tree | Joints │
                                              └─────────────────────────┘
+┌──────────── Camera Feeds ────────────────┐  ┌──── Joint Control ─────┐
+│ Head RGB | Left hand RGB | Right hand RGB│  │ group tabs · sliders   │
+└──────────────────────────────────────────┘  └─────────────────────────┘
 ```
 
-두 워크스페이스는 별도 OS 창으로 메인 3D 창 밖에 뜨며 drag/resize/close할 수 있다.
+네 워크스페이스는 별도 OS 창으로 메인 3D 창 밖에 뜨며 drag/resize/close할 수 있다.
 닫은 창은 **Status & Windows → Workspaces**에서 다시 연다. **Detach tools outside**와
 **Return tools to main**으로
 외부 창 배치와 주 창 내부 배치를 즉시 전환할 수 있다.
+
+Camera Feeds 창은 `head_camera`, `left_hand_camera`, `right_hand_camera`의 실시간 RGB
+영상을 동시에 표시한다. 이 창의 시점은 메인 3D 창의 `C` camera 전환과 독립적이다.
+Joint Control 창은 actuator가 있는 59개 관절을 그룹별 slider로 제공한다.
 
 ### Kinematic Tree
 
@@ -40,7 +47,7 @@
 | `R` | can reset | 누른 순간 한 번 |
 | `G` | physical contact point/force 표시 | toggle |
 | `V` | collision geometry/CBF 최근접점 표시 | toggle |
-| `C` | overview / right-hand camera 전환 | 누른 순간 한 번 |
+| `C` | overview / close-up / 머리 / 왼손 / 오른손 camera 전환 | 누른 순간 한 번 |
 
 !!! warning "키보드 focus"
     ImGui slider나 text field가 키보드를 잡고 있으면 drive key가 로봇에 전달되지 않는다.
@@ -154,7 +161,33 @@ marker에서 translation 화살표 또는 rotation ring을 drag한다. gizmo는 
 | Reset Can | `R` | can을 home 근처 ±2 cm로 재배치하고 grasp/Cyclo capture reset |
 | Contact Viz | `G` | 실제 MuJoCo contact point/force 표시 |
 | Collision CBF Viz | `V` | monitored geometry와 거리 constraint 표시 |
-| Camera | `C` | camera preset 전환 |
+| Camera | `C` | 외부 2개와 로봇 장착 camera 3개를 순서대로 전환 |
+
+장착 camera의 MJCF 이름은 `head_camera`, `left_hand_camera`,
+`right_hand_camera`다. 세 camera는 각각 `head_link2`, `arm_l_link7`,
+`arm_r_link7`에 고정되어 해당 관절과 함께 움직인다. 별도 perception 코드에서도
+MuJoCo의 이름 기반 렌더링을 그대로 사용할 수 있다.
+
+```python
+renderer = mujoco.Renderer(model, height=480, width=640)
+renderer.update_scene(data, camera="head_camera")
+head_rgb = renderer.render()
+```
+
+### Direct Joint Control
+
+`FFW-SH5 Joint Control` 창의 **Enable exclusive direct control**을 켜면 다음 그룹을
+각각 명령할 수 있다.
+
+- Head / Lift: 머리 pitch/yaw와 lift
+- Left/Right arm: 양팔 7축 position target
+- Left/Right hand: actuator가 연결된 개별 손가락 관절
+- Mobile base: 세 바퀴 steer angle과 drive velocity
+
+이 모드는 actuator 명령 충돌을 막기 위해 IK, grasp synergy, collision CBF, keyboard
+base 명령보다 우선한다. 끄면 양팔은 현재 측정 자세를 FK 목표로 받아 갑작스러운
+pose jump 없이 일반 제어로 돌아간다. actuator가 없는 base planar 좌표와 잠긴 손가락
+관절은 직접 명령하지 않고 Diagnostics에서 상태만 확인한다.
 
 ## Collision 색상
 

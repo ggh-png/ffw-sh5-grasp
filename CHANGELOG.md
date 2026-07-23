@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- 머리와 양손목에 관절 추종 MuJoCo RGB camera 추가
+- 메인 3D 시점과 독립된 세 camera 동시 feed용 multi-viewport GUI 추가
+- 머리·lift·양팔·양손가락·swerve를 포함한 59개 actuator-backed joint의
+  exclusive direct-control GUI와 FK handover 추가
+- camera/joint GUI 사용법, PyOpenGL 의존성, workspace 구조와 회귀 gate 문서화
+
 ## 1.2.0 — 2026-07-23
 
 - 컴파일된 MJCF에서 body–joint–site 트리를 만드는 `KinematicTree`와 자체 FK 구현

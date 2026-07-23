@@ -30,8 +30,10 @@ collision avoidance를 하나의 Python 앱에서 실행합니다.
 - Collision avoidance: 팔-팔·팔-몸체·팔/손-table 3 cm 감시, 1 cm safe-distance CBF
 - 실제 mobile physics: steer/drive actuator와 wheel-ground friction으로만 base 이동
 - Contact grasp: 캔을 로봇에 붙이지 않고 finger contact force와 마찰로 파지
+- Onboard camera: 머리/양손목 RGB camera의 독립 실시간 GUI feed와 메인 시점 전환
+- Direct joint GUI: actuator가 있는 59개 관절의 그룹별 독점 명령과 안전한 FK handover
 - ROS-free: MoveIt, Pinocchio, FCL, OSQP 없이 NumPy + MuJoCo 알고리즘 구현
-- Compact multi-viewport UI: Control Center와 Diagnostics를 별도 OS 창·내부 탭으로 제공
+- Multi-viewport UI: Control/Diagnostics/Camera Feeds/Joint Control을 별도 OS 창으로 제공
 - Headless regression: Phase 0–6, randomized WBIK, collision gradient, 실제 바퀴 추종
 
 ## 빠른 실행
@@ -40,7 +42,7 @@ collision avoidance를 하나의 Python 앱에서 실행합니다.
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install mujoco numpy glfw imgui-bundle
+python -m pip install mujoco numpy glfw imgui-bundle PyOpenGL
 python src/teleop_app.py
 ```
 
@@ -57,7 +59,7 @@ python src/teleop_app.py
 | `R` | can reset |
 | `G` | 실제 contact 표시 |
 | `V` | collision CBF geometry/최근접점 표시 |
-| `C` | camera preset |
+| `C` | 외부/머리/양손 camera 전환 |
 
 `Lift / Utilities`의 **Whole-body Control** 버튼:
 
